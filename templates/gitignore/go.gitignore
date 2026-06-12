@@ -1,0 +1,6 @@
+# Go generated output and local binaries
+bin/
+dist/
+coverage/
+*.test
+*.out

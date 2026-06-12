@@ -1,0 +1,10 @@
+# Node dependencies and generated output
+node_modules/
+dist/
+build/
+.next/
+.vite/
+
+# Package-manager caches
+.npm/
+.pnpm-store/

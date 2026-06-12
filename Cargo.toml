@@ -1,0 +1,8 @@
+[package]
+name = "jagt"
+version = "0.1.0"
+edition = "2024"
+description = "Deterministic renderer and validator for agentic Just task envelopes"
+readme = "README.md"
+
+[dependencies]

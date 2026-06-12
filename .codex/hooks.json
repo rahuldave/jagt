@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/session-start.sh\"'",
+            "statusMessage": "Loading GitButler workflow context"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/raw-git-write-guard.sh\"'",
+            "statusMessage": "Checking GitButler VCS policy"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/gitbutler-snapshot.sh\"'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

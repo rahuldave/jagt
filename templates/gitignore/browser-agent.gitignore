@@ -1,0 +1,7 @@
+# Browser-agent local state and artifacts
+.agent-browser-home/
+.agent-browser/
+browser-data/
+browser-screenshots/
+browser-recordings/
+agent-browser.json.local

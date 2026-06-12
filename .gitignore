@@ -1,0 +1,36 @@
+/target/
+
+# jagt runtime/config scratch space
+/.jagt/tmp/
+/.jagt/cache/
+
+# Gest local project sync/cache
+/.gest/
+
+# Local tool installs and caches
+.local/
+.cache/
+.cx/state.json
+.cx/graph.json
+.cx/tmp/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs, temporary files, and coverage output
+*.log
+*.pid
+coverage/
+htmlcov/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Rust profiling/build byproducts
+*.profraw
