@@ -36,4 +36,4 @@ findings, and unresolved follow-ups before recommending a path.
 
 ## Tag And Dependency Awareness
 
-For brainstorms that may become tasks, use `docs/tag_dependency_workflow.md` to surface existing semantic tags, likely near-miss tags, and coupled concepts early. This is a lightweight discovery pass, not a reason to over-plan tiny discussions.
+For brainstorms that may become tasks, use `references/tag_dependency_workflow.md` to surface existing semantic tags, likely near-miss tags, and coupled concepts early. This is a lightweight discovery pass, not a reason to over-plan tiny discussions.

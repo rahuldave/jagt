@@ -7,7 +7,7 @@ description: Gest Track Work. Use for substantial coding, debugging, implementat
 
 GTW is the default entry point for Gest-tracked work in this repository.
 
-Read `docs/gest_codex_workflow.md` when more detail is needed. Keep
+Read `references/gest_codex_workflow.md` when more detail is needed. Keep
 project-specific workflow notes in this repository or in user-level Codex
 configuration.
 
@@ -277,7 +277,7 @@ gest task claim --as codex <leaf-id> --quiet
 - `gdo`: update and verify docs.
 - `gcm`: commit.
 
-For Just-based command contracts, use `docs/just_command_contract.md` as the
+For Just-based command contracts, use `references/just_command_contract.md` as the
 reusable reference and let project-specific details live in the target
 repository's `AGENTS.md` and `Justfile`.
 
@@ -396,7 +396,7 @@ commands/results, and any GitHub issue URL.
 
 ## Tag And Dependency Routing
 
-Use `docs/tag_dependency_workflow.md` whenever GTW creates, splits, or expands tasks. GTW should decide selected tags, rejected near misses, new dynamic tags, and whether code-facing work requires an `ast-grep` dependency impact pass. Use metadata such as:
+Use `references/tag_dependency_workflow.md` whenever GTW creates, splits, or expands tasks. GTW should decide selected tags, rejected near misses, new dynamic tags, and whether code-facing work requires an `ast-grep` dependency impact pass. Use metadata such as:
 
 ```text
 classification.tags.reviewed=true|false

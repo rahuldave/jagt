@@ -157,4 +157,4 @@ GitButler work is explicit.
 
 ## Tag And Dependency Context
 
-Before committing reusable workflow or code-facing changes, check related Gest notes for `classification.tags.*` and `impact.ast_grep.*` metadata from `docs/tag_dependency_workflow.md`. Mention important dependency-impact follow-ups in the commit body or PR context when they affect reviewer expectations.
+Before committing reusable workflow or code-facing changes, check related Gest notes for `classification.tags.*` and `impact.ast_grep.*` metadata from `references/tag_dependency_workflow.md`. Mention important dependency-impact follow-ups in the commit body or PR context when they affect reviewer expectations.

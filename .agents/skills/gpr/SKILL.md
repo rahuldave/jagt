@@ -38,4 +38,4 @@ Also attach metadata to the development iteration when applicable.
 
 ## GitHub Context From Tags
 
-When promoting work to GitHub, include public-safe tag classification context from `docs/tag_dependency_workflow.md` when it helps reviewers understand scope. Do not expose private Gest IDs unless the target repo policy allows them.
+When promoting work to GitHub, include public-safe tag classification context from `references/tag_dependency_workflow.md` when it helps reviewers understand scope. Do not expose private Gest IDs unless the target repo policy allows them.

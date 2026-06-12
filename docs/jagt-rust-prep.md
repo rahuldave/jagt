@@ -8,7 +8,10 @@ This repo has already been prepared as a Rust binary project for phase A:
 - `Justfile` command contract added.
 - `.gitignore` covers Cargo build output, local Gest state, local caches,
   secrets, editor files, and `.jagt/tmp/`.
-- Local Gest/Git skills and workflow docs copied in.
+- Git/GitButler Gest skills installed with `npx skills add` under
+  `.agents/skills/`. Reusable workflow references, setup templates, and helper
+  scripts are skill-local under `references/`, `assets/`, and `scripts/`
+  rather than target-root `docs/`, `templates/`, or `tools/`.
 - Preliminary jagt spec and protocol references copied in.
 
 Local tool versions observed during bootstrap:

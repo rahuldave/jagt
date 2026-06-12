@@ -40,4 +40,4 @@ that template repository unless blocked.
 
 ## Tag And Dependency Docs
 
-When docs describe task creation, code changes, verification, or review, include the tag classification and `ast-grep` dependency-impact workflow from `docs/tag_dependency_workflow.md` where relevant.
+When docs describe task creation, code changes, verification, or review, include the tag classification and `ast-grep` dependency-impact workflow from `references/tag_dependency_workflow.md` where relevant.

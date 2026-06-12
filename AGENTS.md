@@ -20,9 +20,12 @@ verification request, it must say why in the final response.
 - Main source directory: `src/`
 - Primary preliminary spec: `jagt_deterministic_renderer_spec.md`
 - Rust prep notes: `docs/jagt-rust-prep.md`
-- Detailed workflow playbook: `docs/gest_codex_workflow.md`
-- Command-contract reference: `docs/just_command_contract.md`
-- Tag/dependency workflow: `docs/tag_dependency_workflow.md`
+- Detailed workflow playbook:
+  `.agents/skills/gtw/references/gest_codex_workflow.md`
+- Command-contract reference:
+  `.agents/skills/gtw/references/just_command_contract.md`
+- Tag/dependency workflow:
+  `.agents/skills/gtw/references/tag_dependency_workflow.md`
 - Protocol references: `docs/reference/agentic_just_targets_base_spec.md` and
   `docs/reference/agent_result_v1_spec.md`
 
@@ -68,8 +71,9 @@ vocabulary and classify the work against it. Record selected existing tags, new
 dynamic tags, and near-miss rejected tags when useful. Store machine-readable
 metadata such as `classification.tags.reviewed=true`,
 `classification.tags.new=<comma-separated-new-tags>`, and
-`impact.ast_grep.required=true|false`. Use `docs/tag_dependency_workflow.md` for
-the exact workflow.
+`impact.ast_grep.required=true|false`. Use
+`.agents/skills/gtw/references/tag_dependency_workflow.md` for the exact
+workflow.
 
 For code-facing changes, identify changed semantic contracts and use `ast-grep`
 to inspect dependers when useful. If a task changes one surface of a coupled

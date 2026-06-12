@@ -57,4 +57,4 @@ artifact; use `gpl`/`gis` to create follow-on tasks.
 
 ## Tag And Dependency Discovery
 
-Specs should run the discovery pass from `docs/tag_dependency_workflow.md` so the spec identifies existing semantic tags, new tags if needed, and coupled code or UI concepts that should later be checked with `ast-grep`.
+Specs should run the discovery pass from `references/tag_dependency_workflow.md` so the spec identifies existing semantic tags, new tags if needed, and coupled code or UI concepts that should later be checked with `ast-grep`.

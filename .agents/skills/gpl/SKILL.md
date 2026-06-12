@@ -72,4 +72,4 @@ the work.
 
 ## Tag And Dependency Planning
 
-Apply `docs/tag_dependency_workflow.md` while decomposing work. For every planned leaf, record selected semantic tags and `classification.tags.reviewed=true` metadata. For code-facing phases, list the semantic contracts and `ast-grep` patterns implementers must check. If a tag search reveals coupled surfaces, split or link those surfaces before implementation starts.
+Apply `references/tag_dependency_workflow.md` while decomposing work. For every planned leaf, record selected semantic tags and `classification.tags.reviewed=true` metadata. For code-facing phases, list the semantic contracts and `ast-grep` patterns implementers must check. If a tag search reveals coupled surfaces, split or link those surfaces before implementation starts.

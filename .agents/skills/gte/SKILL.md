@@ -104,7 +104,7 @@ independently. If sub-agents are unavailable, unsafe, or overkill for a tiny
 change, run the verification locally and say why.
 
 Prefer `just` targets when the project contract defines them. For the reusable
-Just contract shape, see `docs/just_command_contract.md`. Typical shapes
+Just contract shape, see `references/just_command_contract.md`. Typical shapes
 include:
 
 ```bash
@@ -121,4 +121,4 @@ route to `gsu` to establish one.
 
 ## Testing Dependency Impact
 
-Inspect tag/dependency notes from `docs/tag_dependency_workflow.md`; tests must cover dependers found by semantic tags or `ast-grep`, not only the file that was directly edited. Smoke checks alone are not enough for changed callable code or shared contracts.
+Inspect tag/dependency notes from `references/tag_dependency_workflow.md`; tests must cover dependers found by semantic tags or `ast-grep`, not only the file that was directly edited. Smoke checks alone are not enough for changed callable code or shared contracts.

@@ -13,9 +13,11 @@ accepted slice into Gest tasks.
 
 - Rust binary crate initialized with Cargo.
 - Stable command contract in `Justfile`.
-- Local Gest/Git Codex skills copied into `.agents/skills/`.
-- Reusable workflow docs, templates, hooks, and graph tooling copied from
-  `agent_gest_git_skills`.
+- Git/GitButler Gest Codex skills installed into `.agents/skills/` with
+  `npx skills add`.
+- Codex/Claude hooks installed from `agent_gest_git_skills`; reusable workflow
+  references, setup templates, and helper scripts live inside the installed
+  skill folders under `references/`, `assets/`, and `scripts/`.
 - `AGENT_TASK v1` and `AGENT_RESULT v1` references copied under
   `docs/reference/`.
 - Fixture directories created for future valid and invalid task/result packets.

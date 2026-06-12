@@ -312,4 +312,4 @@ gest task meta set <task-id> github.merged_commit <sha>
 
 ## Tag And Dependency Review
 
-PR review should inspect tag/dependency context from `docs/tag_dependency_workflow.md`, especially selected semantic tags, `ast-grep` dependers, and follow-up tasks for coupled surfaces. Missing tag classification or missing dependency-impact coverage for changed code contracts is a review finding.
+PR review should inspect tag/dependency context from `references/tag_dependency_workflow.md`, especially selected semantic tags, `ast-grep` dependers, and follow-up tasks for coupled surfaces. Missing tag classification or missing dependency-impact coverage for changed code contracts is a review finding.

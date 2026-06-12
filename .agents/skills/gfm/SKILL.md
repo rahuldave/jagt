@@ -21,7 +21,7 @@ runtime tests or documentation checks; route those to `gte` and `gdo`.
 
 Use the target repository's project-specific command contract. Prefer `just`
 targets when `AGENTS.md` maps them. For the reusable Just command-contract
-model, see `docs/just_command_contract.md`. Common concepts include:
+model, see `references/just_command_contract.md`. Common concepts include:
 
 ```bash
 just fmt [path]
@@ -47,4 +47,4 @@ GitButler mode.
 
 ## Tag And Dependency Checks
 
-For code-facing changes, `gfm` may include lightweight `ast-grep` syntax or pattern checks from `docs/tag_dependency_workflow.md` when those checks are part of the mechanical contract.
+For code-facing changes, `gfm` may include lightweight `ast-grep` syntax or pattern checks from `references/tag_dependency_workflow.md` when those checks are part of the mechanical contract.

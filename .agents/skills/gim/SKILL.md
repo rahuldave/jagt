@@ -93,7 +93,7 @@ distinct `vcs.workspace_path` recorded for each task.
 
 Use the project command contract in `AGENTS.md`. Prefer `just` targets when the
 project maps workflow concepts to them. For the reusable Just contract shape,
-see `docs/just_command_contract.md`. Typical concepts include:
+see `references/just_command_contract.md`. Typical concepts include:
 
 ```bash
 just fmt [path]
@@ -119,4 +119,4 @@ follow-up.
 
 ## Tag And Dependency Pass
 
-Before editing code contracts, re-run the tag/dependency workflow from `docs/tag_dependency_workflow.md`: confirm selected tags still fit, add missing semantic tags, and run `ast-grep` searches for callers, imports, components, selectors, routes, schemas, or other dependers. If a selected tag or depender search reveals coupled surfaces, expand the task or create/link a child task before implementation is complete. Completion notes for code-facing work should include `Tag classification:` and `Dependency impact:` lines.
+Before editing code contracts, re-run the tag/dependency workflow from `references/tag_dependency_workflow.md`: confirm selected tags still fit, add missing semantic tags, and run `ast-grep` searches for callers, imports, components, selectors, routes, schemas, or other dependers. If a selected tag or depender search reveals coupled surfaces, expand the task or create/link a child task before implementation is complete. Completion notes for code-facing work should include `Tag classification:` and `Dependency impact:` lines.
