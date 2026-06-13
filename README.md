@@ -1,26 +1,45 @@
 # jagt
 
-`jagt` means "just agent task." This repository is a phase A scaffold for a
-future Rust CLI that deterministically renders, lints, and explains agentic
-Just handoff envelopes.
+`jagt` means "just agent task." It is a Rust CLI that deterministically renders,
+lints, and explains agentic Just handoff envelopes without calling an LLM or
+using network access.
 
-The core proposal lives in `jagt_deterministic_renderer_spec.md`. That file is
-preliminary context, not an accepted Gest implementation plan. The first real
-implementation session should review it, revise it if needed, then promote the
-accepted slice into Gest tasks.
+The accepted MVP design lives in `jagt_deterministic_renderer_spec.md`, with
+the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
 
-## Current Scaffold
+## Current Implementation
 
-- Rust binary crate initialized with Cargo.
+- `jagt render <target>` emits deterministic `AGENT_TASK v1` packets.
+- `jagt lint [PATH|-]` validates `AGENT_TASK v1` packet structure.
+- `jagt explain task [PATH|-]` summarizes rendered task packets and source
+  precedence when provenance is present.
+- Render input can come from CLI flags, `.jagt/config.toml`, target config,
+  Markdown prompt files with YAML frontmatter, and explicitly allowlisted
+  `${VAR}` interpolation.
+- Rendered packets always include the required safety and recursive subagent
+  delegation language from the agentic Just contract.
+- Focused Rust unit tests, CLI integration tests, invalid fixtures, and an
+  opt-in live agent reaction lab live under `tests/`, `fixtures/`, and
+  `integration_tests/`.
 - Stable command contract in `Justfile`.
 - Git/GitButler Gest Codex skills installed into `.agents/skills/` with
   `npx skills add`.
-- Codex/Claude hooks installed from `agent_gest_git_skills`; reusable workflow
-  references, setup templates, and helper scripts live inside the installed
-  skill folders under `references/`, `assets/`, and `scripts/`.
 - `AGENT_TASK v1` and `AGENT_RESULT v1` references copied under
   `docs/reference/`.
-- Fixture directories created for future valid and invalid task/result packets.
+
+`AGENT_RESULT v1` lint/explain support is still planned work.
+
+## Render Example
+
+```bash
+jagt render eda-viz \
+  --config .jagt/config.toml \
+  --prompt prompts/eda.md \
+  --required-output reports/eda/index.html
+```
+
+`--prompt-text` wins over `--prompt` when both are present. `--no-config`
+ignores `.jagt/config.toml` and any explicit `--config` path.
 
 ## Commands
 
@@ -49,12 +68,10 @@ cd /Users/rahul/Projects/jagt
 ```
 
 Then start with `gtw` for any implementation or project work. The new session
-should treat `jagt_deterministic_renderer_spec.md` as a proposal to review, not
-as already-accepted task scope.
+should inspect the active Gest iteration before editing so the next slice
+continues from the current MVP state.
 
 ## Next Decisions
 
-See `docs/jagt-rust-prep.md` for the remaining Rust and product decisions. The
-big ones are accepting/revising the MVP command set, choosing the schema/parser
-strategy, and deciding whether `.jagt/config.toml` remains the default config
-path.
+The remaining MVP slices are AGENT_RESULT lint/explain support, the sequential
+recursive live lab, schema/product polish, and final verification/review.

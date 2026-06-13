@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
+use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use thiserror::Error;
 
@@ -51,6 +54,12 @@ pub struct TaskRenderOptions {
     pub required_outputs: Vec<String>,
     pub allowed_actions: Vec<String>,
     pub verification: Vec<String>,
+    pub provenance: RenderProvenance,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RenderProvenance {
+    pub source_order: Vec<String>,
 }
 
 pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
@@ -98,6 +107,14 @@ pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
         &mut output,
         &format!("  renderer_version: {}", env!("CARGO_PKG_VERSION")),
     );
+    if !options.provenance.source_order.is_empty() {
+        push_nested_string_list(
+            &mut output,
+            "source_order",
+            &options.provenance.source_order,
+            2,
+        );
+    }
     push_line(&mut output, AGENT_TASK_END);
     Ok(output)
 }
@@ -115,6 +132,396 @@ fn effective_allowed_actions(options: &TaskRenderOptions) -> Vec<String> {
         actions.push("create listed outputs".to_string());
     }
     actions
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ProjectConfig {
+    #[serde(default)]
+    env: EnvConfig,
+    #[serde(default)]
+    defaults: RenderConfigSource,
+    #[serde(default)]
+    targets: BTreeMap<String, RenderConfigSource>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct EnvConfig {
+    #[serde(default)]
+    allow: Vec<String>,
+    #[serde(default)]
+    redact: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RenderConfigSource {
+    target: Option<String>,
+    prompt: Option<String>,
+    prompt_text: Option<String>,
+    args: Option<Vec<String>>,
+    inputs: Option<Vec<String>>,
+    required_outputs: Option<Vec<String>>,
+    allowed_actions: Option<Vec<String>>,
+    verification: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EffectiveRenderConfig {
+    args: Vec<String>,
+    inputs: Vec<String>,
+    prompt_path: Option<String>,
+    prompt_text: Option<String>,
+    required_outputs: Vec<String>,
+    allowed_actions: Vec<String>,
+    verification: Vec<String>,
+}
+
+#[derive(Debug)]
+struct LoadedConfig {
+    path_label: String,
+    config: ProjectConfig,
+}
+
+fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
+    let mut effective = EffectiveRenderConfig::default();
+    let mut source_order = Vec::new();
+    let loaded_config = load_project_config(args.config_path.as_deref(), args.no_config)?;
+    let mut env_config = EnvConfig::default();
+
+    if let Some(loaded) = &loaded_config {
+        source_order.push("built-in defaults".to_string());
+        source_order.push(format!("project config: {}", loaded.path_label));
+        env_config = loaded.config.env.clone();
+
+        let defaults = interpolate_source(&loaded.config.defaults, &env_config)?;
+        merge_source(&mut effective, defaults);
+
+        if let Some(target_config) = loaded.config.targets.get(&args.target) {
+            source_order.push(format!("target config: {}", args.target));
+            let target_config = interpolate_source(target_config, &env_config)?;
+            merge_source(&mut effective, target_config);
+        }
+    }
+
+    let prompt_path = args
+        .prompt
+        .clone()
+        .or_else(|| effective.prompt_path.clone());
+    if args.prompt_text.is_none()
+        && let Some(path) = prompt_path
+    {
+        let prompt_file = read_prompt_file(Path::new(&path), &env_config)?;
+        if prompt_file.frontmatter_seen {
+            source_order.push(format!("prompt frontmatter: {path}"));
+            merge_source(&mut effective, prompt_file.frontmatter);
+        }
+        effective.prompt_text = Some(prompt_file.body);
+    }
+
+    let cli_source = RenderConfigSource {
+        prompt: args.prompt,
+        prompt_text: args.prompt_text,
+        args: non_empty(args.args),
+        inputs: non_empty(args.inputs),
+        required_outputs: non_empty(args.required_outputs),
+        allowed_actions: non_empty(args.allowed_actions),
+        verification: non_empty(args.verification),
+        target: None,
+    };
+    let has_cli_source = source_has_render_values(&cli_source);
+    merge_source(&mut effective, cli_source);
+    if has_cli_source && !source_order.is_empty() {
+        source_order.push("CLI flags".to_string());
+    }
+
+    Ok(TaskRenderOptions {
+        target: args.target,
+        args: effective.args,
+        inputs: effective.inputs,
+        prompt_text: effective.prompt_text,
+        required_outputs: effective.required_outputs,
+        allowed_actions: effective.allowed_actions,
+        verification: effective.verification,
+        provenance: RenderProvenance { source_order },
+    })
+}
+
+fn non_empty(values: Vec<String>) -> Option<Vec<String>> {
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn source_has_render_values(source: &RenderConfigSource) -> bool {
+    source.prompt.is_some()
+        || source.prompt_text.is_some()
+        || source.args.is_some()
+        || source.inputs.is_some()
+        || source.required_outputs.is_some()
+        || source.allowed_actions.is_some()
+        || source.verification.is_some()
+}
+
+fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSource) {
+    let _ = source.target;
+    if let Some(args) = source.args {
+        effective.args = args;
+    }
+    if let Some(inputs) = source.inputs {
+        effective.inputs = inputs;
+    }
+    if let Some(prompt) = source.prompt {
+        effective.prompt_path = Some(prompt);
+        effective.prompt_text = None;
+    }
+    if let Some(prompt_text) = source.prompt_text {
+        effective.prompt_text = Some(prompt_text);
+        effective.prompt_path = None;
+    }
+    if let Some(required_outputs) = source.required_outputs {
+        effective.required_outputs = required_outputs;
+    }
+    if let Some(allowed_actions) = source.allowed_actions {
+        effective.allowed_actions = allowed_actions;
+    }
+    if let Some(verification) = source.verification {
+        effective.verification = verification;
+    }
+}
+
+fn load_project_config(
+    config_path: Option<&Path>,
+    no_config: bool,
+) -> Result<Option<LoadedConfig>> {
+    if no_config {
+        return Ok(None);
+    }
+
+    let (path, explicit) = match config_path {
+        Some(path) => (path.to_path_buf(), true),
+        None => (PathBuf::from(".jagt/config.toml"), false),
+    };
+
+    if !explicit && !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path)?;
+    let config = toml::from_str(&content).map_err(|error| {
+        JagtError::Render(format!(
+            "invalid config {}: {error}",
+            path.to_string_lossy()
+        ))
+    })?;
+
+    Ok(Some(LoadedConfig {
+        path_label: path.to_string_lossy().into_owned(),
+        config,
+    }))
+}
+
+#[derive(Debug)]
+struct PromptFile {
+    body: String,
+    frontmatter: RenderConfigSource,
+    frontmatter_seen: bool,
+}
+
+fn read_prompt_file(path: &Path, env_config: &EnvConfig) -> Result<PromptFile> {
+    let content = fs::read_to_string(path)?;
+    let parsed = parse_prompt_file(&content).map_err(|message| {
+        JagtError::Render(format!(
+            "invalid prompt {}: {message}",
+            path.to_string_lossy()
+        ))
+    })?;
+    Ok(PromptFile {
+        body: parsed.body,
+        frontmatter: interpolate_source(&parsed.frontmatter, env_config)?,
+        frontmatter_seen: parsed.frontmatter_seen,
+    })
+}
+
+fn parse_prompt_file(content: &str) -> std::result::Result<PromptFile, String> {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return Ok(PromptFile {
+            body: content.to_string(),
+            frontmatter: RenderConfigSource::default(),
+            frontmatter_seen: false,
+        });
+    };
+    let Some((frontmatter, body)) = rest.split_once("\n---") else {
+        return Err("frontmatter start without closing delimiter".to_string());
+    };
+    let body = body.trim_start_matches(['\r', '\n']).to_string();
+    let frontmatter = if frontmatter.trim().is_empty() {
+        RenderConfigSource::default()
+    } else {
+        serde_yaml::from_str(frontmatter)
+            .map_err(|error| format!("frontmatter contains invalid YAML: {error}"))?
+    };
+
+    Ok(PromptFile {
+        body,
+        frontmatter,
+        frontmatter_seen: true,
+    })
+}
+
+fn interpolate_source(
+    source: &RenderConfigSource,
+    env_config: &EnvConfig,
+) -> Result<RenderConfigSource> {
+    Ok(RenderConfigSource {
+        target: interpolate_option(source.target.as_deref(), env_config)?,
+        prompt: interpolate_option(source.prompt.as_deref(), env_config)?,
+        prompt_text: interpolate_option(source.prompt_text.as_deref(), env_config)?,
+        args: interpolate_list(source.args.as_deref(), env_config)?,
+        inputs: interpolate_list(source.inputs.as_deref(), env_config)?,
+        required_outputs: interpolate_list(source.required_outputs.as_deref(), env_config)?,
+        allowed_actions: interpolate_list(source.allowed_actions.as_deref(), env_config)?,
+        verification: interpolate_list(source.verification.as_deref(), env_config)?,
+    })
+}
+
+fn interpolate_option(value: Option<&str>, env_config: &EnvConfig) -> Result<Option<String>> {
+    value
+        .map(|value| interpolate_env(value, env_config))
+        .transpose()
+}
+
+fn interpolate_list(
+    values: Option<&[String]>,
+    env_config: &EnvConfig,
+) -> Result<Option<Vec<String>>> {
+    values
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| interpolate_env(value, env_config))
+                .collect()
+        })
+        .transpose()
+}
+
+fn interpolate_env(value: &str, env_config: &EnvConfig) -> Result<String> {
+    let mut output = String::new();
+    let mut rest = value;
+
+    while let Some(start) = rest.find("${") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            return Err(JagtError::Render(
+                "unterminated environment interpolation".to_string(),
+            ));
+        };
+        let name = &after_start[..end];
+        validate_env_name(name, env_config)?;
+        let replacement = env::var(name)
+            .map_err(|_| JagtError::Render(format!("environment variable {name} is not set")))?;
+        if looks_secret_value(&replacement) {
+            return Err(JagtError::Render(format!(
+                "environment variable {name} has a secret-like value"
+            )));
+        }
+        output.push_str(&replacement);
+        rest = &after_start[end + 1..];
+    }
+
+    output.push_str(rest);
+    Ok(output)
+}
+
+fn validate_env_name(name: &str, env_config: &EnvConfig) -> Result<()> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Err(JagtError::Render(format!(
+            "invalid environment variable reference {name:?}"
+        )));
+    }
+    if !env_config.allow.iter().any(|allowed| allowed == name) {
+        return Err(JagtError::Render(format!(
+            "environment variable {name} is not allowlisted"
+        )));
+    }
+    if env_config
+        .redact
+        .iter()
+        .any(|pattern| wildcard_match_case_insensitive(pattern, name))
+    {
+        return Err(JagtError::Render(format!(
+            "environment variable {name} matches redact rule"
+        )));
+    }
+    if looks_secret_name(name) {
+        return Err(JagtError::Render(format!(
+            "environment variable {name} looks secret-like"
+        )));
+    }
+    Ok(())
+}
+
+fn wildcard_match_case_insensitive(pattern: &str, value: &str) -> bool {
+    wildcard_match(&pattern.to_ascii_uppercase(), &value.to_ascii_uppercase())
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let (mut pattern_index, mut value_index) = (0, 0);
+    let pattern_bytes = pattern.as_bytes();
+    let value_bytes = value.as_bytes();
+    let mut star_index = None;
+    let mut match_index = 0;
+
+    while value_index < value_bytes.len() {
+        if pattern_index < pattern_bytes.len()
+            && pattern_bytes[pattern_index] == value_bytes[value_index]
+        {
+            pattern_index += 1;
+            value_index += 1;
+        } else if pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            match_index = value_index;
+            pattern_index += 1;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            match_index += 1;
+            value_index = match_index;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern_bytes.len()
+}
+
+fn looks_secret_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.contains("TOKEN")
+        || upper.contains("SECRET")
+        || upper.contains("PASSWORD")
+        || upper.contains("PRIVATE_KEY")
+        || upper.contains("API_KEY")
+        || upper.contains("ACCESS_KEY")
+        || upper.contains("CREDENTIAL")
+        || upper.contains("AUTH")
+}
+
+fn looks_secret_value(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.starts_with("ghp_")
+        || lower.starts_with("gho_")
+        || lower.starts_with("github_pat_")
+        || lower.starts_with("sk-")
+        || lower.contains("private key")
 }
 
 fn push_line(output: &mut String, line: &str) {
@@ -470,8 +877,12 @@ pub fn explain_agent_task(input: &str) -> Result<String> {
             Some(format!("{renderer} {version}"))
         })
         .unwrap_or_else(|| "none".to_string());
+    let source_order = mapping_get(map, "provenance")
+        .and_then(Value::as_mapping)
+        .and_then(|provenance| string_sequence(provenance, "source_order"))
+        .unwrap_or_default();
 
-    Ok(format!(
+    let mut output = format!(
         "\
 AGENT_TASK v1
 target: {target}
@@ -483,7 +894,15 @@ delegation: recursive subagent
 safety: present
 provenance: {provenance}
 "
-    ))
+    );
+    if !source_order.is_empty() {
+        output.push_str("source_order:\n");
+        for source in source_order {
+            output.push_str(&format!("- {source}\n"));
+        }
+    }
+
+    Ok(output)
 }
 
 fn sequence_len(map: &Mapping, key: &str) -> usize {
@@ -519,6 +938,8 @@ struct RenderArgs {
     args: Vec<String>,
     #[arg(long = "input")]
     inputs: Vec<String>,
+    #[arg(long = "prompt")]
+    prompt: Option<String>,
     #[arg(long = "prompt-text")]
     prompt_text: Option<String>,
     #[arg(long = "required-output")]
@@ -527,6 +948,10 @@ struct RenderArgs {
     allowed_actions: Vec<String>,
     #[arg(long = "verification")]
     verification: Vec<String>,
+    #[arg(long = "config")]
+    config_path: Option<PathBuf>,
+    #[arg(long = "no-config")]
+    no_config: bool,
 }
 
 #[derive(Debug, Args)]
@@ -568,15 +993,8 @@ where
     let cli = Cli::parse_from(args);
     match cli.command {
         Command::Render(args) => {
-            let packet = render_task_packet(&TaskRenderOptions {
-                target: args.target,
-                args: args.args,
-                inputs: args.inputs,
-                prompt_text: args.prompt_text,
-                required_outputs: args.required_outputs,
-                allowed_actions: args.allowed_actions,
-                verification: args.verification,
-            })?;
+            let options = build_render_options(args)?;
+            let packet = render_task_packet(&options)?;
             print!("{packet}");
         }
         Command::Lint(args) => {
@@ -627,6 +1045,7 @@ mod tests {
             required_outputs: vec!["word_count".to_string()],
             allowed_actions: Vec::new(),
             verification: vec!["recompute once".to_string()],
+            provenance: RenderProvenance::default(),
         }
     }
 
@@ -698,5 +1117,56 @@ mod tests {
         .expect_err("nested marker fails");
 
         assert!(error.to_string().contains("nested start marker"));
+    }
+
+    #[test]
+    fn prompt_frontmatter_parser_returns_structured_fields_and_body() {
+        let prompt = "\
+---
+required_outputs:
+  - reports/eda/index.html
+allowed_actions:
+  - inspect dataset
+---
+
+Create the report.
+";
+
+        let parsed = parse_prompt_file(prompt).expect("prompt parses");
+
+        assert!(parsed.frontmatter_seen);
+        assert_eq!(
+            parsed.frontmatter.required_outputs,
+            Some(vec!["reports/eda/index.html".to_string()])
+        );
+        assert_eq!(
+            parsed.frontmatter.allowed_actions,
+            Some(vec!["inspect dataset".to_string()])
+        );
+        assert_eq!(parsed.body, "Create the report.\n");
+    }
+
+    #[test]
+    fn redact_wildcard_matching_is_case_insensitive() {
+        assert!(wildcard_match_case_insensitive("*_TOKEN", "API_TOKEN"));
+        assert!(wildcard_match_case_insensitive("PASSWORD", "password"));
+        assert!(!wildcard_match_case_insensitive("*_TOKEN", "DATA_ROOT"));
+    }
+
+    #[test]
+    fn explain_reports_rendered_source_order_when_present() {
+        let mut options = minimal_options();
+        options.provenance.source_order = vec![
+            "built-in defaults".to_string(),
+            "project config: .jagt/config.toml".to_string(),
+            "target config: count-chat-message-words".to_string(),
+        ];
+        let packet = render_task_packet(&options).expect("packet renders");
+
+        let explanation = explain_agent_task(&packet).expect("packet explains");
+
+        assert!(explanation.contains("source_order:\n"));
+        assert!(explanation.contains("- project config: .jagt/config.toml\n"));
+        assert!(explanation.contains("- target config: count-chat-message-words\n"));
     }
 }
