@@ -22,8 +22,8 @@ the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
   `${VAR}` interpolation.
 - Rendered packets always include the required safety and recursive subagent
   delegation language from the agentic Just contract.
-- Focused Rust unit tests, CLI integration tests, invalid fixtures, and an
-  opt-in live agent reaction lab live under `tests/`, `fixtures/`, and
+- Focused Rust unit tests, CLI integration tests, invalid fixtures, and opt-in
+  live agent transcript labs live under `tests/`, `fixtures/`, and
   `integration_tests/`.
 - Stable command contract in `Justfile`.
 - Git/GitButler Gest Codex skills installed into `.agents/skills/` with
@@ -85,5 +85,5 @@ continues from the current MVP state.
 
 ## Next Decisions
 
-The remaining MVP slices are the sequential recursive live lab, schema/product
-polish, and final verification/review.
+The remaining MVP slices are schema/product polish and final
+verification/review.

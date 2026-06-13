@@ -68,4 +68,5 @@ The validator checks:
 - the parent decision says `decision: delegated`;
 - no transcript artifact says `decision: executed-inline`.
 
-Later `AGENT_RESULT` support should add a subagent result artifact to this lab.
+The recursive `AGENT_RESULT` transcript path is covered by
+`integration_tests/live_agent_result_recursive/`.
