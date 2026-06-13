@@ -1,0 +1,16 @@
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+task_ref: sha256:example
+status: success
+outputs:
+  files:
+    - path: reports/eda/index.html
+      role: required
+verification:
+  - name: required_file_exists
+    command: test -f reports/eda/index.html
+    status: passed
+notes: |
+  Created the requested dashboard.
+follow_up: []
+<<<END_AGENT_RESULT>>>

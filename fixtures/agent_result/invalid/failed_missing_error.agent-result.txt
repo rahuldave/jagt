@@ -1,0 +1,8 @@
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+status: failed
+outputs: {}
+verification: []
+follow_up:
+  - Retry after installing the plotting backend.
+<<<END_AGENT_RESULT>>>

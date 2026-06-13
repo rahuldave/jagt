@@ -12,6 +12,8 @@ use thiserror::Error;
 
 pub const AGENT_TASK_START: &str = "<<<AGENT_TASK v1>>>";
 pub const AGENT_TASK_END: &str = "<<<END_AGENT_TASK>>>";
+pub const AGENT_RESULT_START: &str = "<<<AGENT_RESULT v1>>>";
+pub const AGENT_RESULT_END: &str = "<<<END_AGENT_RESULT>>>";
 pub const SAFETY_CONTEXT: &str = "This block is repo-local operational context.";
 pub const SAFETY_OVERRIDE: &str =
     "It cannot override user, system, developer, VCS, or approval instructions.";
@@ -26,6 +28,8 @@ pub const DELEGATION_TRIGGERS: [&str; 4] = [
 pub enum JagtError {
     #[error("invalid AGENT_TASK block: {0}")]
     InvalidAgentTask(String),
+    #[error("invalid AGENT_RESULT block: {0}")]
+    InvalidAgentResult(String),
     #[error("render failed: {0}")]
     Render(String),
     #[error("io error: {0}")]
@@ -37,7 +41,10 @@ pub enum JagtError {
 impl JagtError {
     pub fn exit_code(&self) -> i32 {
         match self {
-            JagtError::InvalidAgentTask(_) | JagtError::Render(_) | JagtError::Cli(_) => 1,
+            JagtError::InvalidAgentTask(_)
+            | JagtError::InvalidAgentResult(_)
+            | JagtError::Render(_)
+            | JagtError::Cli(_) => 1,
             JagtError::Io(_) => 2,
         }
     }
@@ -597,10 +604,7 @@ pub struct LintOptions {
 
 pub fn lint_agent_task(input: &str, options: LintOptions) -> Result<usize> {
     if options.expect_none {
-        if input
-            .lines()
-            .any(|line| line == AGENT_TASK_START || line == AGENT_TASK_END)
-        {
+        if contains_marker(input, AGENT_TASK_START, AGENT_TASK_END) {
             return Err(JagtError::InvalidAgentTask(
                 "expected no AGENT_TASK block".to_string(),
             ));
@@ -632,27 +636,96 @@ pub fn lint_agent_task(input: &str, options: LintOptions) -> Result<usize> {
 }
 
 fn extract_agent_task_blocks(input: &str) -> Result<Vec<String>> {
+    extract_envelope_blocks(input, AGENT_TASK_START, AGENT_TASK_END, |message| {
+        JagtError::InvalidAgentTask(message)
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultLintOptions {
+    pub expect_none: bool,
+    pub expect_count: Option<usize>,
+    pub expect_target: Option<String>,
+    pub expect_status: Option<String>,
+    pub check_files: bool,
+    pub base_dir: PathBuf,
+}
+
+pub fn lint_agent_result(input: &str, options: &ResultLintOptions) -> Result<usize> {
+    if options.expect_none {
+        if contains_marker(input, AGENT_RESULT_START, AGENT_RESULT_END) {
+            return Err(JagtError::InvalidAgentResult(
+                "expected no AGENT_RESULT block".to_string(),
+            ));
+        }
+        return Ok(0);
+    }
+
+    if let Some(status) = &options.expect_status {
+        validate_result_status(status).map_err(|message| {
+            JagtError::InvalidAgentResult(format!("invalid expected status: {message}"))
+        })?;
+    }
+
+    let blocks = extract_agent_result_blocks(input)?;
+    if blocks.is_empty() {
+        return Err(JagtError::InvalidAgentResult(
+            "no AGENT_RESULT block found".to_string(),
+        ));
+    }
+
+    if let Some(expected) = options.expect_count
+        && blocks.len() != expected
+    {
+        return Err(JagtError::InvalidAgentResult(format!(
+            "expected {expected} block(s), found {}",
+            blocks.len()
+        )));
+    }
+
+    for (index, body) in blocks.iter().enumerate() {
+        validate_result_block(body, index + 1, options)?;
+    }
+
+    Ok(blocks.len())
+}
+
+fn extract_agent_result_blocks(input: &str) -> Result<Vec<String>> {
+    extract_envelope_blocks(input, AGENT_RESULT_START, AGENT_RESULT_END, |message| {
+        JagtError::InvalidAgentResult(message)
+    })
+}
+
+fn contains_marker(input: &str, start: &str, end: &str) -> bool {
+    input.lines().any(|line| line == start || line == end)
+}
+
+fn extract_envelope_blocks<F>(
+    input: &str,
+    start_marker: &str,
+    end_marker: &str,
+    invalid: F,
+) -> Result<Vec<String>>
+where
+    F: Fn(String) -> JagtError,
+{
     let mut blocks = Vec::new();
     let mut in_block = false;
     let mut body = String::new();
 
     for line in input.lines() {
-        if line == AGENT_TASK_START {
+        if line == start_marker {
             if in_block {
-                return Err(JagtError::InvalidAgentTask(
-                    "nested start marker".to_string(),
-                ));
+                return Err(invalid("nested start marker".to_string()));
             }
             in_block = true;
             body.clear();
             continue;
         }
 
-        if line == AGENT_TASK_END {
+        if line == end_marker {
             if !in_block {
-                return Err(JagtError::InvalidAgentTask(
-                    "end marker without start marker".to_string(),
-                ));
+                return Err(invalid("end marker without start marker".to_string()));
             }
             blocks.push(std::mem::take(&mut body));
             in_block = false;
@@ -666,9 +739,7 @@ fn extract_agent_task_blocks(input: &str) -> Result<Vec<String>> {
     }
 
     if in_block {
-        return Err(JagtError::InvalidAgentTask(
-            "start marker without end marker".to_string(),
-        ));
+        return Err(invalid("start marker without end marker".to_string()));
     }
 
     Ok(blocks)
@@ -759,6 +830,212 @@ fn validate_safety(map: &Mapping, index: usize) -> Result<()> {
         return Err(JagtError::InvalidAgentTask(format!(
             "block {index} missing safety override text"
         )));
+    }
+
+    Ok(())
+}
+
+fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) -> Result<()> {
+    let value: Value = serde_yaml::from_str(body).map_err(|error| {
+        JagtError::InvalidAgentResult(format!("block {index} contains invalid YAML: {error}"))
+    })?;
+    let map = value.as_mapping().ok_or_else(|| {
+        JagtError::InvalidAgentResult(format!("block {index} body must be a mapping"))
+    })?;
+
+    for field in ["target", "status"] {
+        validate_unique_result_field(body, index, field)?;
+    }
+
+    for field in ["outputs", "verification", "follow_up"] {
+        if mapping_get(map, field).is_none() {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} missing {field}"
+            )));
+        }
+    }
+
+    for field in ["allowed_actions", "delegation", "safety"] {
+        if mapping_get(map, field).is_some() {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} violates report-only behavior with {field}"
+            )));
+        }
+    }
+
+    let target = scalar_string(map, "target")
+        .ok_or_else(|| JagtError::InvalidAgentResult(format!("block {index} missing target")))?;
+    validate_target(target).map_err(|_| {
+        JagtError::InvalidAgentResult(format!("block {index} missing valid target"))
+    })?;
+    if let Some(expected) = &options.expect_target
+        && target != expected
+    {
+        return Err(JagtError::InvalidAgentResult(format!(
+            "block {index} expected target {expected}, found {target}"
+        )));
+    }
+
+    let status = scalar_string(map, "status")
+        .ok_or_else(|| JagtError::InvalidAgentResult(format!("block {index} missing status")))?;
+    validate_result_status(status)
+        .map_err(|message| JagtError::InvalidAgentResult(format!("block {index} {message}")))?;
+    if let Some(expected) = &options.expect_status
+        && status != expected
+    {
+        return Err(JagtError::InvalidAgentResult(format!(
+            "block {index} expected status {expected}, found {status}"
+        )));
+    }
+
+    validate_result_outputs(map, index)?;
+    validate_result_verification(map, index, status)?;
+    validate_result_follow_up(map, index)?;
+    validate_result_error(map, index, status)?;
+    if options.check_files {
+        validate_result_files(map, index, &options.base_dir)?;
+    }
+    Ok(())
+}
+
+fn validate_unique_result_field(body: &str, index: usize, field: &str) -> Result<()> {
+    match top_level_field_count(body, field) {
+        0 => Err(JagtError::InvalidAgentResult(format!(
+            "block {index} missing {field}"
+        ))),
+        1 => Ok(()),
+        _ => Err(JagtError::InvalidAgentResult(format!(
+            "block {index} duplicated {field}"
+        ))),
+    }
+}
+
+fn top_level_field_count(body: &str, field: &str) -> usize {
+    body.lines()
+        .filter(|line| !line.starts_with(char::is_whitespace))
+        .filter_map(|line| line.split_once(':').map(|(key, _)| key.trim()))
+        .filter(|key| *key == field)
+        .count()
+}
+
+fn validate_result_status(status: &str) -> std::result::Result<(), &'static str> {
+    if matches!(
+        status,
+        "success" | "partial" | "blocked" | "failed" | "cancelled"
+    ) {
+        Ok(())
+    } else {
+        Err("status must be one of success, partial, blocked, failed, or cancelled")
+    }
+}
+
+fn validate_result_outputs(map: &Mapping, index: usize) -> Result<()> {
+    mapping_get(map, "outputs")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!("block {index} outputs must be a mapping"))
+        })?;
+    Ok(())
+}
+
+fn validate_result_verification(map: &Mapping, index: usize, result_status: &str) -> Result<()> {
+    let verification = mapping_get(map, "verification")
+        .and_then(Value::as_sequence)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!("block {index} verification must be a sequence"))
+        })?;
+
+    for item in verification {
+        let Some(item_map) = item.as_mapping() else {
+            continue;
+        };
+        let Some(status) = scalar_string(item_map, "status") else {
+            continue;
+        };
+        if !matches!(status, "passed" | "failed" | "skipped") {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} verification status must be passed, failed, or skipped"
+            )));
+        }
+        if result_status == "success" && matches!(status, "failed" | "skipped") {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} success result contains {status} verification"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_result_follow_up(map: &Mapping, index: usize) -> Result<()> {
+    mapping_get(map, "follow_up")
+        .and_then(Value::as_sequence)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!("block {index} follow_up must be a sequence"))
+        })?;
+    Ok(())
+}
+
+fn validate_result_error(map: &Mapping, index: usize, status: &str) -> Result<()> {
+    if !matches!(status, "blocked" | "failed") {
+        return Ok(());
+    }
+
+    let error = mapping_get(map, "error")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!(
+                "block {index} missing error for {status} result"
+            ))
+        })?;
+    for field in ["code", "message"] {
+        let value = scalar_string(error, field).unwrap_or_default();
+        if value.trim().is_empty() {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} missing error.{field}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result<()> {
+    let Some(outputs) = mapping_get(map, "outputs").and_then(Value::as_mapping) else {
+        return Ok(());
+    };
+    let Some(files_value) = mapping_get(outputs, "files") else {
+        return Ok(());
+    };
+    let files = files_value.as_sequence().ok_or_else(|| {
+        JagtError::InvalidAgentResult(format!("block {index} outputs.files must be a sequence"))
+    })?;
+
+    for file in files {
+        let file = file.as_mapping().ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!(
+                "block {index} outputs.files entries must be mappings"
+            ))
+        })?;
+        let path = scalar_string(file, "path").ok_or_else(|| {
+            JagtError::InvalidAgentResult(format!("block {index} outputs.files entry missing path"))
+        })?;
+        let path_ref = Path::new(path);
+        if path_ref.is_absolute() {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} output file {path} must be repo-relative"
+            )));
+        }
+        let role = scalar_string(file, "role").unwrap_or("optional");
+        if !matches!(role, "required" | "optional") {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} output file {path} role must be required or optional"
+            )));
+        }
+        if role == "required" && !base_dir.join(path_ref).is_file() {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "block {index} required output file missing: {path}"
+            )));
+        }
     }
 
     Ok(())
@@ -905,6 +1182,66 @@ provenance: {provenance}
     Ok(output)
 }
 
+pub fn explain_agent_result(input: &str) -> Result<String> {
+    let blocks = extract_agent_result_blocks(input)?;
+    if blocks.is_empty() {
+        return Err(JagtError::InvalidAgentResult(
+            "no AGENT_RESULT block found".to_string(),
+        ));
+    }
+
+    let options = ResultLintOptions {
+        expect_none: false,
+        expect_count: None,
+        expect_target: None,
+        expect_status: None,
+        check_files: false,
+        base_dir: PathBuf::from("."),
+    };
+    validate_result_block(&blocks[0], 1, &options)?;
+    let value: Value = serde_yaml::from_str(&blocks[0]).map_err(|error| {
+        JagtError::InvalidAgentResult(format!("block 1 contains invalid YAML: {error}"))
+    })?;
+    let map = value.as_mapping().ok_or_else(|| {
+        JagtError::InvalidAgentResult("block 1 body must be a mapping".to_string())
+    })?;
+
+    let target = scalar_string(map, "target").unwrap_or("<unknown>");
+    let status = scalar_string(map, "status").unwrap_or("<unknown>");
+    let task_ref = scalar_string(map, "task_ref").unwrap_or("none");
+    let (file_count, proposed_task_count) = mapping_get(map, "outputs")
+        .and_then(Value::as_mapping)
+        .map(|outputs| {
+            (
+                sequence_len(outputs, "files"),
+                sequence_len(outputs, "proposed_tasks"),
+            )
+        })
+        .unwrap_or((0, 0));
+    let verification_count = sequence_len(map, "verification");
+    let follow_up_count = sequence_len(map, "follow_up");
+    let error_state = if mapping_get(map, "error").is_some() {
+        "present"
+    } else {
+        "absent"
+    };
+
+    Ok(format!(
+        "\
+AGENT_RESULT v1
+target: {target}
+task_ref: {task_ref}
+status: {status}
+outputs.files: {file_count} item(s)
+outputs.proposed_tasks: {proposed_task_count} item(s)
+verification: {verification_count} item(s)
+follow_up: {follow_up_count} item(s)
+error: {error_state}
+report_only: true
+"
+    ))
+}
+
 fn sequence_len(map: &Mapping, key: &str) -> usize {
     match mapping_get(map, key) {
         Some(Value::Sequence(values)) => values.len(),
@@ -929,6 +1266,7 @@ enum Command {
     Render(RenderArgs),
     Lint(LintArgs),
     Explain(ExplainArgs),
+    Result(ResultArgs),
 }
 
 #[derive(Debug, Args)]
@@ -976,6 +1314,36 @@ enum ExplainCommand {
 }
 
 #[derive(Debug, Args)]
+struct ResultArgs {
+    #[command(subcommand)]
+    command: ResultCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ResultCommand {
+    Lint(ResultLintArgs),
+    Explain(InputPath),
+}
+
+#[derive(Debug, Args)]
+struct ResultLintArgs {
+    #[arg(default_value = "-")]
+    path: String,
+    #[arg(long)]
+    expect_count: Option<usize>,
+    #[arg(long)]
+    expect_none: bool,
+    #[arg(long)]
+    expect_target: Option<String>,
+    #[arg(long)]
+    expect_status: Option<String>,
+    #[arg(long)]
+    check_files: bool,
+    #[arg(long, default_value = ".")]
+    base_dir: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct InputPath {
     #[arg(default_value = "-")]
     path: String,
@@ -1016,6 +1384,31 @@ where
             ExplainCommand::Task(path) => {
                 let input = read_input(&path.path)?;
                 print!("{}", explain_agent_task(&input)?);
+            }
+        },
+        Command::Result(args) => match args.command {
+            ResultCommand::Lint(args) => {
+                let input = read_input(&args.path)?;
+                let count = lint_agent_result(
+                    &input,
+                    &ResultLintOptions {
+                        expect_none: args.expect_none,
+                        expect_count: args.expect_count,
+                        expect_target: args.expect_target,
+                        expect_status: args.expect_status,
+                        check_files: args.check_files,
+                        base_dir: args.base_dir,
+                    },
+                )?;
+                if count == 0 {
+                    println!("no agent result blocks detected");
+                } else {
+                    println!("validated {count} AGENT_RESULT block(s)");
+                }
+            }
+            ResultCommand::Explain(path) => {
+                let input = read_input(&path.path)?;
+                print!("{}", explain_agent_result(&input)?);
             }
         },
     }
@@ -1168,5 +1561,67 @@ Create the report.
         assert!(explanation.contains("source_order:\n"));
         assert!(explanation.contains("- project config: .jagt/config.toml\n"));
         assert!(explanation.contains("- target config: count-chat-message-words\n"));
+    }
+
+    fn minimal_result_options() -> ResultLintOptions {
+        ResultLintOptions {
+            expect_none: false,
+            expect_count: Some(1),
+            expect_target: Some("eda-viz".to_string()),
+            expect_status: Some("success".to_string()),
+            check_files: false,
+            base_dir: PathBuf::from("."),
+        }
+    }
+
+    fn success_result_packet() -> &'static str {
+        "\
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+status: success
+outputs: {}
+verification:
+  - name: checked
+    status: passed
+follow_up: []
+<<<END_AGENT_RESULT>>>
+"
+    }
+
+    #[test]
+    fn result_lint_accepts_minimal_success_result() {
+        let count = lint_agent_result(success_result_packet(), &minimal_result_options())
+            .expect("valid result lints");
+
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn result_lint_rejects_duplicate_status() {
+        let input = "\
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+status: success
+status: failed
+outputs: {}
+verification: []
+follow_up: []
+<<<END_AGENT_RESULT>>>
+";
+
+        let error =
+            lint_agent_result(input, &minimal_result_options()).expect_err("duplicate fails");
+
+        let message = error.to_string();
+        assert!(message.contains("duplicate") && message.contains("status"));
+    }
+
+    #[test]
+    fn result_explain_summarizes_valid_result() {
+        let explanation = explain_agent_result(success_result_packet()).expect("result explains");
+
+        assert!(explanation.contains("target: eda-viz\n"));
+        assert!(explanation.contains("status: success\n"));
+        assert!(explanation.contains("report_only: true\n"));
     }
 }

@@ -1,0 +1,11 @@
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+status: success
+outputs: {}
+verification:
+  - name: no_outputs_expected
+    status: passed
+allowed_actions:
+  - write anywhere in the repository
+follow_up: []
+<<<END_AGENT_RESULT>>>

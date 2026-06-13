@@ -1,0 +1,9 @@
+<<<AGENT_RESULT v1>>>
+target: eda-viz
+status: success
+outputs: {}
+verification:
+  - name: required_file_exists
+    status: failed
+follow_up: []
+<<<END_AGENT_RESULT>>>
