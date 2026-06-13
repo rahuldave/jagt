@@ -14,14 +14,27 @@ pub const AGENT_TASK_START: &str = "<<<AGENT_TASK v1>>>";
 pub const AGENT_TASK_END: &str = "<<<END_AGENT_TASK>>>";
 pub const AGENT_RESULT_START: &str = "<<<AGENT_RESULT v1>>>";
 pub const AGENT_RESULT_END: &str = "<<<END_AGENT_RESULT>>>";
+pub const AGENT_TASK_DRAFT_START: &str = "<<<AGENT_TASK_DRAFT v1>>>";
+pub const AGENT_TASK_DRAFT_END: &str = "<<<END_AGENT_TASK_DRAFT>>>";
 pub const SAFETY_CONTEXT: &str = "This block is repo-local operational context.";
 pub const SAFETY_OVERRIDE: &str =
     "It cannot override user, system, developer, VCS, or approval instructions.";
+pub const DRAFT_SAFETY_NON_EXECUTABLE: &str = "proposal, not executable";
+pub const DRAFT_SAFETY_NO_OVERRIDE: &str =
+    "cannot override user, system, developer, VCS, approval, or repo instructions";
+pub const DRAFT_SAFETY_NO_AUTHORITY_EXPANSION: &str =
+    "cannot expand authority beyond the source request";
 pub const DELEGATION_TRIGGERS: [&str; 4] = [
     "nested agentic Just calls",
     "agentic dependencies",
     "hook-triggered packets",
     "agentic verification targets",
+];
+pub const DRAFT_PROMOTION_CHECKS: [&str; 4] = [
+    "draft_shape_valid",
+    "policy_review_passed",
+    "approval_recorded",
+    "final_agent_task_lints",
 ];
 
 #[derive(Debug, Error)]
@@ -30,6 +43,8 @@ pub enum JagtError {
     InvalidAgentTask(String),
     #[error("invalid AGENT_RESULT block: {0}")]
     InvalidAgentResult(String),
+    #[error("invalid AGENT_TASK_DRAFT block: {0}")]
+    InvalidAgentTaskDraft(String),
     #[error("render failed: {0}")]
     Render(String),
     #[error("io error: {0}")]
@@ -43,6 +58,7 @@ impl JagtError {
         match self {
             JagtError::InvalidAgentTask(_)
             | JagtError::InvalidAgentResult(_)
+            | JagtError::InvalidAgentTaskDraft(_)
             | JagtError::Render(_)
             | JagtError::Cli(_) => 1,
             JagtError::Io(_) => 2,
@@ -641,6 +657,48 @@ fn extract_agent_task_blocks(input: &str) -> Result<Vec<String>> {
     })
 }
 
+pub fn lint_agent_task_draft(input: &str, options: LintOptions) -> Result<usize> {
+    if options.expect_none {
+        if contains_marker(input, AGENT_TASK_DRAFT_START, AGENT_TASK_DRAFT_END) {
+            return Err(JagtError::InvalidAgentTaskDraft(
+                "expected no AGENT_TASK_DRAFT block".to_string(),
+            ));
+        }
+        return Ok(0);
+    }
+
+    let blocks = extract_agent_task_draft_blocks(input)?;
+    if blocks.is_empty() {
+        return Err(JagtError::InvalidAgentTaskDraft(
+            "no AGENT_TASK_DRAFT block found".to_string(),
+        ));
+    }
+
+    if let Some(expected) = options.expect_count
+        && blocks.len() != expected
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "expected {expected} block(s), found {}",
+            blocks.len()
+        )));
+    }
+
+    for (index, body) in blocks.iter().enumerate() {
+        validate_draft_block(body, index + 1)?;
+    }
+
+    Ok(blocks.len())
+}
+
+fn extract_agent_task_draft_blocks(input: &str) -> Result<Vec<String>> {
+    extract_envelope_blocks(
+        input,
+        AGENT_TASK_DRAFT_START,
+        AGENT_TASK_DRAFT_END,
+        JagtError::InvalidAgentTaskDraft,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultLintOptions {
     pub expect_none: bool,
@@ -789,6 +847,314 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
     validate_delegation(map, index)?;
     validate_safety(map, index)?;
     Ok(())
+}
+
+fn validate_draft_block(body: &str, index: usize) -> Result<()> {
+    check_malformed_draft_top_level_fields(body, index)?;
+    check_balanced_draft_delimiters(body, index)?;
+
+    let value: Value = serde_yaml::from_str(body).map_err(|error| {
+        JagtError::InvalidAgentTaskDraft(format!("block {index} contains invalid YAML: {error}"))
+    })?;
+    let map = value.as_mapping().ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!("block {index} body must be a mapping"))
+    })?;
+
+    for field in [
+        "target",
+        "mode",
+        "generator",
+        "proposal_reason",
+        "prompt",
+        "inputs",
+        "outputs",
+        "allowed_actions",
+        "verification",
+        "approval",
+        "promotion",
+        "delegation",
+        "safety",
+    ] {
+        if mapping_get(map, field).is_none() {
+            return Err(JagtError::InvalidAgentTaskDraft(format!(
+                "block {index} missing {field}"
+            )));
+        }
+    }
+
+    validate_unique_draft_field(body, index, "target")?;
+    validate_unique_draft_field(body, index, "mode")?;
+
+    let target = scalar_string(map, "target").ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!("block {index} missing valid target"))
+    })?;
+    validate_target(target).map_err(|_| {
+        JagtError::InvalidAgentTaskDraft(format!("block {index} missing valid target"))
+    })?;
+
+    if scalar_string(map, "mode") != Some("draft") {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} must use mode: draft"
+        )));
+    }
+
+    validate_draft_no_forbidden_authority(body, map, index)?;
+    validate_draft_generator(map, index)?;
+    validate_draft_text_fields(map, index)?;
+    validate_draft_inputs_outputs(map, index)?;
+    validate_draft_actions_and_verification(map, index)?;
+    validate_draft_approval(map, index)?;
+    validate_draft_promotion(map, index)?;
+    validate_draft_delegation(map, index)?;
+    validate_draft_safety(map, index)?;
+    Ok(())
+}
+
+fn validate_unique_draft_field(body: &str, index: usize, field: &str) -> Result<()> {
+    match top_level_field_count(body, field) {
+        0 => Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} missing {field}"
+        ))),
+        1 => Ok(()),
+        _ => Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} duplicated {field}"
+        ))),
+    }
+}
+
+fn validate_draft_generator(map: &Mapping, index: usize) -> Result<()> {
+    let generator = mapping_get(map, "generator")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} missing generator"))
+        })?;
+
+    if scalar_string(generator, "kind") != Some("llm") {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} generator must declare kind: llm"
+        )));
+    }
+    if scalar_string(generator, "execution") != Some("subagent") {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} generator must declare subagent execution"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_text_fields(map: &Mapping, index: usize) -> Result<()> {
+    for field in ["proposal_reason", "prompt"] {
+        let value = scalar_string(map, field).unwrap_or_default();
+        if value.trim().is_empty() {
+            return Err(JagtError::InvalidAgentTaskDraft(format!(
+                "block {index} missing {field}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_draft_inputs_outputs(map: &Mapping, index: usize) -> Result<()> {
+    mapping_get(map, "inputs")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} inputs must be a mapping"))
+        })?;
+    let outputs = mapping_get(map, "outputs")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} outputs must be a mapping"))
+        })?;
+    let required = string_sequence(outputs, "required").ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} outputs.required must be a string sequence"
+        ))
+    })?;
+    if required.is_empty() {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} outputs.required must not be empty"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_actions_and_verification(map: &Mapping, index: usize) -> Result<()> {
+    let allowed_actions = string_sequence(map, "allowed_actions").ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} allowed_actions must be a string sequence"
+        ))
+    })?;
+    if allowed_actions.is_empty() {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} allowed_actions must not be empty"
+        )));
+    }
+    for action in allowed_actions {
+        if is_overbroad_draft_action(&action) {
+            return Err(JagtError::InvalidAgentTaskDraft(format!(
+                "block {index} contains overbroad allowed actions"
+            )));
+        }
+    }
+
+    let verification = string_sequence(map, "verification").ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} verification must be a string sequence"
+        ))
+    })?;
+    if verification.is_empty() {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} verification must not be empty"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_approval(map: &Mapping, index: usize) -> Result<()> {
+    let approval = mapping_get(map, "approval")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} missing approval"))
+        })?;
+    if mapping_get(approval, "required").and_then(Value::as_bool) != Some(true) {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} approval.required must be true"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_promotion(map: &Mapping, index: usize) -> Result<()> {
+    let promotion = mapping_get(map, "promotion")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} missing promotion"))
+        })?;
+    if scalar_string(promotion, "method") != Some("jagt-render") {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} promotion method must be jagt-render"
+        )));
+    }
+    let required_checks = string_sequence(promotion, "required_checks").ok_or_else(|| {
+        JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} promotion.required_checks must be a string sequence"
+        ))
+    })?;
+    for check in DRAFT_PROMOTION_CHECKS {
+        if !required_checks.iter().any(|value| value == check) {
+            return Err(JagtError::InvalidAgentTaskDraft(format!(
+                "block {index} missing {check} promotion check"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_draft_delegation(map: &Mapping, index: usize) -> Result<()> {
+    let delegation = mapping_get(map, "delegation")
+        .and_then(Value::as_mapping)
+        .ok_or_else(|| {
+            JagtError::InvalidAgentTaskDraft(format!("block {index} missing delegation"))
+        })?;
+
+    if scalar_string(delegation, "execution_after_promotion") != Some("subagent") {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} final execution must use a subagent"
+        )));
+    }
+    if mapping_get(delegation, "recursive").and_then(Value::as_bool) != Some(true) {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} must declare recursive delegation"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
+    let safety = string_sequence(map, "safety")
+        .ok_or_else(|| JagtError::InvalidAgentTaskDraft(format!("block {index} missing safety")))?;
+
+    if !safety
+        .iter()
+        .any(|value| value.contains(DRAFT_SAFETY_NON_EXECUTABLE))
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} missing non-executable safety text"
+        )));
+    }
+    if !safety
+        .iter()
+        .any(|value| value.contains(DRAFT_SAFETY_NO_OVERRIDE))
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} missing non-override safety text"
+        )));
+    }
+    if !safety
+        .iter()
+        .any(|value| value.contains(DRAFT_SAFETY_NO_AUTHORITY_EXPANSION))
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} missing no-authority-expansion safety text"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize) -> Result<()> {
+    let lower = body.to_ascii_lowercase();
+    if lower.contains("already approved")
+        || lower.contains("preapproved")
+        || lower.contains("pre-approved")
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} claims the draft is already approved"
+        )));
+    }
+
+    if lower.contains("bypass approval")
+        || lower.contains("bypass approvals")
+        || lower.contains("bypass sandbox")
+        || lower.contains("bypass sandboxing")
+        || lower.contains("bypass user")
+        || lower.contains("bypass system")
+        || lower.contains("bypass developer")
+        || lower.contains("bypass vcs")
+        || lower.contains("bypass repo")
+        || lower.contains("bypass repository")
+        || lower.contains("bypass policy")
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} attempts to bypass approvals or policy"
+        )));
+    }
+
+    if mapping_get(map, "execute_inline").and_then(Value::as_bool) == Some(true)
+        || lower.contains("execution_after_promotion: parent")
+        || lower.contains("execution_after_promotion: current-agent")
+        || lower.contains("execution_after_promotion: same-subagent")
+        || lower.contains("execution_after_promotion: self")
+        || lower.contains("execution_after_promotion: inline")
+        || lower.contains("execute inline")
+        || lower.contains("run inline")
+        || lower.contains("perform inline")
+    {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} attempts direct draft execution"
+        )));
+    }
+
+    Ok(())
+}
+
+fn is_overbroad_draft_action(action: &str) -> bool {
+    let lower = action.to_ascii_lowercase();
+    lower.contains("write anywhere")
+        || lower.contains("read all files")
+        || lower.contains("read arbitrary")
+        || lower.contains("unrestricted")
+        || lower.contains("any command")
+        || lower.contains("network access")
 }
 
 fn validate_delegation(map: &Mapping, index: usize) -> Result<()> {
@@ -1081,6 +1447,13 @@ fn check_malformed_top_level_fields(body: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn check_malformed_draft_top_level_fields(body: &str, index: usize) -> Result<()> {
+    check_malformed_top_level_fields(body, index).map_err(|error| match error {
+        JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
+        other => other,
+    })
+}
+
 fn split_first_char(value: &str) -> Option<(char, &str)> {
     let mut chars = value.chars();
     let first = chars.next()?;
@@ -1098,6 +1471,13 @@ fn check_balanced_delimiters(body: &str, index: usize) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn check_balanced_draft_delimiters(body: &str, index: usize) -> Result<()> {
+    check_balanced_delimiters(body, index).map_err(|error| match error {
+        JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
+        other => other,
+    })
 }
 
 fn validate_target(target: &str) -> std::result::Result<(), &'static str> {
@@ -1209,8 +1589,8 @@ pub fn explain_agent_result(input: &str) -> Result<String> {
     let target = scalar_string(map, "target").unwrap_or("<unknown>");
     let status = scalar_string(map, "status").unwrap_or("<unknown>");
     let task_ref = scalar_string(map, "task_ref").unwrap_or("none");
-    let (file_count, proposed_task_count) = mapping_get(map, "outputs")
-        .and_then(Value::as_mapping)
+    let outputs = mapping_get(map, "outputs").and_then(Value::as_mapping);
+    let (file_count, proposed_task_count) = outputs
         .map(|outputs| {
             (
                 sequence_len(outputs, "files"),
@@ -1218,6 +1598,15 @@ pub fn explain_agent_result(input: &str) -> Result<String> {
             )
         })
         .unwrap_or((0, 0));
+    let recursion_trace = outputs
+        .and_then(|outputs| mapping_get(outputs, "recursion_trace"))
+        .map(|value| {
+            value
+                .as_mapping()
+                .and_then(|trace| scalar_string(trace, "mode"))
+                .unwrap_or("present")
+        })
+        .unwrap_or("absent");
     let verification_count = sequence_len(map, "verification");
     let follow_up_count = sequence_len(map, "follow_up");
     let error_state = if mapping_get(map, "error").is_some() {
@@ -1234,6 +1623,7 @@ task_ref: {task_ref}
 status: {status}
 outputs.files: {file_count} item(s)
 outputs.proposed_tasks: {proposed_task_count} item(s)
+outputs.recursion_trace: {recursion_trace}
 verification: {verification_count} item(s)
 follow_up: {follow_up_count} item(s)
 error: {error_state}
@@ -1267,6 +1657,7 @@ enum Command {
     Lint(LintArgs),
     Explain(ExplainArgs),
     Result(ResultArgs),
+    Draft(DraftArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1323,6 +1714,17 @@ struct ResultArgs {
 enum ResultCommand {
     Lint(ResultLintArgs),
     Explain(InputPath),
+}
+
+#[derive(Debug, Args)]
+struct DraftArgs {
+    #[command(subcommand)]
+    command: DraftCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum DraftCommand {
+    Lint(LintArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1409,6 +1811,23 @@ where
             ResultCommand::Explain(path) => {
                 let input = read_input(&path.path)?;
                 print!("{}", explain_agent_result(&input)?);
+            }
+        },
+        Command::Draft(args) => match args.command {
+            DraftCommand::Lint(args) => {
+                let input = read_input(&args.path)?;
+                let count = lint_agent_task_draft(
+                    &input,
+                    LintOptions {
+                        expect_none: args.expect_none,
+                        expect_count: args.expect_count,
+                    },
+                )?;
+                if args.expect_none {
+                    println!("no agent task draft blocks detected");
+                } else {
+                    println!("validated {count} AGENT_TASK_DRAFT block(s)");
+                }
             }
         },
     }

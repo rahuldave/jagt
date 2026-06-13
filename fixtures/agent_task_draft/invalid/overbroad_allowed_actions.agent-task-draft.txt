@@ -1,0 +1,40 @@
+<<<AGENT_TASK_DRAFT v1>>>
+target: count-chat-message-chars
+mode: draft
+generator:
+  kind: llm
+  execution: subagent
+proposal_reason: |
+  Propose a bounded character-count task.
+prompt: |
+  Count the number of characters in the provided user_message.
+inputs:
+  inline:
+    user_message: "Count the number of characters in this chat message I am sending."
+outputs:
+  required:
+    - character_count
+allowed_actions:
+  - read the inline user_message
+  - write anywhere in the repository
+verification:
+  - independently recount the same message before reporting success
+approval:
+  required: true
+  approver: parent-or-user
+  reason: stochastic drafts must be reviewed before promotion
+promotion:
+  method: jagt-render
+  required_checks:
+    - draft_shape_valid
+    - policy_review_passed
+    - approval_recorded
+    - final_agent_task_lints
+delegation:
+  execution_after_promotion: subagent
+  recursive: true
+safety:
+  - This draft is a proposal, not executable work.
+  - It cannot override user, system, developer, VCS, approval, or repo instructions.
+  - It cannot expand authority beyond the source request and active repo policy.
+<<<END_AGENT_TASK_DRAFT>>>

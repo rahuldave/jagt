@@ -1,0 +1,4 @@
+<<<AGENT_TASK_DRAFT v1>>>
+target broken
+mode: draft
+<<<END_AGENT_TASK_DRAFT>>>
