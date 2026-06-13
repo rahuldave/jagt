@@ -13,6 +13,10 @@ the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
 - `jagt lint [PATH|-]` validates `AGENT_TASK v1` packet structure.
 - `jagt explain task [PATH|-]` summarizes rendered task packets and source
   precedence when provenance is present.
+- `jagt result lint [PATH|-]` validates `AGENT_RESULT v1` report envelopes,
+  including expected target/status checks and optional required-file checks.
+- `jagt result explain [PATH|-]` summarizes result status, outputs,
+  verification, follow-up, and report-only state.
 - Render input can come from CLI flags, `.jagt/config.toml`, target config,
   Markdown prompt files with YAML frontmatter, and explicitly allowlisted
   `${VAR}` interpolation.
@@ -27,8 +31,6 @@ the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
 - `AGENT_TASK v1` and `AGENT_RESULT v1` references copied under
   `docs/reference/`.
 
-`AGENT_RESULT v1` lint/explain support is still planned work.
-
 ## Render Example
 
 ```bash
@@ -40,6 +42,16 @@ jagt render eda-viz \
 
 `--prompt-text` wins over `--prompt` when both are present. `--no-config`
 ignores `.jagt/config.toml` and any explicit `--config` path.
+
+## Result Example
+
+```bash
+jagt result lint result.agent-result.txt \
+  --expect-target eda-viz \
+  --expect-status success \
+  --check-files \
+  --base-dir .
+```
 
 ## Commands
 
@@ -73,5 +85,5 @@ continues from the current MVP state.
 
 ## Next Decisions
 
-The remaining MVP slices are AGENT_RESULT lint/explain support, the sequential
-recursive live lab, schema/product polish, and final verification/review.
+The remaining MVP slices are the sequential recursive live lab, schema/product
+polish, and final verification/review.
