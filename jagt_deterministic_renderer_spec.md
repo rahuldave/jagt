@@ -1,4 +1,6 @@
-# Spec: jagt Deterministic Agent Task Renderer
+# Spec: jagt Deterministic Agentic Just Envelope Renderer
+
+Status: proposed MVP, ready for implementation planning.
 
 ## Problem Statement
 
@@ -6,28 +8,68 @@
 targets. Today those packets are expected to be emitted by project scripts, but
 there is no standard deterministic renderer, linter, or explanation tool.
 
-Projects need a small, reproducible tool that can render task packets from
+Projects need a small, reproducible CLI that can render task packets from
 stable inputs such as CLI arguments, repo config, allowlisted environment
-variables, and Markdown prompt files. The tool should not use an LLM. Its job is
+variables, and Markdown prompt files. The tool must not use an LLM. Its job is
 to make packet creation boring, testable, and portable across Git/GitButler and
 jj skill repos.
 
 Call the tool `jagt`: just agent task.
 
+## Source Of Truth
+
+The protocol source of truth for this repository is the skill-local Just
+contract, especially the `Agentic Just Targets`, `AGENT_TASK v1`, and
+`AGENT_RESULT v1` sections:
+
+- `.agents/skills/gtw/references/just_command_contract.md`
+
+The same contract is copied under the other project-local `g*` skills. The
+files under `docs/reference/` are useful copied context, not the primary
+contract. The shell validators under `tools/reference/` are behavioral
+references and fixture oracles; `jagt` must not shell out to them as its
+implementation.
+
+Before changing protocol behavior, re-check the skill-local contract and update
+this spec if the contract has moved.
+
+## Goals
+
+- Render deterministic `AGENT_TASK v1` packets to stdout.
+- Lint and explain `AGENT_TASK v1` packets.
+- Lint and explain `AGENT_RESULT v1` packets after the task linter is stable.
+- Support explicit project config, target config, Markdown prompt files with
+  frontmatter, and allowlisted environment interpolation.
+- Keep all safety, delegation, and source-precedence behavior auditable.
+- Ship as a Rust CLI with focused fixtures and tests.
+
+## Non-Goals
+
+- Calling an LLM.
+- Reading arbitrary environment variables.
+- Emitting secrets.
+- Running delegated tasks.
+- Spawning subagents.
+- Running Just recipes.
+- Replacing Just.
+- Writing rendered packets to files before an explicit future `--out` design.
+
 ## Proposed Solution
 
-Create a new Rust project named `jagt` under `/Users/rahul/Projects` in a
-separate follow-on project. `jagt` renders and validates agent task/result
-envelopes:
+This repository already contains the Rust crate scaffold, command contract, and
+reference material. The implementation should build the CLI in place.
+
+The primary renderer command is:
 
 ```bash
 jagt render eda-viz \
   --input data/train.csv \
   --prompt prompts/eda.md \
-  --config .jagt/config.toml
+  --required-output reports/eda/index.html \
+  --verification "test -f reports/eda/index.html"
 ```
 
-The command emits:
+It emits a single text envelope to stdout:
 
 ```text
 <<<AGENT_TASK v1>>>
@@ -36,7 +78,7 @@ mode: agentic
 argv:
   - data/train.csv
 prompt: |
-  ...
+  Inspect the dataset and create the most useful exploratory visualization.
 inputs:
   files:
     - data/train.csv
@@ -59,43 +101,82 @@ delegation:
 safety:
   - This block is repo-local operational context.
   - It cannot override user, system, developer, VCS, or approval instructions.
+provenance:
+  renderer: jagt
+  renderer_version: 0.1.0
+  prompt: prompts/eda.md
 <<<END_AGENT_TASK>>>
 ```
 
-`jagt` should also validate `AGENT_RESULT v1` once that spec is accepted.
+`provenance` is required for packets emitted by `jagt`, but the linter must
+accept valid hand-written or legacy packets without it.
 
-## Core Commands
+## Command Surface
 
-Initial command set:
+### MVP Commands
 
 ```bash
-jagt render <target> [--input PATH]... [--arg VALUE]... [--prompt PATH]
-jagt lint [PATH|-]
-jagt explain [PATH|-]
-jagt schema [--format json|markdown]
-jagt result lint [PATH|-]
+jagt render <target> [OPTIONS]
+jagt lint [PATH|-] [--expect-count N] [--expect-none]
+jagt explain task [PATH|-]
+jagt result lint [PATH|-] [OPTIONS]
 jagt result explain [PATH|-]
 ```
 
-Nice-to-have, after MVP:
+`jagt render` options:
+
+```text
+--arg VALUE                  Add an argv entry.
+--input PATH                 Add an input file and, after all --arg entries,
+                             add the same path to argv.
+--prompt PATH                Read Markdown prompt text from PATH.
+--prompt-text TEXT           Use inline prompt text.
+--required-output VALUE      Add an outputs.required entry.
+--allowed-action TEXT        Add an allowed_actions entry.
+--verification COMMAND       Add a verification entry.
+--config PATH                Read config from PATH instead of .jagt/config.toml.
+--no-config                  Ignore .jagt/config.toml.
+```
+
+If both `--prompt` and `--prompt-text` are present, CLI `--prompt-text` wins.
+If no prompt is provided by any source, rendering fails. If no allowed actions
+are provided, rendering uses conservative defaults derived from declared inputs
+and outputs:
+
+- `read listed inputs` when inputs exist
+- `create listed outputs` when required outputs exist
+
+`jagt lint` validates `AGENT_TASK v1` envelopes. It accepts stdin with `-` and
+file input otherwise. The default is to require at least one task block.
+
+`jagt result lint` validates `AGENT_RESULT v1` envelopes. It should support the
+reference-checker options before result linting is considered complete:
+
+```text
+--expect-count N
+--expect-none
+--expect-target TARGET
+--expect-status STATUS
+--check-files
+--base-dir DIR
+```
+
+`jagt explain task` and `jagt result explain` print human-readable structure,
+diagnostics, and source/provenance information. Explanation commands must not
+rewrite input files.
+
+### Later Commands
 
 ```bash
+jagt schema [--format json|markdown]
 jagt init
 jagt targets
 jagt render --dry-run <target>
 jagt normalize [PATH|-]
 ```
 
-`jagt render` writes only to stdout unless an explicit `--out` flag is added in
-a later version. Just recipes can then use it directly:
-
-```just
-eda-viz-agentic +FILES:
-  @jagt render eda-viz --input {{FILES}} --prompt prompts/eda.md
-
-agentic TARGET +ARGS:
-  @jagt render {{TARGET}} --arg {{ARGS}}
-```
+`schema` should wait until the Rust data model is stable enough to generate or
+maintain a schema without churn.
 
 ## Deterministic Inputs
 
@@ -105,19 +186,21 @@ agentic TARGET +ARGS:
 - A repo config file, defaulting to `.jagt/config.toml` when present.
 - A target-specific config entry in that file.
 - Markdown prompt files, optionally with YAML frontmatter.
-- Allowlisted environment variables.
+- Allowlisted environment variables referenced through explicit interpolation.
 
 It must not:
 
 - Call an LLM.
+- Depend on network access.
 - Read arbitrary environment variables by default.
 - Include secrets in emitted packets.
 - Change files unless an explicit future command is designed for that.
-- Depend on network access.
 
 ## Config Shape
 
-Example `.jagt/config.toml`:
+The accepted config path is `.jagt/config.toml`.
+
+Example:
 
 ```toml
 [project]
@@ -127,13 +210,15 @@ name = "example-project"
 allow = ["DATA_ROOT", "REPORT_ROOT"]
 redact = ["*_TOKEN", "*_SECRET", "PASSWORD"]
 
-[defaults.delegation]
-execution = "subagent"
-recursive = true
+[defaults]
+allowed_actions = [
+  "read listed inputs",
+  "create listed outputs",
+]
 
 [targets.eda-viz]
 prompt = "prompts/eda.md"
-inputs = ["data/train.csv"]
+inputs = ["${DATA_ROOT}/train.csv"]
 required_outputs = ["reports/eda/index.html"]
 allowed_actions = [
   "read listed inputs",
@@ -143,7 +228,7 @@ allowed_actions = [
 verification = ["test -f reports/eda/index.html"]
 ```
 
-CLI flags override config values in predictable order:
+Effective configuration precedence is:
 
 1. Built-in defaults.
 2. Project config.
@@ -151,7 +236,12 @@ CLI flags override config values in predictable order:
 4. Prompt frontmatter.
 5. CLI flags.
 
-The effective configuration should be visible through `jagt explain`.
+The effective configuration and source order must be visible through an
+explanation command.
+
+Config and frontmatter may add or override normal render fields, but they must
+not disable or alter required safety text, required delegation text, or normal
+user/system/developer/VCS/approval rules.
 
 ## Markdown Prompt Files
 
@@ -173,86 +263,161 @@ Inspect the dataset and create the most useful exploratory visualization.
 Prefer missingness, outlier, and distribution views.
 ```
 
-The Markdown body becomes `prompt: |`. Frontmatter fills structured fields.
-Frontmatter must not override safety rules or delegation requirements.
+The Markdown body becomes `prompt: |`. Frontmatter fills structured fields
+using the same names as config. Frontmatter must not override safety rules or
+delegation requirements.
 
 ## Environment Variables
 
 Environment capture is useful for reproducibility, but dangerous if implicit.
-`jagt` should include only allowlisted variables:
+`jagt` may interpolate environment variables only when all of these are true:
 
-```toml
-[env]
-allow = ["DATA_ROOT", "REPORT_ROOT"]
-redact = ["*_TOKEN", "*_SECRET", "PASSWORD"]
-```
+- The variable name is listed in `[env].allow`.
+- The reference appears as `${NAME}` inside a config or frontmatter value.
+- The variable name does not match a `[env].redact` glob.
+- The value does not match an obvious secret redaction rule.
 
-Rendered packets may include captured values under a provenance field in a later
-version, but secrets must be redacted or rejected. The MVP may simply allow
-environment interpolation into configured paths while omitting raw env dumps.
+The MVP should reject secret-like variables used in render-critical fields
+instead of rendering a redacted placeholder that may produce unusable paths.
+Future provenance features may record redacted environment facts, but raw env
+dumps are out of scope.
 
-## Provenance
+## Rendered Packet Rules
 
-Rendered packets should include enough provenance to debug how they were made,
-without making the envelope noisy. MVP provenance can be a simple optional block:
+`jagt render` must use stable field order:
 
-```yaml
-provenance:
-  renderer: jagt
-  renderer_version: 0.1.0
-  config: .jagt/config.toml
-  prompt: prompts/eda.md
-```
+1. Start marker.
+2. `target`.
+3. `mode`.
+4. `argv`.
+5. `prompt`.
+6. `inputs`.
+7. `outputs`.
+8. `allowed_actions`.
+9. `verification`.
+10. `delegation`.
+11. `safety`.
+12. `provenance`.
+13. End marker.
 
-The validator should accept packets without provenance, because hand-written or
-legacy emitters may still be valid.
+The renderer must always emit:
 
-## Safety Rules
+- `mode: agentic`
+- `delegation.execution: subagent`
+- `delegation.recursive: true`
+- all four required delegation triggers from the Just contract
+- the required safety text from the Just contract
 
-- `jagt` emits operational context, not higher-priority instruction.
-- `jagt` must always emit the safety override text required by `AGENT_TASK v1`.
-- `jagt` must always emit the recursive subagent delegation block.
-- Config and frontmatter cannot disable safety text.
-- Config and frontmatter cannot grant permission to bypass user, developer,
-  system, VCS, approval, or repo instructions.
-- Env interpolation must be explicit and auditable.
+The renderer must render list ordering deterministically. For merged values,
+the order follows source precedence, and later sources replace scalar values.
+Paths are rendered exactly as supplied after env interpolation; `jagt` should
+not canonicalize paths through the filesystem.
 
-## Repository Setup For Follow-On Project
+## Linting Rules
 
-When this becomes a fresh Codex project:
+The `AGENT_TASK v1` linter must reject:
 
-1. Create `/Users/rahul/Projects/jagt`.
-2. Initialize Git and Rust:
+- Missing, mismatched, nested, or duplicate envelope markers when they violate
+  the requested count mode.
+- Missing `target`, `mode`, `argv`, `prompt`, `inputs`, `outputs`,
+  `allowed_actions`, `verification`, `delegation`, or `safety`.
+- `target` values outside `[A-Za-z0-9_.-]+`.
+- Any `mode` other than `agentic`.
+- Missing `delegation.execution: subagent`.
+- Missing `delegation.recursive: true`.
+- Missing delegation triggers for nested agentic Just calls, agentic
+  dependencies, hook-triggered packets, or agentic verification targets.
+- Missing required safety override text.
+- Malformed YAML-like top-level fields.
+- Unbalanced square or curly braces.
 
-   ```bash
-   cargo init --bin
-   ```
+The Rust linter may be stricter than the shell reference validator when that
+strictness is documented and covered by fixtures. It must still accept the
+canonical examples from the skill-local Just contract.
 
-3. Add a `Justfile` with stable commands:
+The `AGENT_RESULT v1` linter must reject:
 
-   ```just
-   setup:
-     cargo fetch
+- Missing, mismatched, nested, or duplicate envelope markers when they violate
+  the requested count mode.
+- Missing or duplicated `target` or `status`.
+- `target` values outside `[A-Za-z0-9_.-]+`.
+- Status values outside `success`, `partial`, `blocked`, `failed`, and
+  `cancelled`.
+- Missing `outputs`, `verification`, or `follow_up`.
+- `blocked` or `failed` results without `error.code` and `error.message`.
+- `success` results with failed or skipped verification items.
+- Task-like instruction fields such as `allowed_actions`, `delegation`, or
+  `safety`.
+- Required `outputs.files` paths that are absolute or absent on disk when
+  `--check-files` is enabled.
 
-   fmt:
-     cargo fmt --all
+## Fixture Strategy
 
-   lint:
-     cargo clippy --all-targets --all-features -- -D warnings
+Use focused fixtures with one reason to pass or fail:
 
-   test:
-     cargo test --all-features
+- `fixtures/agent_task/valid`
+- `fixtures/agent_task/invalid`
+- `fixtures/agent_result/valid`
+- `fixtures/agent_result/invalid`
 
-   verify: fmt lint test
-   ```
+Golden render snapshots may live under `fixtures/agent_task/valid` or
+`tests/snapshots/` if the project adopts `insta`. The first renderer tests
+should prove deterministic output byte-for-byte before broad fixture expansion.
 
-4. Add `.gitignore` for `target/`, local temp files, and any `.jagt/tmp/`
-   fixture output.
-5. Copy/adapt `AGENTS.md` from the reusable Git/Gest skills repo, keeping the
-   Gest workflow guidance but making the project command contract Rust-specific.
-6. Put this spec in the repo as `jagt-spec.md`.
-7. Create fixtures for valid task packets, invalid task packets, valid result
-   packets, and invalid result packets.
+## Testing Strategy
+
+The detailed test plan lives in `docs/jagt-testing-strategy.md`.
+
+The default gate must be deterministic and LLM-free:
+
+- Rust unit tests for renderer, marker extraction, task linting, result
+  linting, config merging, prompt frontmatter, and env interpolation.
+- CLI integration tests with `assert_cmd` and temp directories.
+- Contract fixture parity tests using canonical examples from the skill-local
+  Just contract.
+
+Live agent behavior is tested separately with transcript labs. Those labs
+bootstrap a fresh folder, copy the relevant agentic Just language from
+`.agents/skills/gtw/references/just_command_contract.md` into `AGENTS.md`, run
+`jagt` from a Just target, and validate that a real LLM agent reacts to the
+emitted `AGENT_TASK v1` as a subagent handoff boundary.
+
+Recursive live coverage is sequential in the test harness: planner result,
+parent-rendered child task, worker result, parent final result, and unsafe
+proposal refusal. Live labs are opt-in unless the project later has a stable
+local agent runner suitable for CI.
+
+## Implementation Phases
+
+Phase 1 should establish the smallest useful core:
+
+1. Rust CLI parsing for `jagt render`, `jagt lint`, and `jagt explain task`.
+2. CLI-only render from `--prompt-text`, `--arg`, `--input`,
+   `--required-output`, `--allowed-action`, and `--verification`.
+3. A real Rust `AGENT_TASK v1` parser/linter.
+4. Focused fixtures and tests for valid rendering, missing markers, missing
+   safety, and missing recursive delegation.
+
+Phase 2 should add project inputs:
+
+1. `.jagt/config.toml`.
+2. Target config lookup.
+3. Markdown prompt files and frontmatter.
+4. Explicit env interpolation and secret rejection.
+5. `explain task` source-precedence output.
+
+Phase 3 should add result support:
+
+1. `jagt result lint`.
+2. `jagt result explain`.
+3. Expected target/status checks.
+4. Optional required-file existence checks.
+
+Phase 4 should add schema and polish:
+
+1. JSON or Markdown schema output.
+2. `jagt init` if useful.
+3. Normalization or dry-run support if a concrete use case appears.
 
 ## Scope
 
@@ -264,45 +429,60 @@ When this becomes a fresh Codex project:
 - Config, prompt frontmatter, and explicit env interpolation.
 - Rust CLI with focused fixtures and tests.
 
-### Out of Scope
+### Out Of Scope
 
-- LLM-generated task drafts. That belongs to the later stochastic
+- LLM-generated task drafts. That belongs to a later stochastic
   `AGENT_TASK_DRAFT v1` workflow spec.
 - Running the delegated task.
 - Spawning subagents.
 - Writing project outputs such as reports or charts.
+- Writing rendered packets to files.
 - Replacing Just itself.
 
 ## Acceptance Criteria
 
 - `jagt render` emits a valid `AGENT_TASK v1` packet from CLI-only input.
+- `jagt render` emits deterministic byte-for-byte output for the same inputs.
 - `jagt render` emits a valid packet from config plus Markdown prompt file.
 - `jagt lint` accepts valid packets and rejects malformed delimiters, missing
   required fields, missing safety text, and missing delegation recursion.
 - `jagt result lint` accepts valid `AGENT_RESULT v1` envelopes and rejects
-  malformed, target-mismatched, or missing-status results.
-- `jagt explain` shows effective config source order.
+  malformed, target-mismatched, missing-status, and report-authority results.
+- `jagt explain task` shows effective config source order.
 - Tests cover CLI overrides, target config, prompt frontmatter, env allowlist,
-  secret rejection/redaction, and stdin linting.
+  secret rejection, and stdin linting.
+- Live agent transcript labs prove that an LLM running in a fresh folder with
+  copied `AGENTS.md` contract language treats emitted `AGENT_TASK v1` packets
+  as subagent handoffs, including the sequential recursive trampoline.
 - The repo has a clean Rust command contract via `just verify`.
+
+## Decisions
+
+- Config directory: `.jagt/`.
+- Default config path: `.jagt/config.toml`.
+- Render output: text envelopes only for MVP.
+- File output: no `--out` for MVP.
+- Schema strategy: Rust structs first; schema generation is later.
+- Provenance: required for packets emitted by `jagt`; optional for packets
+  accepted by the linter.
+- `task_ref` digest: not MVP. Revisit when result/task pairing needs a stable
+  cross-envelope identifier.
 
 ## Open Questions
 
-- Should the config directory be `.jagt/` or `.agent-task/`?
-- Should `jagt render` support JSON output in addition to text envelopes?
-- Should packet schema be maintained as JSON Schema, Rust structs only, or both?
-- Should provenance be required in packets emitted by `jagt`, even if optional
-  for hand-written packets?
-- Should `jagt` compute a stable `task_ref` digest for pairing
-  `AGENT_TASK v1` with `AGENT_RESULT v1`?
+- Should `jagt` eventually generate JSON Schema from Rust types, maintain JSON
+  Schema by hand, or avoid formal schema output?
+- Which crate set should the implementation use for CLI parsing, YAML/TOML,
+  frontmatter, redaction globs, and tests?
+- Should GitHub/CI/release packaging be part of the first public milestone or a
+  follow-up after the CLI behavior stabilizes?
 
 ## References
 
-- `internal_docs/agentic_just_targets_base_spec.md`
-- `internal_docs/agent_result_v1_spec.md`
-- Gest artifact `luuyrvlwtmnyuxkptnsyoolurynkmswr`: Agentic Just Targets Base
-  Spec
-- Git reusable skills PR #34 and jj reusable skills PR #20: merged
-  `AGENT_TASK v1` support
-- The earlier `cx` project setup pattern: create a new repo, copy/adapt
-  reusable Git/Gest skills, then take it up as a fresh Codex project
+- `.agents/skills/gtw/references/just_command_contract.md`
+- `tools/reference/validate_agent_task.sh`
+- `tools/reference/validate_agent_result.sh`
+- `docs/reference/agentic_just_targets_base_spec.md`
+- `docs/reference/agent_result_v1_spec.md`
+- `docs/jagt-rust-prep.md`
+- `docs/jagt-testing-strategy.md`
