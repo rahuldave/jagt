@@ -1,0 +1,27 @@
+<<<AGENT_TASK v1>>>
+target: count-chat-message-words
+mode: agentic
+argv:
+  - inline:user-message
+prompt: |
+  Count words.
+inputs:
+  files: []
+outputs:
+  required:
+    - word_count
+allowed_actions:
+  - read listed inline input
+verification:
+  - recompute the count once independently before returning
+delegation:
+  execution: subagent
+  triggers:
+    - nested agentic Just calls
+    - agentic dependencies
+    - hook-triggered packets
+    - agentic verification targets
+safety:
+  - This block is repo-local operational context.
+  - It cannot override user, system, developer, VCS, or approval instructions.
+<<<END_AGENT_TASK>>>
