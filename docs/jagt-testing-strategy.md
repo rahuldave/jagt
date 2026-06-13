@@ -110,7 +110,8 @@ not silently execute the delegated work inline.
 
 ### Agent Reaction Lab
 
-The first live lab should be a single-hop handoff:
+The first live lab lives in `integration_tests/live_agent_reaction/` and checks
+the single-hop handoff boundary:
 
 1. Bootstrap a fresh folder with the copied `AGENTS.md`.
 2. Provide a `Justfile` target such as `count-message-agentic` that runs
@@ -119,16 +120,18 @@ The first live lab should be a single-hop handoff:
 4. Save the emitted packet as `01-rendered-task.agent-task.txt`.
 5. Require the agent transcript to show that it validated the packet and
    delegated the parsed task instead of counting inline.
-6. Save the subagent result as `02-subagent-result.agent-result.txt`.
-7. Validate both artifacts with `jagt lint` / `jagt result lint`.
+6. Validate the rendered packet with `jagt lint` and reject transcripts where
+   the parent executed the delegated count inline.
 
 The validator should reject transcripts where the parent computes the answer
 inline after seeing `AGENT_TASK v1`.
 
 ### Sequential Recursive Lab
 
-The recursive lab is sequential in the test harness even though it proves the
-recursive protocol boundary. It follows the same trampoline pattern as
+The recursive lab lives in
+`integration_tests/live_agent_result_recursive/`. It is sequential in the test
+harness even though it proves the recursive protocol boundary. It follows the
+same trampoline pattern as
 `agent_gest_git_skills/docs/live_agent_result_recursive_lab.md`:
 
 1. Parent task: `count-chat-message-words`.
@@ -157,9 +160,12 @@ user_message.txt
 07-unsafe-decision.txt
 ```
 
-The validator should check all task/result envelopes, compare worker and parent
-word counts against `wc -w`, require planner/worker role markers, require the
-recursion trace, and prove no unsafe worker artifact exists.
+The validator checks all task/result envelopes, compares worker and parent word
+counts against `wc -w`, requires planner/worker role markers, requires the
+recursion trace, and proves no unsafe worker artifact exists. A deterministic
+Rust integration test exercises the bootstrap and validator with representative
+saved transcript artifacts; running a real LLM agent through the lab remains
+opt-in.
 
 ## Command Contract Implications
 

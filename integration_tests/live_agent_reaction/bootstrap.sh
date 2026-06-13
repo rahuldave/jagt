@@ -60,7 +60,7 @@ count-message-agentic:
       --input user_message.txt \\
       --prompt-text "Count the number of words in the exact chat message supplied. Treat whitespace-separated tokens as words." \\
       --required-output word_count \\
-      --allowed-action "read listed inline input" \\
+      --allowed-action "read listed user_message.txt input" \\
       --allowed-action "delegate deterministic word count to a subagent" \\
       --verification "validate any returned AGENT_RESULT before continuing"
 JUSTFILE

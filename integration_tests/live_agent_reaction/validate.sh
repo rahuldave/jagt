@@ -56,6 +56,9 @@ require_grep 'AGENT_RESULT v1' "$lab_dir/AGENTS.md" "AGENT_RESULT report languag
 require_grep '^target: count-chat-message-words$' \
   "$lab_dir/01-rendered-task.agent-task.txt" \
   "rendered task target"
+require_grep '^    - user_message.txt$' \
+  "$lab_dir/01-rendered-task.agent-task.txt" \
+  "rendered task message input"
 require_grep '^  recursive: true$' \
   "$lab_dir/01-rendered-task.agent-task.txt" \
   "rendered recursive delegation"
