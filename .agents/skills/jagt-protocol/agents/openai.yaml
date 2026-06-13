@@ -1,0 +1,3 @@
+interface:
+  display_name: "Jagt Protocol"
+  short_description: "Validate standalone jagt protocol packets and demos"

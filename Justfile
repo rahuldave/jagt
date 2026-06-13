@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+cargo_target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 default: verify
 
@@ -28,10 +29,13 @@ test target="":
 smoke:
     cargo run -- --help
 
+protocol-demo:
+    bash .agents/skills/jagt-protocol/scripts/run_protocol_demo.sh {{cargo_target_dir}}/debug/jagt
+
 docs:
     cargo doc --no-deps
 
 diff-check:
     git diff --check
 
-verify: fmt-check lint typecheck build test smoke diff-check
+verify: fmt-check lint typecheck build test smoke protocol-demo diff-check
