@@ -59,9 +59,9 @@ Required deterministic CLI flows:
 
 ### Contract Fixture Parity
 
-Keep canonical fixtures derived from the skill-local Just contract:
+Keep canonical fixtures derived from jagt's standalone protocol skill:
 
-- source: `.agents/skills/gtw/references/just_command_contract.md`
+- source: `.agents/skills/jagt-protocol/references/protocol_contract.md`
 - fixtures: `fixtures/contract/agent_task` and `fixtures/contract/agent_result`
 
 The Rust linter must accept the canonical contract examples. When Rust behavior
@@ -84,7 +84,7 @@ Create a fresh temporary folder for each live lab. The lab bootstrap should
 write an `AGENTS.md` that copies the relevant agentic Just language from:
 
 ```text
-.agents/skills/gtw/references/just_command_contract.md
+.agents/skills/jagt-protocol/references/protocol_contract.md
 ```
 
 The copied language must include:
@@ -131,8 +131,7 @@ inline after seeing `AGENT_TASK v1`.
 The recursive lab lives in
 `integration_tests/live_agent_result_recursive/`. It is sequential in the test
 harness even though it proves the recursive protocol boundary. It follows the
-same trampoline pattern as
-`agent_gest_git_skills/docs/live_agent_result_recursive_lab.md`:
+same trampoline pattern as the standalone `jagt-protocol` contract:
 
 1. Parent task: `count-chat-message-words`.
 2. Planner subagent returns `status: partial` with

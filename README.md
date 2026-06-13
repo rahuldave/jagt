@@ -17,6 +17,9 @@ the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
   including expected target/status checks and optional required-file checks.
 - `jagt result explain [PATH|-]` summarizes result status, outputs,
   verification, follow-up, and report-only state.
+- `jagt draft lint [PATH|-]` validates non-executable `AGENT_TASK_DRAFT v1`
+  proposal envelopes before human or parent-agent approval and deterministic
+  promotion.
 - Render input can come from CLI flags, `.jagt/config.toml`, target config,
   Markdown prompt files with YAML frontmatter, and explicitly allowlisted
   `${VAR}` interpolation.
@@ -25,10 +28,11 @@ the staged implementation plan in `docs/jagt-mvp-implementation-plan.md`.
 - Focused Rust unit tests, CLI integration tests, invalid fixtures, and opt-in
   live agent transcript labs live under `tests/`, `fixtures/`, and
   `integration_tests/`.
+- The repo-local `.agents/skills/jagt-protocol/` skill supplies standalone
+  protocol context, jagt lint wrappers, and the send/receive/draft demo for
+  jagt labs.
 - Stable command contract in `Justfile`.
-- Git/GitButler Gest Codex skills installed into `.agents/skills/` with
-  `npx skills add`.
-- `AGENT_TASK v1` and `AGENT_RESULT v1` references copied under
+- `AGENT_TASK v1`, `AGENT_RESULT v1`, and `AGENT_TASK_DRAFT v1` references live under
   `docs/reference/`.
 
 ## Render Example
@@ -53,6 +57,38 @@ jagt result lint result.agent-result.txt \
   --base-dir .
 ```
 
+## Draft Example
+
+```bash
+jagt draft lint proposed.agent-task-draft.txt --expect-count 1
+```
+
+Draft linting checks shape, required approval, safety language, promotion
+checks, recursive subagent delegation, and forbidden authority patterns. It does
+not approve, execute, or compile a draft.
+
+## Protocol Demo
+
+```bash
+just protocol-demo
+```
+
+The demo is standalone inside this repository. It renders and validates an
+outbound task, validates inbound result shapes, checks recursive result
+fixtures, validates a draft proposal, and promotes it through `jagt render`.
+It uses `.agents/skills/jagt-protocol/` for packet-contract context and
+skill-local wrappers, so the `jagt` repository does not need the Git or jj Gest
+skill repositories installed to run its protocol labs.
+
+The demo exercises the three packet classes that `jagt` owns:
+
+- `AGENT_TASK v1`: deterministic executable handoff emitted by `jagt render`
+  and verified by `jagt lint`.
+- `AGENT_RESULT v1`: report-only subagent response verified by
+  `jagt result lint`, including recursive result trace fixtures.
+- `AGENT_TASK_DRAFT v1`: stochastic LLM proposal verified by `jagt draft lint`,
+  then promoted only through deterministic `jagt render` after approval.
+
 ## Commands
 
 ```bash
@@ -64,12 +100,14 @@ just typecheck
 just build
 just test
 just smoke
+just protocol-demo
 just docs
 just verify
 ```
 
 `just verify` is the normal local gate. It currently checks formatting, clippy,
-typecheck, build, tests, smoke help output, and whitespace hygiene.
+typecheck, build, tests, smoke help output, the standalone protocol demo, and
+whitespace hygiene.
 
 ## Fresh Codex Kickoff
 

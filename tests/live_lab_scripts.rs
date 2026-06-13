@@ -6,6 +6,19 @@ use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
 #[test]
+fn standalone_protocol_demo_sends_receives_and_promotes_packets() {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let jagt_bin = PathBuf::from(env!("CARGO_BIN_EXE_jagt"));
+
+    Command::new("bash")
+        .arg(project_root.join(".agents/skills/jagt-protocol/scripts/run_protocol_demo.sh"))
+        .arg(&jagt_bin)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("jagt protocol demo passed"));
+}
+
+#[test]
 fn live_agent_reaction_lab_accepts_rendered_delegation_decision() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lab = tempdir().expect("temp lab");

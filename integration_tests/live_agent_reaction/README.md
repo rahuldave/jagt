@@ -17,11 +17,11 @@ lab_dir="$(mktemp -d "${TMPDIR:-/tmp}/jagt-live-agent.XXXXXX")"
 integration_tests/live_agent_reaction/bootstrap.sh "$lab_dir" "$PWD/target/debug/jagt"
 ```
 
-The bootstrap writes a fresh `AGENTS.md` that copies the relevant agentic Just
-contract language from:
+The bootstrap writes a fresh `AGENTS.md` that copies the standalone jagt
+protocol contract language from:
 
 ```text
-.agents/skills/gtw/references/just_command_contract.md
+.agents/skills/jagt-protocol/references/protocol_contract.md
 ```
 
 It also creates a `Justfile` with `count-message-agentic`.

@@ -88,6 +88,36 @@ fn result_lint_validates_partial_proposed_tasks() {
 }
 
 #[test]
+fn result_lint_validates_local_recursion_trace() {
+    Command::cargo_bin("jagt")
+        .expect("binary exists")
+        .args([
+            "result",
+            "lint",
+            "fixtures/agent_result/valid/local_recursion.agent-result.txt",
+            "--expect-target",
+            "count-chat-message-words",
+            "--expect-status",
+            "success",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("jagt")
+        .expect("binary exists")
+        .args([
+            "result",
+            "explain",
+            "fixtures/agent_result/valid/local_recursion.agent-result.txt",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "outputs.recursion_trace: local-recursion-supported",
+        ));
+}
+
+#[test]
 fn result_lint_expect_none_allows_ordinary_output_and_rejects_result_blocks() {
     Command::cargo_bin("jagt")
         .expect("binary exists")

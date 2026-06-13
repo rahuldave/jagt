@@ -23,13 +23,13 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lab_dir="$1"
 jagt_bin="${2:-$repo_root/target/debug/jagt}"
-contract="$repo_root/.agents/skills/gtw/references/just_command_contract.md"
+contract="$repo_root/.agents/skills/jagt-protocol/references/protocol_contract.md"
 excerpt="$lab_dir/agentic_just_contract.md"
 
 mkdir -p "$lab_dir"
 
 if [ ! -f "$contract" ]; then
-  echo "missing Just contract: $contract" >&2
+  echo "missing standalone jagt protocol contract: $contract" >&2
   exit 2
 fi
 
