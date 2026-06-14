@@ -9,8 +9,8 @@ an LLM, choose whether work is safe, approve stochastic proposals, or launch
 subagents. Those choices belong to the parent agent under the active user,
 system, developer, approval, VCS, and repository instructions.
 
-The flow map here is aligned with GASTKit (`agent_gest_git_skills`) and GASTJJ
-(`agent_gest_jj_skills`), including their agentic target, result, recursive
+The flow map here is aligned with Gest Git (`agent_gest_git_skills`) and Gest
+jj (`agent_gest_jj_skills`), including their agentic target, result, recursive
 result, and task-draft labs. The jagt repository keeps its own standalone demos
 under `.agents/skills/jagt-protocol/` and `integration_tests/`.
 
@@ -75,7 +75,7 @@ the packet appeared in a terminal output stream.
 
 ### Just Target Shapes
 
-GASTKit and GASTJJ use three equivalent target shapes, and `jagt` supports all
+Gest Git and Gest jj use three equivalent target shapes, and `jagt` supports all
 of them because it only cares about the emitted packet. In a real target, prefer
 a small renderer wrapper so arguments are escaped and repeated flags are
 constructed safely:
@@ -317,7 +317,7 @@ Local jagt transcript labs:
   planner result, parent-rendered child task, worker result, final recursion
   trace, and unsafe proposal refusal.
 
-GASTKit and GASTJJ lab names checked for parity:
+Gest Git and Gest jj lab names checked for parity:
 
 - `run_agentic_target_lab.sh`: direct, companion, dispatcher, dependency,
   hook, verification, malformed delimiter, and malformed body cases.

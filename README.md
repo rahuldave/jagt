@@ -180,8 +180,8 @@ ignores project and explicit config files.
 - [integration_tests/live_agent_result_recursive/](integration_tests/live_agent_result_recursive/):
   recursive planner/worker transcript lab.
 
-This README and the flow guide were cross-checked against GASTKit
-(`agent_gest_git_skills`) and GASTJJ (`agent_gest_jj_skills`) labs: agentic
+This README and the flow guide were cross-checked against Gest Git
+(`agent_gest_git_skills`) and Gest jj (`agent_gest_jj_skills`) labs: agentic
 target, result, recursive result, and task-draft workflows. `jagt` keeps local
 demos self-contained through `.agents/skills/jagt-protocol/`; it does not need
 those external repositories installed to run `just protocol-demo`.
