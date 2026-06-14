@@ -282,11 +282,11 @@ Promotion is deterministic:
 jagt render count-chat-message-chars \
   --no-config \
   --arg "Count the number of characters in this chat message I am sending." \
-  --prompt-text "Count the number of characters in the first argv entry. Return the count and state what counting rule you used." \
+  --prompt-text "Count the number of characters in the first argv entry. Return the character_count and state what counting rule you used." \
   --required-output character_count \
   --allowed-action "read the supplied argv entry" \
-  --allowed-action "compute the requested scalar result" \
-  --verification "independently recount the same message before reporting success" \
+  --allowed-action "compute the requested scalar character count" \
+  --verification "independently recount the same message before returning AGENT_RESULT" \
   > promoted.agent-task.txt
 
 jagt lint --expect-count 1 promoted.agent-task.txt

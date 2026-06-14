@@ -172,7 +172,8 @@ ignores project and explicit config files.
 - [docs/protocol-flows.md](docs/protocol-flows.md): complete conversation
   flows and lab map.
 - [docs/protocol-playbook-transcript.md](docs/protocol-playbook-transcript.md):
-  runnable parent-LLM transcript for plain, recursive, and stochastic cases.
+  live parent-LLM transcript with spawned subagents for plain, recursive, and
+  stochastic cases.
 - [docs/reference/agentic_just_targets_base_spec.md](docs/reference/agentic_just_targets_base_spec.md):
   `AGENT_TASK v1` source context.
 - [docs/reference/agent_result_v1_spec.md](docs/reference/agent_result_v1_spec.md):

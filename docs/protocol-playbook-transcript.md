@@ -1,10 +1,21 @@
-# LLM Protocol Playbook Transcript
+# Live LLM Protocol Playbook Transcript
 
-This is a concrete run of the three protocol cases using the example Justfile
-in [examples/protocol-playbook/Justfile](examples/protocol-playbook/Justfile).
-The LLM in the transcript is the parent agent: it runs the targets, validates
-packets with `jagt`, delegates role-played subagents, and decides the next
-step.
+This transcript is from an actual parent-LLM run of the three protocol cases
+using [examples/protocol-playbook/Justfile](examples/protocol-playbook/Justfile).
+The parent LLM is this Codex session. `jagt` renders and validates packets; it
+does not call an LLM or launch agents. The subagents below were spawned through
+the host agent runtime, and their returned envelopes were saved and linted.
+
+The examples are aligned with the reusable Gest Git and Gest JJ labs:
+
+- `agent_gest_git_skills/docs/live_agent_result_recursive_lab.md`
+- `agent_gest_jj_skills/docs/live_agent_result_recursive_lab.md`
+- `agent_gest_jj_skills/docs/agent_task_draft_workflow.md`
+
+Those labs use the same split: deterministic task/result, recursive
+`AGENT_RESULT v1` payloads with `outputs.proposed_tasks`, and stochastic
+`AGENT_TASK_DRAFT v1` proposals that must be revised or approved before
+promotion.
 
 The shared input file is
 [examples/protocol-playbook/user_message.txt](examples/protocol-playbook/user_message.txt):
@@ -13,14 +24,25 @@ The shared input file is
 Count these seven words with wc please.
 ```
 
-The run below was executed after `just build`, with
+The run was executed after `just build`, with
 `JAGT_BIN=../../../target/debug/jagt` from `docs/examples/protocol-playbook/`.
+Absolute paths inside captured packet bodies reflect this local checkout at the
+time of the run.
+
+## Live Agents
+
+| Case | Subagent | Role | Packet Returned |
+| --- | --- | --- | --- |
+| Plain task/result | Volta | Word-count worker | `AGENT_RESULT v1` |
+| Recursive task | Schrodinger | Planner | `AGENT_RESULT v1` with `outputs.proposed_tasks` |
+| Recursive child task | Boyle | Worker | `AGENT_RESULT v1` |
+| Stochastic draft | Bacon | Draft designer | `AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1` |
+| Promoted stochastic task | Gauss | Execution worker | `AGENT_RESULT v1` |
 
 ## Case 1: Plain Deterministic Task And Result
 
-Here the Just target emits a final executable `AGENT_TASK v1`. The parent LLM
-does not do the count inline. It validates the packet, delegates it, validates
-the returned result, then records the scalar output.
+The Just target emits one executable `AGENT_TASK v1`. The parent LLM validates
+it, delegates it, validates the returned result, and reads the scalar payload.
 
 Parent LLM runs:
 
@@ -77,11 +99,11 @@ validated 1 AGENT_TASK block(s)
 Parent LLM decision:
 
 ```text
-I see a valid AGENT_TASK v1. This is a subagent boundary, so I do not count
-the words inline. I delegate the parsed task to a word-count subagent.
+This is a valid AGENT_TASK v1 and a subagent boundary. I do not count inline.
+I spawn a worker subagent with the parsed packet.
 ```
 
-Role-played word-count subagent returns:
+Spawned subagent `Volta` returns:
 
 ```text
 <<<AGENT_RESULT v1>>>
@@ -90,11 +112,9 @@ status: success
 outputs:
   word_count: 7
 verification:
-  - name: deterministic_wc
-    command: wc -w < user_message.txt
-    status: passed
-notes: |
-  I counted the words in user_message.txt using wc -w.
+  - Recounted whitespace-separated words: Count these seven words with wc please.
+notes:
+  - Counted the provided message deterministically.
 follow_up: []
 <<<END_AGENT_RESULT>>>
 ```
@@ -106,7 +126,7 @@ jagt result lint \
   --expect-count 1 \
   --expect-target count-chat-message-words \
   --expect-status success \
-  02-plain-result.agent-result.txt
+  02-plain-subagent-result.agent-result.txt
 ```
 
 Validation output:
@@ -118,28 +138,23 @@ validated 1 AGENT_RESULT block(s)
 Parent LLM final reading:
 
 ```text
-The delegated task succeeded. The report is target-matched, success-typed, and
+The delegated task succeeded. The result is target-matched, success-typed, and
 verified. The usable payload is outputs.word_count = 7.
 ```
 
 ## Case 2: Recursive Deterministic Result Payload
 
-This is the recursive case. The first Just target still emits an executable
-`AGENT_TASK v1`, but the planner subagent returns a result whose payload
-contains `outputs.proposed_tasks`. That payload is not stochastic draft
-syntax. It is a deterministic recursive proposal carried by `AGENT_RESULT v1`.
+This is the recursive case. The Just target still emits an executable parent
+`AGENT_TASK v1`, but the planner subagent returns `AGENT_RESULT v1` with
+`outputs.proposed_tasks`. That payload can carry the shape of a new
+deterministic task. It is not a stochastic draft and it is not executable by
+itself.
 
 Parent LLM runs:
 
 ```bash
 just recursive-task > 03-recursive-parent-task.agent-task.txt
 jagt lint --expect-count 1 03-recursive-parent-task.agent-task.txt
-```
-
-Validation output:
-
-```text
-validated 1 AGENT_TASK block(s)
 ```
 
 Target output:
@@ -181,15 +196,21 @@ provenance:
 <<<END_AGENT_TASK>>>
 ```
 
+Validation output:
+
+```text
+validated 1 AGENT_TASK block(s)
+```
+
 Parent LLM decision:
 
 ```text
-I delegate this parent task to a planner subagent. The packet explicitly allows
-one deterministic child-task proposal, so I will accept either a final result
-or a partial AGENT_RESULT carrying outputs.proposed_tasks.
+I spawn a planner subagent. The packet explicitly allows one deterministic
+child-task proposal, so I will accept either a final result or a partial
+AGENT_RESULT carrying outputs.proposed_tasks.
 ```
 
-Role-played planner subagent returns:
+Spawned subagent `Schrodinger` returns:
 
 ```text
 <<<AGENT_RESULT v1>>>
@@ -198,28 +219,31 @@ status: partial
 outputs:
   proposed_tasks:
     - target: count-chat-message-words-with-wc
-      reason: Use deterministic Unix word count instead of model counting.
-      prompt: |
-        Run wc -w on the exact message in user_message.txt and report
-        outputs.word_count.
-      inputs:
-        files:
-          - user_message.txt
+      mode: deterministic
+      argv:
+        - user_message.txt
+      tool_hints:
+        - command: wc -w
+      orchestration:
+        mode: parent-orchestrated
       outputs:
         required:
           - word_count
-      tool_hints:
-        - command: wc -w
-          stdin_ref: user_message.txt
-      orchestration:
-        mode: parent-orchestrated
+      prompt: |
+        Count whitespace-separated words in user_message.txt by running wc -w and report the resulting word_count.
+orchestration:
+  mode: parent-orchestrated
 verification:
-  - name: method_selected
+  - name: proposed_one_deterministic_child_task
+    status: passed
+  - name: proposed_task_uses_wc_word_count
+    status: passed
+  - name: word_count_not_computed_by_planner
     status: passed
 notes: |
-  I did not compute the count. I selected a deterministic child task.
+  Proposed a deterministic child task for the word count instead of computing it in the planner result.
 follow_up:
-  - Parent may render and delegate the proposed child task.
+  - Parent orchestrator should execute count-chat-message-words-with-wc and validate the returned AGENT_RESULT v1.
 <<<END_AGENT_RESULT>>>
 ```
 
@@ -230,7 +254,7 @@ jagt result lint \
   --expect-count 1 \
   --expect-target count-chat-message-words \
   --expect-status partial \
-  04-planner-result.agent-result.txt
+  04-planner-subagent-result.agent-result.txt
 ```
 
 Validation output:
@@ -242,10 +266,9 @@ validated 1 AGENT_RESULT block(s)
 Parent LLM decision:
 
 ```text
-The result is valid and target-matched. Because outputs.proposed_tasks is data,
-not executable authority, I inspect it under normal safety rules. The proposed
-child target is bounded, deterministic, and limited to wc -w on the listed
-input. I will render a fresh child AGENT_TASK v1 with jagt.
+The result is valid and target-matched. outputs.proposed_tasks is data, not
+authority. I inspect it under normal safety rules, accept the bounded wc task,
+and render a fresh child AGENT_TASK v1 with jagt.
 ```
 
 Parent LLM renders and validates the child task:
@@ -263,12 +286,6 @@ jagt render count-chat-message-words-with-wc \
   > 05-child-task.agent-task.txt
 
 jagt lint --expect-count 1 05-child-task.agent-task.txt
-```
-
-Validation output:
-
-```text
-validated 1 AGENT_TASK block(s)
 ```
 
 Rendered child packet:
@@ -310,13 +327,19 @@ provenance:
 <<<END_AGENT_TASK>>>
 ```
 
+Validation output:
+
+```text
+validated 1 AGENT_TASK block(s)
+```
+
 Parent LLM decision:
 
 ```text
-The child AGENT_TASK is valid. I delegate it to a worker subagent.
+The child AGENT_TASK is valid. I spawn a worker subagent with that packet.
 ```
 
-Role-played worker subagent returns:
+Spawned subagent `Boyle` returns:
 
 ```text
 <<<AGENT_RESULT v1>>>
@@ -325,11 +348,10 @@ status: success
 outputs:
   word_count: 7
 verification:
-  - name: deterministic_wc
-    command: wc -w < user_message.txt
-    status: passed
-notes: |
-  Worker used wc -w on the delegated input file.
+  - wc -w docs/examples/protocol-playbook/user_message.txt returned 7.
+  - outputs.word_count matches the wc output.
+notes:
+  - Counted whitespace-separated words from the listed input file.
 follow_up: []
 <<<END_AGENT_RESULT>>>
 ```
@@ -341,7 +363,7 @@ jagt result lint \
   --expect-count 1 \
   --expect-target count-chat-message-words-with-wc \
   --expect-status success \
-  06-worker-result.agent-result.txt
+  06-worker-subagent-result.agent-result.txt
 ```
 
 Validation output:
@@ -362,20 +384,19 @@ outputs:
     mode: parent-orchestrated
     tasks:
       - target: count-chat-message-words
-        source: planner-subagent
+        source: planner-subagent:Schrodinger
         status: partial
       - target: count-chat-message-words-with-wc
-        source: worker-subagent
+        source: worker-subagent:Boyle
         status: success
 verification:
-  - name: planner_result_validated
-    status: passed
-  - name: worker_result_validated
-    status: passed
+  - planner AGENT_RESULT validated with expected target and partial status.
+  - child AGENT_TASK rendered by parent and validated before delegation.
+  - worker AGENT_RESULT validated with expected target and success status.
 notes: |
-  Parent accepted a proposed deterministic child task, rendered it with jagt,
-  delegated it to a worker, and copied the verified word_count into the final
-  result for the original target.
+  Parent accepted the deterministic child-task payload from outputs.proposed_tasks,
+  rendered the child task with jagt, delegated it, and copied the verified
+  word_count into the final result for the original target.
 follow_up: []
 <<<END_AGENT_RESULT>>>
 ```
@@ -399,16 +420,16 @@ Parent LLM final reading:
 ```text
 This was recursion, not stochastic drafting. The recursive payload traveled
 inside AGENT_RESULT v1 as outputs.proposed_tasks. The parent made it executable
-only by rendering a new child AGENT_TASK v1 and validating that child packet.
+only by rendering and validating a new child AGENT_TASK v1.
 ```
 
 ## Case 3: Stochastic Draft Request
 
-This case is different from recursion. No deterministic target emits an
-executable task for the unknown work. The Just target emits only a brief for the
-parent LLM. The parent LLM starts a draft-design subagent, validates the
-returned `AGENT_TASK_DRAFT v1`, records approval, promotes approved fields with
-`jagt render`, and only then delegates the promoted task.
+This is different from recursion. The Just target does not emit an executable
+task. It emits a brief for the parent LLM. The parent asks a proposal subagent
+for `AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1`, validates the draft, rejects
+or revises it if needed, and only promotes an approved draft through
+deterministic `jagt render`.
 
 Parent LLM runs:
 
@@ -434,12 +455,12 @@ no agent task blocks detected
 Parent LLM decision:
 
 ```text
-This is not an executable AGENT_TASK. The task shape is intentionally unknown,
-so I ask a proposal subagent to design a bounded future task and return both an
-AGENT_RESULT v1 for the design job and an AGENT_TASK_DRAFT v1 proposal.
+This is not executable. The task shape is intentionally stochastic, so I spawn
+a proposal subagent to design a bounded future task and return an AGENT_RESULT
+for the design job plus an AGENT_TASK_DRAFT proposal.
 ```
 
-Role-played proposal subagent returns:
+Spawned subagent `Bacon` returns the first draft pair:
 
 ```text
 <<<AGENT_RESULT v1>>>
@@ -451,8 +472,8 @@ verification:
   - name: draft_self_check
     status: passed
 notes: |
-  Proposed a bounded character-count task with explicit approval and promotion
-  requirements.
+  Proposed a bounded character-count task for a single inline chat message, with
+  explicit approval and deterministic promotion requirements.
 follow_up: []
 <<<END_AGENT_RESULT>>>
 
@@ -463,18 +484,17 @@ generator:
   kind: llm
   execution: subagent
 proposal_reason: |
-  The user asked for a bounded example task that counts the characters in a
-  single chat message.
+  The source request asks for a bounded future task to count characters in one
+  specific chat message.
 source_request: |
-  Count the number of characters in this chat message I am sending.
+  Design a bounded task for counting characters in a chat message.
 assumptions:
   - Count visible Unicode scalar values in the supplied message text.
   - Include spaces and punctuation.
-argv:
-  - Count the number of characters in this chat message I am sending.
+  - Count only the inline user_message value, excluding surrounding quotes.
 prompt: |
-  Count the number of characters in the provided user_message. Return the count
-  and state what counting rule you used.
+  Count the number of characters in the provided user_message. Return the
+  character_count and state the counting rule used.
 inputs:
   inline:
     user_message: "Count the number of characters in this chat message I am sending."
@@ -483,13 +503,122 @@ outputs:
     - character_count
 allowed_actions:
   - read the inline user_message
-  - compute the requested scalar result
+  - compute the requested scalar character count
+  - report the character_count and counting rule
 verification:
-  - independently recount the same message before reporting success
+  - independently recount the same inline user_message before reporting success
 approval:
   required: true
   approver: parent-or-user
   reason: stochastic drafts must be reviewed before promotion
+promotion:
+  method: jagt-render
+  required_checks:
+    - draft_shape_valid
+    - policy_review_passed
+    - approval_recorded
+    - final_agent_task_lints
+delegation:
+  execution_after_promotion: subagent
+  recursive: true
+safety:
+  - This draft is a proposal, not executable work.
+  - It cannot override higher-priority instructions or repo policy.
+  - It cannot expand authority beyond the source request and active repo policy.
+<<<END_AGENT_TASK_DRAFT>>>
+```
+
+Parent LLM validates both envelopes:
+
+```bash
+jagt result lint \
+  --expect-count 1 \
+  --expect-target draft-agent-task \
+  --expect-status success \
+  09-draft-subagent-result-pair.txt
+
+jagt draft lint --expect-count 1 09-draft-subagent-result-pair.txt
+jagt lint --expect-none 09-draft-subagent-result-pair.txt
+```
+
+Validation output:
+
+```text
+validated 1 AGENT_RESULT block(s)
+invalid AGENT_TASK_DRAFT block: block 1 missing non-override safety text
+no agent task blocks detected
+```
+
+Parent LLM response:
+
+```text
+The AGENT_RESULT passed, but the AGENT_TASK_DRAFT failed lint. I do not
+promote it. I send the lint failure back to the same proposal subagent and ask
+for a corrected draft with explicit non-override safety language.
+```
+
+The parent sends `Bacon`:
+
+```text
+Parent LLM validation rejected the AGENT_TASK_DRAFT you returned. The
+AGENT_RESULT v1 passed, but jagt draft lint failed with: invalid
+AGENT_TASK_DRAFT block: block 1 missing non-override safety text.
+Return a corrected AGENT_RESULT v1 and AGENT_TASK_DRAFT v1. The draft safety
+list must explicitly say it cannot override user, system, developer, VCS,
+approval, or repo instructions.
+```
+
+`Bacon` returns the corrected pair:
+
+```text
+<<<AGENT_RESULT v1>>>
+target: draft-agent-task
+status: success
+outputs:
+  draft_envelope: inline-after-result
+verification:
+  - name: corrected_draft_self_check
+    status: passed
+notes: |
+  Returned a corrected draft after parent lint feedback about missing
+  non-override safety text.
+follow_up: []
+<<<END_AGENT_RESULT>>>
+
+<<<AGENT_TASK_DRAFT v1>>>
+target: count-chat-message-chars
+mode: draft
+generator:
+  kind: llm
+  execution: subagent
+proposal_reason: |
+  The source request asks for a bounded future task to count characters in one
+  specific chat message.
+source_request: |
+  Design a bounded task for counting characters in a chat message.
+assumptions:
+  - Count visible Unicode scalar values in the supplied message text.
+  - Include spaces and punctuation.
+  - Count only the inline user_message value, excluding surrounding quotes.
+prompt: |
+  Count the number of characters in the provided user_message. Return the
+  character_count and state the counting rule used.
+inputs:
+  inline:
+    user_message: "Count the number of characters in this chat message I am sending."
+outputs:
+  required:
+    - character_count
+allowed_actions:
+  - read the inline user_message
+  - compute the requested scalar character count
+  - report the character_count and counting rule
+verification:
+  - independently recount the same inline user_message before reporting success
+approval:
+  required: true
+  approver: parent-or-user
+  reason: stochastic drafts must be reviewed before deterministic promotion
 promotion:
   method: jagt-render
   required_checks:
@@ -507,17 +636,17 @@ safety:
 <<<END_AGENT_TASK_DRAFT>>>
 ```
 
-Parent LLM validates both envelopes:
+Parent LLM validates the corrected pair:
 
 ```bash
 jagt result lint \
   --expect-count 1 \
   --expect-target draft-agent-task \
   --expect-status success \
-  09-draft-result-pair.txt
+  09b-draft-subagent-revised-result-pair.txt
 
-jagt draft lint --expect-count 1 09-draft-result-pair.txt
-jagt lint --expect-none 09-draft-result-pair.txt
+jagt draft lint --expect-count 1 09b-draft-subagent-revised-result-pair.txt
+jagt lint --expect-none 09b-draft-subagent-revised-result-pair.txt
 ```
 
 Validation output:
@@ -531,9 +660,9 @@ no agent task blocks detected
 Parent LLM decision:
 
 ```text
-The result says the draft-design job succeeded. The draft is valid, explicitly
-requires approval, and is not executable as AGENT_TASK v1. After policy review
-and approval, I promote only approved fields through deterministic jagt render.
+The corrected draft is valid, explicitly requires approval, and is not
+executable as AGENT_TASK v1. After parent policy review and approval, I promote
+only approved fields through deterministic jagt render.
 ```
 
 Parent LLM promotes and validates:
@@ -542,11 +671,11 @@ Parent LLM promotes and validates:
 jagt render count-chat-message-chars \
   --no-config \
   --arg "Count the number of characters in this chat message I am sending." \
-  --prompt-text "Count the number of characters in the first argv entry. Return the count and state what counting rule you used." \
+  --prompt-text "Count the number of characters in the first argv entry. Return the character_count and state what counting rule you used." \
   --required-output character_count \
   --allowed-action "read the supplied argv entry" \
-  --allowed-action "compute the requested scalar result" \
-  --verification "independently recount the same message before reporting success" \
+  --allowed-action "compute the requested scalar character count" \
+  --verification "independently recount the same message before returning AGENT_RESULT" \
   > 10-promoted-draft.agent-task.txt
 
 jagt lint --expect-count 1 10-promoted-draft.agent-task.txt
@@ -561,7 +690,7 @@ mode: agentic
 argv:
   - Count the number of characters in this chat message I am sending.
 prompt: |
-  Count the number of characters in the first argv entry. Return the count and state what counting rule you used.
+  Count the number of characters in the first argv entry. Return the character_count and state what counting rule you used.
 inputs:
   files: []
 outputs:
@@ -569,9 +698,9 @@ outputs:
     - character_count
 allowed_actions:
   - read the supplied argv entry
-  - compute the requested scalar result
+  - compute the requested scalar character count
 verification:
-  - independently recount the same message before reporting success
+  - independently recount the same message before returning AGENT_RESULT
 delegation:
   execution: subagent
   recursive: true
@@ -589,12 +718,59 @@ provenance:
 <<<END_AGENT_TASK>>>
 ```
 
+Validation output:
+
+```text
+validated 1 AGENT_TASK block(s)
+```
+
+Parent LLM decision:
+
+```text
+The promoted AGENT_TASK is valid. Now, and only now, I spawn an execution
+subagent for the character-count task.
+```
+
+Spawned subagent `Gauss` returns:
+
+```text
+<<<AGENT_RESULT v1>>>
+target: count-chat-message-chars
+status: success
+outputs:
+  character_count: 65
+verification:
+  - name: independent_recount
+    status: passed
+notes: |
+  Counting rule: counted Unicode scalar characters in the first argv entry, including spaces and punctuation, excluding surrounding YAML/list syntax and any newline.
+follow_up: []
+<<<END_AGENT_RESULT>>>
+```
+
+Parent LLM validates:
+
+```bash
+jagt result lint \
+  --expect-count 1 \
+  --expect-target count-chat-message-chars \
+  --expect-status success \
+  11-promoted-worker-result.agent-result.txt
+```
+
+Validation output:
+
+```text
+validated 1 AGENT_RESULT block(s)
+```
+
 Parent LLM final reading:
 
 ```text
 This was stochastic drafting, not recursion. The draft was generated by an LLM
 proposal subagent and stayed non-executable until the parent validated it,
-approved it, promoted it through deterministic jagt render, validated the
-promoted AGENT_TASK v1, and only then delegated the promoted task to an
+rejected the first invalid draft, received a corrected draft, approved the
+bounded proposal, promoted it through deterministic jagt render, validated the
+promoted AGENT_TASK v1, and delegated that promoted task to a different
 execution subagent.
 ```

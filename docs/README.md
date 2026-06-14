@@ -6,7 +6,8 @@ conversation between Just output, the parent LLM, subagents, and `jagt`.
 For a concrete parent-LLM play-by-play, read
 [protocol-playbook-transcript.md](protocol-playbook-transcript.md). It runs the
 plain task/result, recursive `outputs.proposed_tasks`, and stochastic
-`AGENT_TASK_DRAFT` cases against a real example Justfile.
+`AGENT_TASK_DRAFT` cases against a real example Justfile with spawned
+subagents.
 
 Reference docs:
 
