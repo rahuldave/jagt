@@ -1,0 +1,36 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+jagt_bin := env_var_or_default("JAGT_BIN", "../../../target/debug/jagt")
+
+# Deterministic, single-hop task: this target emits an executable AGENT_TASK v1.
+plain-task:
+    {{jagt_bin}} render count-chat-message-words \
+      --no-config \
+      --arg inline:user-message \
+      --input user_message.txt \
+      --prompt-text "Count whitespace-separated words in user_message.txt and return outputs.word_count." \
+      --required-output word_count \
+      --allowed-action "read listed user_message.txt input" \
+      --allowed-action "compute a deterministic word count" \
+      --verification "recount the message before returning AGENT_RESULT"
+
+# Deterministic, recursive task: this target emits a parent AGENT_TASK v1 whose
+# subagent may return outputs.proposed_tasks instead of computing the answer.
+recursive-task:
+    {{jagt_bin}} render count-chat-message-words \
+      --no-config \
+      --arg inline:user-message \
+      --input user_message.txt \
+      --prompt-text "Count whitespace-separated words in user_message.txt. If a deterministic child task is more appropriate, return status: partial with outputs.proposed_tasks instead of computing the count." \
+      --required-output word_count \
+      --allowed-action "read listed user_message.txt input" \
+      --allowed-action "propose one deterministic child task" \
+      --verification "validate any returned AGENT_RESULT before continuing"
+
+# Stochastic setup: this is intentionally not an AGENT_TASK target. It emits a
+# brief that the parent LLM uses to ask a proposal subagent for AGENT_TASK_DRAFT.
+draft-brief:
+    printf '%s\n' \
+      'source_request: Design a bounded task for counting characters in a chat message.' \
+      'task_shape: unknown until the proposal subagent reasons about assumptions and verification.' \
+      'expected_parent_action: ask a proposal subagent for AGENT_RESULT v1 plus AGENT_TASK_DRAFT v1.'

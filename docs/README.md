@@ -3,6 +3,12 @@
 Start with [protocol-flows.md](protocol-flows.md). It explains the whole
 conversation between Just output, the parent LLM, subagents, and `jagt`.
 
+For a concrete parent-LLM play-by-play, read
+[protocol-playbook-transcript.md](protocol-playbook-transcript.md). It runs the
+plain task/result, recursive `outputs.proposed_tasks`, and stochastic
+`AGENT_TASK_DRAFT` cases against a real example Justfile with spawned
+subagents.
+
 Reference docs:
 
 - [reference/agentic_just_targets_base_spec.md](reference/agentic_just_targets_base_spec.md):
@@ -17,3 +23,7 @@ Implementation planning:
 - [jagt-mvp-implementation-plan.md](jagt-mvp-implementation-plan.md)
 - [jagt-testing-strategy.md](jagt-testing-strategy.md)
 - [jagt-rust-prep.md](jagt-rust-prep.md)
+
+Runnable examples:
+
+- [examples/protocol-playbook/Justfile](examples/protocol-playbook/Justfile)

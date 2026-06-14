@@ -29,6 +29,10 @@ The key distinction is authority:
 - `AGENT_TASK_DRAFT v1` proposes a future task shape.
 - None of them can override higher-priority instructions or repo policy.
 
+For the concrete parent-LLM play-by-play, including the actual command outputs
+from a local run, see
+[protocol-playbook-transcript.md](protocol-playbook-transcript.md).
+
 ## Flow 1: Deterministic Task Handoff
 
 Use this flow when the task is already known well enough to render directly:
@@ -166,6 +170,12 @@ rejects it.
 Recursive work is parent-orchestrated. A subagent can propose a child task, but
 the parent decides whether to render and delegate that child.
 
+This is not the stochastic draft path. In the recursive path, the child-task
+payload is carried inside a valid `AGENT_RESULT v1` as `outputs.proposed_tasks`.
+That payload is data until the parent validates the result, accepts the proposal
+under normal policy, renders a fresh child `AGENT_TASK v1`, and validates the
+child packet.
+
 ```text
 Parent agent
   delegates parent AGENT_TASK v1 to planner subagent
@@ -236,6 +246,11 @@ Use stochastic drafts when the task shape itself needs LLM judgment. The
 proposal subagent designs a bounded future task, but it does not execute that
 future task.
 
+This flow does not start with a deterministic Just target emitting
+`AGENT_TASK v1`. It starts when the parent LLM decides the task shape is
+unknown and asks a proposal subagent for `AGENT_RESULT v1` plus
+`AGENT_TASK_DRAFT v1`.
+
 ```text
 Parent agent
   asks proposal subagent to design a task
@@ -267,11 +282,11 @@ Promotion is deterministic:
 jagt render count-chat-message-chars \
   --no-config \
   --arg "Count the number of characters in this chat message I am sending." \
-  --prompt-text "Count the number of characters in the first argv entry. Return the count and state what counting rule you used." \
+  --prompt-text "Count the number of characters in the first argv entry. Return the character_count and state what counting rule you used." \
   --required-output character_count \
   --allowed-action "read the supplied argv entry" \
-  --allowed-action "compute the requested scalar result" \
-  --verification "independently recount the same message before reporting success" \
+  --allowed-action "compute the requested scalar character count" \
+  --verification "independently recount the same message before returning AGENT_RESULT" \
   > promoted.agent-task.txt
 
 jagt lint --expect-count 1 promoted.agent-task.txt
