@@ -21,6 +21,10 @@ draft needs user approval, and how outputs and follow-ups are recorded in Gest.
 
 Start with [docs/protocol-flows.md](docs/protocol-flows.md) for the complete
 task, result, recursive, deterministic, and stochastic draft flows.
+Then read
+[docs/protocol-playbook-transcript.md](docs/protocol-playbook-transcript.md)
+for a concrete parent-LLM transcript generated from a runnable example
+Justfile.
 
 ## The Actors
 
@@ -167,6 +171,8 @@ ignores project and explicit config files.
 
 - [docs/protocol-flows.md](docs/protocol-flows.md): complete conversation
   flows and lab map.
+- [docs/protocol-playbook-transcript.md](docs/protocol-playbook-transcript.md):
+  runnable parent-LLM transcript for plain, recursive, and stochastic cases.
 - [docs/reference/agentic_just_targets_base_spec.md](docs/reference/agentic_just_targets_base_spec.md):
   `AGENT_TASK v1` source context.
 - [docs/reference/agent_result_v1_spec.md](docs/reference/agent_result_v1_spec.md):

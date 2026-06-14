@@ -1,0 +1,1 @@
+Count these seven words with wc please.
