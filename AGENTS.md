@@ -22,8 +22,14 @@ verification request, it must say why in the final response.
 - Rust prep notes: `docs/jagt-rust-prep.md`
 - Detailed workflow playbook:
   `.agents/skills/gtw/references/gest_codex_workflow.md`
-- Command-contract reference:
-  `.agents/skills/gtw/references/just_command_contract.md`
+- Command-contract reference: the `just` skill of jnterfaces,
+  `.agents/skills/just/SKILL.md`, and its contract
+  `.agents/skills/just/references/command_contract.md`
+- Packet protocol skill: `.agents/skills/jagt-protocol/SKILL.md`. Its source is
+  the jnterfaces repository, https://github.com/rahuldave/jnterfaces. This
+  repository keeps an installed copy, recorded in
+  `.agents/jnterfaces-install.json`. Change the skill in jnterfaces, then
+  install it here again with `scripts/install.sh` of jnterfaces.
 - Tag/dependency workflow:
   `.agents/skills/gtw/references/tag_dependency_workflow.md`
 - Protocol references: `docs/reference/agentic_just_targets_base_spec.md` and
