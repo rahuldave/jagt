@@ -232,3 +232,7 @@ the staged implementation plan in
 [docs/jagt-mvp-implementation-plan.md](docs/jagt-mvp-implementation-plan.md).
 The remaining MVP slices are schema/product polish and final verification and
 review.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
