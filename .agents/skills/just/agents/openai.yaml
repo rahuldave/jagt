@@ -1,0 +1,3 @@
+interface:
+  display_name: "Just"
+  short_description: "Write and use a Justfile as the project's command interface"

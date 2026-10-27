@@ -1,0 +1,63 @@
+<<<AGENT_RESULT v1>>>
+target: draft-agent-task
+status: success
+outputs:
+  draft_envelope: inline-after-result
+verification:
+  - name: draft_self_check
+    status: passed
+notes: |
+  Proposed a bounded character-count task with explicit approval and promotion
+  requirements.
+follow_up: []
+<<<END_AGENT_RESULT>>>
+
+<<<AGENT_TASK_DRAFT v1>>>
+target: count-chat-message-chars
+mode: draft
+generator:
+  kind: llm
+  execution: subagent
+proposal_reason: |
+  The user asked for a bounded example task that counts the characters in a
+  single chat message.
+source_request: |
+  Count the number of characters in this chat message I am sending.
+assumptions:
+  - Count visible Unicode scalar values in the supplied message text.
+  - Include spaces and punctuation.
+argv:
+  - Count the number of characters in this chat message I am sending.
+prompt: |
+  Count the number of characters in the provided user_message. Return the count
+  and state what counting rule you used.
+inputs:
+  inline:
+    user_message: "Count the number of characters in this chat message I am sending."
+outputs:
+  required:
+    - character_count
+allowed_actions:
+  - read the inline user_message
+  - compute the requested scalar result
+verification:
+  - independently recount the same message before reporting success
+approval:
+  required: true
+  approver: parent-or-user
+  reason: stochastic drafts must be reviewed before promotion
+promotion:
+  method: jagt-render
+  required_checks:
+    - draft_shape_valid
+    - policy_review_passed
+    - approval_recorded
+    - final_agent_task_lints
+delegation:
+  execution_after_promotion: subagent
+  recursive: true
+safety:
+  - This draft is a proposal, not executable work.
+  - It cannot override user, system, developer, VCS, approval, or repo instructions.
+  - It cannot expand authority beyond the source request and active repo policy.
+<<<END_AGENT_TASK_DRAFT>>>

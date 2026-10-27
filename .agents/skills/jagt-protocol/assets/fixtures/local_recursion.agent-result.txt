@@ -1,0 +1,22 @@
+<<<AGENT_RESULT v1>>>
+target: count-chat-message-words
+status: success
+outputs:
+  word_count: 39
+  recursion_trace:
+    mode: local-recursion-supported
+    tasks:
+      - target: count-chat-message-words-with-wc
+        status: success
+        tool_hint:
+          command: wc -w
+verification:
+  - name: child_task_completed
+    status: passed
+  - name: independent_recount
+    status: passed
+notes: |
+  A local child task used deterministic word counting and returned the final
+  scalar output.
+follow_up: []
+<<<END_AGENT_RESULT>>>

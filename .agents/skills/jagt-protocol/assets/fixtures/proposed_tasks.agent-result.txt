@@ -1,0 +1,17 @@
+<<<AGENT_RESULT v1>>>
+target: count-chat-message-words
+status: partial
+outputs:
+  proposed_tasks:
+    - target: count-chat-message-words-with-wc
+      reason: Use deterministic Unix word count instead of model counting.
+      prompt: |
+        Pass the exact inline user_message to wc -w on stdin and report outputs.word_count.
+verification:
+  - name: method_selected
+    status: passed
+notes: |
+  I did not compute the count. I selected a deterministic child task.
+follow_up:
+  - Parent may spawn the proposed task or run an allowed equivalent command.
+<<<END_AGENT_RESULT>>>

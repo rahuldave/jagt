@@ -5,6 +5,8 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: .agents/skills/jagt-protocol/scripts/run_protocol_demo.sh [jagt-bin]
 
+The jagt binary is the first argument, else $JAGT_BIN, else jagt on PATH.
+
 Run a standalone jagt protocol demo:
 - send/render one AGENT_TASK v1 packet;
 - receive/validate one AGENT_RESULT v1 packet;
@@ -18,8 +20,9 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   exit 0
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-jagt_bin="${1:-${JAGT_BIN:-$repo_root/target/debug/jagt}}"
+skill_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixtures="$skill_root/assets/fixtures"
+jagt_bin="${1:-${JAGT_BIN:-jagt}}"
 workspace="$(mktemp -d "${TMPDIR:-/tmp}/jagt-protocol-demo.XXXXXX")"
 
 cleanup() {
@@ -79,14 +82,14 @@ run "$jagt_bin" result lint \
   --expect-count 1 \
   --expect-target count-chat-message-words \
   --expect-status partial \
-  "$repo_root/fixtures/agent_result/valid/proposed_tasks.agent-result.txt"
+  "$fixtures/proposed_tasks.agent-result.txt"
 run "$jagt_bin" result lint \
   --expect-count 1 \
   --expect-target count-chat-message-words \
   --expect-status success \
-  "$repo_root/fixtures/agent_result/valid/local_recursion.agent-result.txt"
+  "$fixtures/local_recursion.agent-result.txt"
 
-draft_pair="$repo_root/fixtures/agent_task_draft/valid/result_pair.agent-task-draft.txt"
+draft_pair="$fixtures/result_pair.agent-task-draft.txt"
 run "$jagt_bin" result lint \
   --expect-count 1 \
   --expect-target draft-agent-task \

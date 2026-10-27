@@ -61,7 +61,8 @@ Required deterministic CLI flows:
 
 Keep canonical fixtures derived from jagt's standalone protocol skill:
 
-- source: `.agents/skills/jagt-protocol/references/protocol_contract.md`
+- source: `.agents/skills/jagt-protocol/references/protocol_contract.md`, an
+  installed copy whose source is the jnterfaces repository
 - fixtures: `fixtures/contract/agent_task` and `fixtures/contract/agent_result`
 
 The Rust linter must accept the canonical contract examples. When Rust behavior

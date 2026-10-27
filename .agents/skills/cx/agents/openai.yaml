@@ -1,0 +1,3 @@
+interface:
+  display_name: "cx"
+  short_description: "Add incremental file stages to Just recipes with cx"
