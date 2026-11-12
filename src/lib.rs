@@ -504,21 +504,39 @@ fn read_prompt_file(path: &Path, env_config: &EnvConfig) -> Result<PromptFile> {
 }
 
 fn parse_prompt_file(content: &str) -> std::result::Result<PromptFile, String> {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    // The frontmatter opens with a first line of exactly `---`, and closes at
+    // the next line of exactly `---`. A `\r` at the end of a line is allowed.
+    // The frontmatter can be empty, as in `---` right after `---`.
+    let is_delimiter = |line: &str| line.trim_end_matches(['\n', '\r']) == "---";
+    // Some editors put a byte order mark at the start of a file. It would hide
+    // the frontmatter, so it goes.
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let mut lines = content.split_inclusive('\n');
+    if !lines.next().is_some_and(is_delimiter) {
         return Ok(PromptFile {
             body: content.to_string(),
             frontmatter: RenderConfigSource::default(),
             frontmatter_seen: false,
         });
-    };
-    let Some((frontmatter, body)) = rest.split_once("\n---") else {
+    }
+    let mut frontmatter = String::new();
+    let mut closed = false;
+    for line in lines.by_ref() {
+        if is_delimiter(line) {
+            closed = true;
+            break;
+        }
+        frontmatter.push_str(line);
+    }
+    if !closed {
         return Err("frontmatter start without closing delimiter".to_string());
-    };
+    }
+    let body: String = lines.collect();
     let body = body.trim_start_matches(['\r', '\n']).to_string();
     let frontmatter = if frontmatter.trim().is_empty() {
         RenderConfigSource::default()
     } else {
-        serde_yaml::from_str(frontmatter)
+        serde_yaml::from_str(&frontmatter)
             .map_err(|error| format!("frontmatter contains invalid YAML: {error}"))?
     };
 

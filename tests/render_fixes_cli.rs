@@ -266,3 +266,96 @@ fn values_that_a_yaml_1_1_reader_reads_as_other_types_get_quotes() {
     let expected: Vec<&str> = quoted.iter().chain(plain.iter()).copied().collect();
     assert_eq!(files, expected);
 }
+
+fn render_prompt_file(content: &str) -> std::process::Output {
+    let dir = tempdir().expect("tempdir");
+    fs::write(dir.path().join("p.md"), content).expect("prompt");
+    jagt(dir.path())
+        .args([
+            "render",
+            "t",
+            "--prompt",
+            "p.md",
+            "--no-config",
+            "--no-save",
+        ])
+        .output()
+        .expect("jagt runs")
+}
+
+#[test]
+fn an_empty_frontmatter_is_accepted() {
+    let output = render_prompt_file("---\n---\nBody text.\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(text.contains("prompt: |\n  Body text.\n"), "{text}");
+}
+
+#[test]
+fn the_frontmatter_closes_only_at_a_line_of_exactly_three_dashes() {
+    // `----` and `--- x` do not close the frontmatter; the first `---` does.
+    let output = render_prompt_file(
+        "---\nrequired_outputs:\n  - word_count\n---\nBody\n----\nmore\n--- x\nend\n",
+    );
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        text.contains("prompt: |\n  Body\n  ----\n  more\n  --- x\n  end\n"),
+        "{text}"
+    );
+    assert!(text.contains("    - word_count\n"), "{text}");
+
+    // A line that only starts with `---` inside the frontmatter is no close.
+    let output = render_prompt_file("---\nrequired_outputs: []\n----\nBody\n");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("closing delimiter"));
+}
+
+#[test]
+fn a_frontmatter_with_crlf_line_ends_is_read() {
+    let output = render_prompt_file("---\r\nrequired_outputs:\r\n  - count\r\n---\r\nBody\r\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(text.contains("    - count\n"), "{text}");
+    assert!(text.contains("Body"), "{text}");
+}
+
+#[test]
+fn a_file_without_frontmatter_keeps_a_later_dash_line_in_the_body() {
+    let output = render_prompt_file("Body\n---\nmore\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        text.contains("prompt: |\n  Body\n  ---\n  more\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_byte_order_mark_does_not_hide_the_frontmatter() {
+    let output = render_prompt_file("\u{feff}---\nargs:\n  - a\n---\nBody\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(text.contains("argv:\n  - a\n"), "{text}");
+    assert!(text.contains("prompt: |\n  Body\n"), "{text}");
+    assert!(!text.contains('\u{feff}'), "{text}");
+}
+
+#[test]
+fn a_file_of_only_an_opening_delimiter_is_an_error() {
+    let output = render_prompt_file("---\n");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("closing delimiter"));
+}
