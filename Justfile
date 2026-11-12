@@ -29,8 +29,10 @@ test target="":
 smoke:
     cargo run -- --help
 
+# The demo runs from a temporary folder, outside any git worktree, so that
+# jagt render saves no packet file in this repository.
 protocol-demo:
-    bash .agents/skills/jagt-protocol/scripts/run_protocol_demo.sh {{cargo_target_dir}}/debug/jagt
+    cd "$(mktemp -d)" && bash "{{justfile_directory()}}/.agents/skills/jagt-protocol/scripts/run_protocol_demo.sh" "{{absolute_path(cargo_target_dir)}}/debug/jagt"
 
 docs:
     cargo doc --no-deps

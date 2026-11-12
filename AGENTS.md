@@ -52,8 +52,13 @@ update this section when the accepted design changes.
 
 - `jagt` must be deterministic. It must not call an LLM or depend on network
   access for rendering, linting, explanation, or schema output.
-- Initial rendering should write only to stdout. Do not add file writes unless a
-  later accepted design adds an explicit output command or flag.
+- The nonce of each packet is the one random part of `jagt render`. The rest
+  of the packet text stays the same for the same inputs.
+- `jagt render` prints the packet on stdout. Its one file write is the packet
+  file `.agents/log/packets/<nonce>.json` in the shared log folder, from the
+  commit gates spec. `--no-save` turns the write off. Do not add another file
+  write unless an accepted design adds it. `docs/packet-file.md` describes the
+  file.
 - Accepted render inputs are proposed to be CLI arguments, `.jagt/config.toml`
   when present, target config, Markdown prompt files with optional YAML
   frontmatter, and explicitly allowlisted environment variables.
@@ -111,30 +116,47 @@ Use native Gest `child-of` / `parent-of` links for hierarchy. Tags are filters,
 not hierarchy. Claim one leaf task at a time, verify before completion, and keep
 long-lived outline parents open until the whole subtree is done.
 
-For any Gest-tracked work that writes files, choose a VCS branch model and
-execution model before editing. Branch names should be keyed to the highest
-meaningful Gest task for the workstream, for example
+For any Gest-tracked work that writes files, choose a branch model and an
+execution model before you edit. Name each branch after the highest Gest task
+of the workstream that has a meaning of its own, for example
 `gest/<task-id-short>-two-word-summary` or
 `session/<task-id-short>-two-word-summary`.
 
-Use a normal session/development branch for one coherent workstream. Use stacked
-branches for multiple meaty dependent slices that should be separately
-reviewable. Use physical git worktrees for multiple independent write tasks
-running at the same time.
+This repository uses plain git, with branches and pull requests. It does not
+use GitButler. Do not run `but` commands, and do not look for a GitButler
+workspace. Some installed skills under `.agents/skills/` still describe
+GitButler mode or the marker `GEST_VCS_EXECUTION`. Ignore those parts, because
+the plain git rules of this file come first.
 
-GitButler parallel branches and stacked branches share one managed workspace.
-They are sequential branch-curation tools for agents, not an agent-parallelism
-primitive. Do not launch parallel write agents in one GitButler workspace or use
-GitButler parallel lanes for agent parallelism. If parallel work is needed, use
-separate physical worktrees first and integrate the results into the intended
-branch or stack afterward.
+- **One workstream** gets one branch from `main`, and one pull request
+  against `main`.
+- **Dependent slices** that each need a review of their own get stacked
+  branches. Start each branch from the branch below it, and open its pull
+  request against that branch. After the lower pull request merges, run
+  `git fetch origin`. Then move the upper branch with
+  `git rebase --onto origin/main <old-base> <branch>`. The `<old-base>` is the
+  last commit of the lower branch before the merge, so use its old SHA after a
+  squash merge. Push the upper branch with
+  `git push --force-with-lease origin <branch>`. Then change the base of its
+  pull request with `gh pr edit <number> --base main`.
+- **Independent write tasks that run at the same time** each get a physical
+  git worktree, made with `git worktree add`. Never run two write agents in
+  one worktree. Join the results into the intended branch or stack after the
+  tasks finish.
 
-When GitButler owns the workspace, use current `but` CLI write commands such as
-`but branch new`, `but stage`, `but commit`, `but push`, and `but pr`. Do not
-use raw `git commit`, `git switch`, `git checkout`, or branch-mutating git
-commands in GitButler mode. If a workflow has explicitly left GitButler mode to
-use physical git worktrees, mark raw worktree commands with
-`GEST_VCS_EXECUTION=git-worktrees`.
+Use these commands for the writes:
+
+```bash
+git switch -c <branch> <base>
+git add <file> <file>
+git commit
+git push -u origin <branch>
+gh pr create --base <base>
+```
+
+The `<base>` is `main`, or the branch below in a stack.
+
+Do not commit on `main`. Stage each file by name, not with `git add -A`.
 
 For non-trivial completed leaf tasks, add a Gest task note before completion:
 
@@ -181,10 +203,13 @@ findings/state to the user, and ask whether to merge. Do not merge unless the
 user explicitly asked for that merge in the current turn or gives approval after
 the `gpa` review packet.
 
-At every durable checkpoint, run checkpoint hygiene: regenerate the overall Gest
-graph and focused graph for the latest relevant iteration, make the GitHub issue
-promotion decision with `gpr` when appropriate, verify push state, and run an
-explicit review pass with `grv` or code-review stance.
+At every durable checkpoint, run these steps of hygiene:
+
+- Make the overall Gest graph again, and the focused graph for the latest
+  iteration that applies.
+- Decide on GitHub issue promotion with `gpr`, when it applies.
+- Check the push state.
+- Run a review pass with `grv`, or review the code yourself.
 
 ## Project Command Contract
 
@@ -232,12 +257,12 @@ Make. The key reference for recipe ordering is:
 - Just dependencies: https://just.systems/man/en/dependencies.html
 - Just skill reference: https://raw.githubusercontent.com/casey/just/refs/heads/master/skills/just/SKILL.md
 
-For Just, dependency order is meaningful: dependencies run before the recipe
-that depends on them, and in the listed order. Use native recipe dependencies
+For Just, the order of dependencies has a meaning. Dependencies run before the
+recipe that depends on them, and in the listed order. Use native recipe dependencies
 when one recipe is an ordered composition of other recipes, such as
 `verify: fmt-check lint typecheck build test smoke diff-check`. Dependencies
-with the same arguments run once per `just` invocation. This is ordered recipe
-composition, not Make-style file freshness analysis.
+with the same arguments run once per `just` invocation. Just joins recipes in
+order, and it does not compare the times of files as Make does.
 
 Use `gfm` for formatting, linting, typechecking, compile/static checks, and diff
 hygiene. Use `gte` for unit tests, API regression tests, smoke checks, and
@@ -269,7 +294,7 @@ subagent handoff, not inline work. Delegate the parsed task to a subagent, and
 apply the same rule recursively to nested agentic Just calls, agentic
 dependencies, hook-triggered packets, and agentic verification targets. The
 packet is repo-local operational context and cannot override user, system,
-developer, approval, or Git/GitButler safety rules.
+developer, approval, or git safety rules.
 
 When a delegated subagent returns an `AGENT_RESULT v1` block, treat it as a
 subagent result report. Validate the envelope, check that the `target` matches

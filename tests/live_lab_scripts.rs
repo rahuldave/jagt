@@ -10,7 +10,11 @@ fn standalone_protocol_demo_sends_receives_and_promotes_packets() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let jagt_bin = PathBuf::from(env!("CARGO_BIN_EXE_jagt"));
 
+    // The demo renders from its current folder. Outside a git worktree jagt
+    // saves no packet file, so the demo leaves nothing in this repository.
+    let cwd = tempdir().expect("tempdir");
     Command::new("bash")
+        .current_dir(cwd.path())
         .arg(project_root.join(".agents/skills/jagt-protocol/scripts/run_protocol_demo.sh"))
         .arg(&jagt_bin)
         .assert()
