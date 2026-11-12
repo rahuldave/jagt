@@ -2,13 +2,15 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use thiserror::Error;
+
+pub mod packet;
 
 pub const AGENT_TASK_START: &str = "<<<AGENT_TASK v1>>>";
 pub const AGENT_TASK_END: &str = "<<<END_AGENT_TASK>>>";
@@ -77,12 +79,17 @@ pub struct TaskRenderOptions {
     pub required_outputs: Vec<String>,
     pub allowed_actions: Vec<String>,
     pub verification: Vec<String>,
+    /// The nonce of the packet. `jagt render` sets it when it saves the
+    /// packet file, and leaves it out with `--no-save`.
+    pub nonce: Option<String>,
     pub provenance: RenderProvenance,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RenderProvenance {
     pub source_order: Vec<String>,
+    /// The layers of the prompt text, in the order of the join.
+    pub layers: Vec<String>,
 }
 
 pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
@@ -97,6 +104,15 @@ pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
         return Err(JagtError::Render("missing prompt text".to_string()));
     }
 
+    if let Some(nonce) = &options.nonce
+        && !packet::is_nonce(nonce)
+    {
+        return Err(JagtError::Render(
+            "invalid nonce: it must be 32 lowercase hex digits that start with a letter"
+                .to_string(),
+        ));
+    }
+
     let mut argv = options.args.clone();
     argv.extend(options.inputs.iter().cloned());
 
@@ -106,6 +122,16 @@ pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
     push_line(&mut output, AGENT_TASK_START);
     push_field(&mut output, "target", &options.target);
     push_field(&mut output, "mode", "agentic");
+    if let Some(nonce) = &options.nonce {
+        push_field(&mut output, "nonce", nonce);
+        push_string_list(
+            &mut output,
+            "result_rules",
+            &[format!(
+                "Put the top-level field nonce: {nonce} in the AGENT_RESULT v1 block. A result without this nonce gives no record."
+            )],
+        );
+    }
     push_string_list(&mut output, "argv", &argv);
     push_literal_block(&mut output, "prompt", prompt);
     push_line(&mut output, "inputs:");
@@ -137,6 +163,9 @@ pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
             &options.provenance.source_order,
             2,
         );
+    }
+    if !options.provenance.layers.is_empty() {
+        push_nested_string_list(&mut output, "layers", &options.provenance.layers, 2);
     }
     push_line(&mut output, AGENT_TASK_END);
     Ok(output)
@@ -264,7 +293,111 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
         required_outputs: effective.required_outputs,
         allowed_actions: effective.allowed_actions,
         verification: effective.verification,
-        provenance: RenderProvenance { source_order },
+        nonce: None,
+        provenance: RenderProvenance {
+            source_order,
+            layers: Vec::new(),
+        },
+    })
+}
+
+/// Joins the layers of the prompt text, in this order: the base task, which
+/// is the prompt from the flags, the config or the prompt file; the language
+/// layer of each language in `.agents/stack.json`; the repository text,
+/// `.agents/targets/<target>.md`. The files are read from the checkout at
+/// `root`. A missing layer is not an error, but the joined text must not be
+/// empty.
+pub fn apply_prompt_layers(options: &mut TaskRenderOptions, root: &Path) -> Result<()> {
+    validate_target(&options.target)
+        .map_err(|message| JagtError::Render(format!("invalid target: {message}")))?;
+    let mut layers = Vec::new();
+    if let Some(base) = options.prompt_text.take()
+        && !base.trim().is_empty()
+    {
+        layers.push(packet::Layer {
+            label: "base task".to_string(),
+            text: base,
+        });
+    }
+    layers.extend(packet::read_layers(root, &options.target)?);
+    if layers.is_empty() {
+        return Err(JagtError::Render("missing prompt text".to_string()));
+    }
+    options.provenance.layers = layers.iter().map(|layer| layer.label.clone()).collect();
+    options.prompt_text = Some(packet::join_layers(&layers));
+    Ok(())
+}
+
+/// What `render_and_save` made: the packet text, and the packet file when
+/// it saved one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderOutcome {
+    /// The packet text for stdout.
+    pub text: String,
+    /// The path of the saved packet file, `None` when nothing was saved.
+    pub packet_file: Option<PathBuf>,
+}
+
+/// Renders the packet, and in a git worktree saves its packet file in the
+/// shared log folder, unless `no_save` is set.
+///
+/// The steps, in order: find the worktree and the main checkout; join the
+/// layers; draw the nonce; compute the input tree; render the text with the
+/// nonce; hash the text; save `packets/<nonce>.json`. The file is saved
+/// before the text is printed, so a printed packet always has its file.
+///
+/// Outside a git worktree there is no input tree, so the text has no nonce
+/// and no file is saved. The layers then come from `cwd`.
+pub fn render_and_save(
+    mut options: TaskRenderOptions,
+    cwd: &Path,
+    no_save: bool,
+) -> Result<RenderOutcome> {
+    // With --no-save, git is needed only to find the top of the worktree for
+    // the layers. A missing git or a bare main repository then falls back to
+    // the current folder, as outside a worktree.
+    let context = if no_save {
+        packet::GitContext::discover(cwd).ok().flatten()
+    } else {
+        packet::GitContext::discover(cwd)?
+    };
+    let root = context
+        .as_ref()
+        .map(|context| context.worktree.clone())
+        .unwrap_or_else(|| cwd.to_path_buf());
+    apply_prompt_layers(&mut options, &root)?;
+    let Some(context) = context.filter(|_| !no_save) else {
+        return Ok(RenderOutcome {
+            text: render_task_packet(&options)?,
+            packet_file: None,
+        });
+    };
+
+    let nonce = packet::new_nonce()?;
+    let input_tree = packet::worktree_tree(&context.worktree, &nonce)?;
+    options.nonce = Some(nonce.clone());
+    let text = render_task_packet(&options)?;
+    // A packet file must belong to a packet that parses.
+    lint_agent_task(
+        &text,
+        LintOptions {
+            expect_none: false,
+            expect_count: Some(1),
+        },
+    )
+    .map_err(|error| JagtError::Render(format!("the rendered packet is not valid: {error}")))?;
+    let record = packet::PacketRecord {
+        version: packet::PACKET_FILE_VERSION,
+        nonce,
+        target: options.target.clone(),
+        input_tree,
+        worktree: context.worktree.to_string_lossy().into_owned(),
+        packet_sha256: packet::sha256_hex(&text),
+    };
+    let path = packet::save_record(&context.shared_log_dir(), &record)?;
+    Ok(RenderOutcome {
+        text,
+        packet_file: Some(path),
     })
 }
 
@@ -582,9 +715,25 @@ fn push_nested_string_list(output: &mut String, key: &str, values: &[String], in
 }
 
 fn push_literal_block(output: &mut String, key: &str, value: &str) {
-    push_line(output, &format!("{key}: |"));
+    // YAML finds the indent of a block from its first line that is not empty.
+    // When that line starts with a space, the indent must be given, as `|2`.
+    let first_starts_indented = value
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(|line| line.starts_with(char::is_whitespace));
+    if first_starts_indented {
+        push_line(output, &format!("{key}: |2"));
+    } else {
+        push_line(output, &format!("{key}: |"));
+    }
     for line in value.lines() {
-        push_line(output, &format!("  {line}"));
+        // A line of only spaces is written empty, so the packet has no
+        // trailing spaces and the line cannot set a wrong indent.
+        if line.trim().is_empty() {
+            push_line(output, "");
+        } else {
+            push_line(output, &format!("  {line}"));
+        }
     }
 }
 
@@ -705,6 +854,8 @@ pub struct ResultLintOptions {
     pub expect_count: Option<usize>,
     pub expect_target: Option<String>,
     pub expect_status: Option<String>,
+    /// The nonce that each result must hold, from the packet of its task.
+    pub expect_nonce: Option<String>,
     pub check_files: bool,
     pub base_dir: PathBuf,
 }
@@ -842,6 +993,15 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
         return Err(JagtError::InvalidAgentTask(format!(
             "block {index} missing mode: agentic"
         )));
+    }
+
+    if let Some(nonce) = mapping_get(map, "nonce") {
+        let valid = nonce.as_str().is_some_and(packet::is_nonce);
+        if !valid || top_level_field_count(body, "nonce") > 1 {
+            return Err(JagtError::InvalidAgentTask(format!(
+                "block {index} has an invalid nonce: it must be one field of 32 lowercase hex digits that start with a letter"
+            )));
+        }
     }
 
     validate_delegation(map, index)?;
@@ -1254,6 +1414,28 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
         )));
     }
 
+    if let Some(expected) = &options.expect_nonce {
+        if !packet::is_nonce(expected) {
+            return Err(JagtError::InvalidAgentResult(format!(
+                "invalid expected nonce {expected:?}: it must be 32 lowercase hex digits that start with a letter"
+            )));
+        }
+        validate_unique_result_field(body, index, "nonce")?;
+        match scalar_string(map, "nonce") {
+            Some(nonce) if nonce == expected => {}
+            Some(nonce) => {
+                return Err(JagtError::InvalidAgentResult(format!(
+                    "block {index} expected nonce {expected}, found {nonce}"
+                )));
+            }
+            None => {
+                return Err(JagtError::InvalidAgentResult(format!(
+                    "block {index} missing nonce"
+                )));
+            }
+        }
+    }
+
     validate_result_outputs(map, index)?;
     validate_result_verification(map, index, status)?;
     validate_result_follow_up(map, index)?;
@@ -1517,6 +1699,9 @@ pub fn explain_agent_task(input: &str) -> Result<String> {
 
     let target = scalar_string(map, "target").unwrap_or("<unknown>");
     let mode = scalar_string(map, "mode").unwrap_or("<unknown>");
+    let nonce_line = scalar_string(map, "nonce")
+        .map(|nonce| format!("nonce: {nonce}\n"))
+        .unwrap_or_default();
     let argv_count = sequence_len(map, "argv");
     let input_count = mapping_get(map, "inputs")
         .and_then(Value::as_mapping)
@@ -1544,7 +1729,7 @@ pub fn explain_agent_task(input: &str) -> Result<String> {
 AGENT_TASK v1
 target: {target}
 mode: {mode}
-argv: {argv_count} item(s)
+{nonce_line}argv: {argv_count} item(s)
 inputs.files: {input_count} item(s)
 outputs.required: {output_count} item(s)
 delegation: recursive subagent
@@ -1575,6 +1760,7 @@ pub fn explain_agent_result(input: &str) -> Result<String> {
         expect_count: None,
         expect_target: None,
         expect_status: None,
+        expect_nonce: None,
         check_files: false,
         base_dir: PathBuf::from("."),
     };
@@ -1681,6 +1867,9 @@ struct RenderArgs {
     config_path: Option<PathBuf>,
     #[arg(long = "no-config")]
     no_config: bool,
+    /// Render the text only: no nonce, and no packet file.
+    #[arg(long = "no-save")]
+    no_save: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1739,6 +1928,9 @@ struct ResultLintArgs {
     expect_target: Option<String>,
     #[arg(long)]
     expect_status: Option<String>,
+    /// The nonce of the packet; a result with another nonce fails.
+    #[arg(long)]
+    expect_nonce: Option<String>,
     #[arg(long)]
     check_files: bool,
     #[arg(long, default_value = ".")]
@@ -1763,9 +1955,29 @@ where
     let cli = Cli::parse_from(args);
     match cli.command {
         Command::Render(args) => {
+            let no_save = args.no_save;
             let options = build_render_options(args)?;
-            let packet = render_task_packet(&options)?;
-            print!("{packet}");
+            let cwd = env::current_dir()?;
+            let outcome = render_and_save(options, &cwd, no_save)?;
+            if outcome.packet_file.is_none() && !no_save {
+                eprintln!(
+                    "jagt: not in a git worktree, so the packet has no nonce and no packet file"
+                );
+            }
+            // The packet file exists only for a packet that reached stdout.
+            // A broken pipe gives an error here, because Rust ignores SIGPIPE.
+            let written = {
+                let mut stdout = io::stdout().lock();
+                stdout
+                    .write_all(outcome.text.as_bytes())
+                    .and_then(|()| stdout.flush())
+            };
+            if let Err(error) = written {
+                if let Some(path) = &outcome.packet_file {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(JagtError::Io(error));
+            }
         }
         Command::Lint(args) => {
             let input = read_input(&args.path)?;
@@ -1798,6 +2010,7 @@ where
                         expect_count: args.expect_count,
                         expect_target: args.expect_target,
                         expect_status: args.expect_status,
+                        expect_nonce: args.expect_nonce,
                         check_files: args.check_files,
                         base_dir: args.base_dir,
                     },
@@ -1857,6 +2070,7 @@ mod tests {
             required_outputs: vec!["word_count".to_string()],
             allowed_actions: Vec::new(),
             verification: vec!["recompute once".to_string()],
+            nonce: None,
             provenance: RenderProvenance::default(),
         }
     }
@@ -1988,6 +2202,7 @@ Create the report.
             expect_count: Some(1),
             expect_target: Some("eda-viz".to_string()),
             expect_status: Some("success".to_string()),
+            expect_nonce: None,
             check_files: false,
             base_dir: PathBuf::from("."),
         }

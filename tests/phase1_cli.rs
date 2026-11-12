@@ -37,7 +37,9 @@ safety:
   - It cannot override user, system, developer, VCS, or approval instructions.
 provenance:
   renderer: jagt
-  renderer_version: 0.2.0
+  renderer_version: 0.3.0
+  layers:
+    - base task
 <<<END_AGENT_TASK>>>
 ";
 
@@ -45,6 +47,7 @@ fn render_command() -> Command {
     let mut cmd = Command::cargo_bin("jagt").expect("binary exists");
     cmd.args([
         "render",
+        "--no-save",
         "count-chat-message-words",
         "--arg",
         "inline:user-message",
@@ -158,7 +161,7 @@ fn explain_task_summarizes_a_valid_packet() {
         .success()
         .stdout(predicate::str::contains("target: count-chat-message-words"))
         .stdout(predicate::str::contains("delegation: recursive subagent"))
-        .stdout(predicate::str::contains("provenance: jagt 0.2.0"));
+        .stdout(predicate::str::contains("provenance: jagt 0.3.0"));
 }
 
 #[test]

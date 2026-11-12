@@ -9,6 +9,10 @@ plain task/result, recursive `outputs.proposed_tasks`, and stochastic
 `AGENT_TASK_DRAFT` cases against a real example Justfile with spawned
 subagents.
 
+For the commit gates, read [packet-file.md](packet-file.md). It says what
+`jagt render` saves for each packet, and how it joins the layers of the
+prompt text.
+
 Reference docs:
 
 - [reference/agentic_just_targets_base_spec.md](reference/agentic_just_targets_base_spec.md):

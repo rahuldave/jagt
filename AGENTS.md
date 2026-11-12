@@ -52,8 +52,13 @@ update this section when the accepted design changes.
 
 - `jagt` must be deterministic. It must not call an LLM or depend on network
   access for rendering, linting, explanation, or schema output.
-- Initial rendering should write only to stdout. Do not add file writes unless a
-  later accepted design adds an explicit output command or flag.
+- The nonce of each packet is the one random part of `jagt render`. The rest
+  of the packet text stays the same for the same inputs.
+- `jagt render` prints the packet on stdout. Its one file write is the packet
+  file `.agents/log/packets/<nonce>.json` in the shared log folder, from the
+  commit gates spec. `--no-save` turns the write off. Do not add another file
+  write unless an accepted design adds it. `docs/packet-file.md` describes the
+  file.
 - Accepted render inputs are proposed to be CLI arguments, `.jagt/config.toml`
   when present, target config, Markdown prompt files with optional YAML
   frontmatter, and explicitly allowlisted environment variables.

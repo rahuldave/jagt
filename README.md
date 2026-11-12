@@ -1,8 +1,9 @@
 # jagt
 
 `jagt` means "just agent task." It is the deterministic tool in an
-agentic Just workflow: it renders, lints, and explains packet envelopes without
-calling an LLM, opening the network, or launching subagents.
+agentic Just workflow. It renders, lints, and explains packet envelopes without
+calling an LLM, opening the network, or starting subagents. The one random part
+is the nonce of each packet.
 
 The important idea is that an agentic Just target is a conversation boundary:
 
@@ -15,9 +16,10 @@ Just target stdout
   -> parent LLM validates, records, and decides what happens next
 ```
 
-`jagt` owns the packet mechanics. The parent LLM owns orchestration decisions:
-whether to delegate, whether a recursive proposal is safe, whether a stochastic
-draft needs user approval, and how outputs and follow-ups are recorded in Gest.
+`jagt` owns the packet mechanics. The parent LLM owns the decisions of
+orchestration. It decides whether to delegate, whether a recursive proposal is
+safe, whether a stochastic draft needs user approval, and how outputs and
+follow-ups are recorded in Gest.
 
 Start with [docs/protocol-flows.md](docs/protocol-flows.md) for the complete
 task, result, recursive, deterministic, and stochastic draft flows.
@@ -108,10 +110,11 @@ scope, or override user, system, developer, approval, VCS, or repo rules.
 
 Recursive work uses a trampoline. A planner subagent can return
 `status: partial` with `outputs.proposed_tasks`, but that proposal is only
-data. The parent validates the planner result, checks the proposed child task
-against normal safety rules, renders a fresh child `AGENT_TASK v1` with
-`jagt render`, delegates that child to a worker subagent, validates the worker
-result, and records a final parent result with `outputs.recursion_trace`.
+data. The parent validates the planner result, and checks the proposed child
+task against normal safety rules. Then it renders a fresh child `AGENT_TASK v1`
+with `jagt render`, and delegates that child to a worker subagent. Last, it
+validates the worker result, and records a final parent result with
+`outputs.recursion_trace`.
 
 The second task is not spawned by `jagt result lint`, a Just recipe, or the
 `AGENT_RESULT` block itself. It is spawned only by the parent/orchestrator after
@@ -153,10 +156,17 @@ stochastic `AGENT_TASK_DRAFT v1`, and promotes that draft through
 
 ## Implementation Surface
 
-- `jagt render <target>` emits deterministic `AGENT_TASK v1` packets.
+- `jagt render <target>` emits `AGENT_TASK v1` packets. In a git worktree,
+  each packet gets a random nonce, and jagt saves the packet file
+  `.agents/log/packets/<nonce>.json` in the log folder of the main checkout.
+  The prompt text joins the base task, the language layer of each language in
+  `.agents/stack.json`, and the repository text. `--no-save` renders the text
+  only. [docs/packet-file.md](docs/packet-file.md) gives the details.
 - `jagt lint [PATH|-]` validates `AGENT_TASK v1` packet structure.
 - `jagt explain task [PATH|-]` summarizes task packets and source precedence.
 - `jagt result lint [PATH|-]` validates `AGENT_RESULT v1` report envelopes.
+  `--expect-nonce <nonce>` fails a result that does not hold the nonce of its
+  packet.
 - `jagt result explain [PATH|-]` summarizes result status, outputs,
   verification, follow-up, and report-only state.
 - `jagt draft lint [PATH|-]` validates non-executable `AGENT_TASK_DRAFT v1`
@@ -187,9 +197,9 @@ ignores project and explicit config files.
 - [integration_tests/live_agent_result_recursive/](integration_tests/live_agent_result_recursive/):
   recursive planner/worker transcript lab.
 
-This README and the flow guide were cross-checked against Gest Git
-(`agent_gest_git_skills`) and Gest jj (`agent_gest_jj_skills`) labs: agentic
-target, result, recursive result, and task-draft workflows. `jagt` keeps local
+This README and the flow guide were checked against the labs of Gest Git
+(`agent_gest_git_skills`) and Gest jj (`agent_gest_jj_skills`). The labs cover
+the agentic target, the result, the recursive result, and the task draft. `jagt` keeps local
 demos self-contained through `.agents/skills/jagt-protocol/`; it does not need
 those external repositories installed to run `just protocol-demo`.
 
