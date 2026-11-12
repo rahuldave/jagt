@@ -51,11 +51,20 @@ pub struct GitContext {
 }
 
 impl GitContext {
-    /// Finds the worktree and the main checkout from `cwd`.
+    /// Find the worktree and the main checkout from `cwd`.
     ///
     /// It gives `None` outside a git worktree, for example in a temporary
     /// folder or inside `.git`, and when git cannot start. It fails when the main
-    /// repository is bare, because a bare repository has no log folder.
+    /// repository is bare, because a bare repository has no log folder, and when
+    /// a later git call fails.
+    ///
+    /// # Arguments
+    ///
+    /// * `cwd` - the folder to start from, which `jagt render` takes as the current folder
+    ///
+    /// # Returns
+    ///
+    /// The worktree and the main checkout, or `None` outside a git worktree.
     pub fn discover(cwd: &Path) -> Result<Option<Self>> {
         // A git that cannot start counts as no worktree, so render warns and
         // prints the text, as it does outside a worktree.
@@ -74,15 +83,30 @@ impl GitContext {
         }))
     }
 
-    /// The shared log folder, `.agents/log` of the main checkout.
+    /// Give the shared log folder, `.agents/log` of the main checkout.
+    ///
+    /// # Returns
+    ///
+    /// The path of the shared log folder. It may not exist yet.
     pub fn shared_log_dir(&self) -> PathBuf {
         self.main_checkout.join(LOG_DIR)
     }
 }
 
+/// Find the main checkout of a worktree.
+///
 /// The main checkout is the first entry of `git worktree list`. Git keeps
 /// that order for linked worktrees and for submodules alike, where the parent
-/// of `--git-common-dir` is not always the checkout.
+/// of `--git-common-dir` is not always the checkout. It fails when git fails,
+/// when the list is empty, and when the main repository is bare.
+///
+/// # Arguments
+///
+/// * `worktree` - the top folder of a worktree
+///
+/// # Returns
+///
+/// The top folder of the main checkout.
 fn main_checkout(worktree: &Path) -> Result<PathBuf> {
     let output = git_output(worktree, &["worktree", "list", "--porcelain", "-z"], &[])?;
     let mut fields = output.split('\0');
@@ -103,8 +127,10 @@ fn main_checkout(worktree: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(first))
 }
 
-/// Computes the worktree tree: the tree of all files in the worktree, staged
-/// or not, with ignored files left out. It uses a temporary index, so the
+/// Compute the worktree tree: HEAD with every change in the worktree, staged
+/// or not, plus the untracked files that are not ignored. A tracked file that
+/// matches `.gitignore` stays in the tree. Before the first commit, the tree
+/// holds the files that are not ignored. It uses a temporary index, so the
 /// real index does not change:
 ///
 /// ```sh
@@ -112,6 +138,19 @@ fn main_checkout(worktree: &Path) -> Result<PathBuf> {
 /// GIT_INDEX_FILE=<tmp> git add -A
 /// GIT_INDEX_FILE=<tmp> git write-tree
 /// ```
+///
+/// It fails when the folder of the temporary index exists already, or when
+/// git fails. `git add -A` writes the new objects into the repository.
+///
+/// # Arguments
+///
+/// * `worktree` - the top folder of the worktree
+/// * `scratch_name` - the end of the name of the temporary index folder, `jagt-index-<name>`;
+///   `jagt render` gives the nonce
+///
+/// # Returns
+///
+/// The hash of the tree, as `git write-tree` prints it, with no newline.
 pub fn worktree_tree(worktree: &Path, scratch_name: &str) -> Result<String> {
     let index = TempIndex::new(scratch_name)?;
     let env = [("GIT_INDEX_FILE", index.path.as_os_str())];
@@ -132,11 +171,24 @@ pub fn worktree_tree(worktree: &Path, scratch_name: &str) -> Result<String> {
 /// A path for a temporary index outside the repository, removed on drop.
 /// The file must not exist yet, because `git read-tree` makes it.
 struct TempIndex {
+    /// The folder that holds the index, in the system's temporary folder.
     dir: PathBuf,
+    /// The path of the index file, inside `dir`.
     path: PathBuf,
 }
 
 impl TempIndex {
+    /// Make the folder `jagt-index-<name>` in the system's temporary folder.
+    ///
+    /// It fails when the folder exists already.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - the end of the folder's name
+    ///
+    /// # Returns
+    ///
+    /// The temporary index. Its folder exists, and its index file does not.
     fn new(name: &str) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("jagt-index-{name}"));
         // create_dir fails if the folder exists, so no other process owns it.
@@ -147,6 +199,7 @@ impl TempIndex {
 }
 
 impl Drop for TempIndex {
+    /// Remove the folder and the index in it. An error is ignored.
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -177,12 +230,26 @@ pub const LOCAL_ENV_VARS: [&str; 17] = [
 
 /// The result of one git call.
 struct GitRun {
+    /// True when git exited with status 0.
     success: bool,
+    /// What git wrote to standard output, with any bytes that are not UTF-8 replaced.
     stdout: String,
+    /// What git wrote to standard error, with any bytes that are not UTF-8 replaced.
     stderr: String,
 }
 
-/// Runs git in `dir`. It fails only when git cannot start.
+/// Run git in `dir`, with standard input closed and without the variables of
+/// [`LOCAL_ENV_VARS`]. It fails only when git cannot start.
+///
+/// # Arguments
+///
+/// * `dir` - the folder that git runs in, given to git as `-C`
+/// * `args` - the arguments of git
+/// * `env` - the variables to set for this call, such as `GIT_INDEX_FILE`
+///
+/// # Returns
+///
+/// Whether git succeeded, and its output.
 fn run_git(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Result<GitRun> {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args).stdin(Stdio::null());
@@ -205,7 +272,18 @@ fn run_git(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Resul
     })
 }
 
-/// Runs git in `dir` and returns its stdout. A failure carries git's stderr.
+/// Run git in `dir` as [`run_git`] does, and fail when git fails. The error
+/// carries git's stderr.
+///
+/// # Arguments
+///
+/// * `dir` - the folder that git runs in
+/// * `args` - the arguments of git
+/// * `env` - the variables to set for this call
+///
+/// # Returns
+///
+/// The stdout of git.
 fn git_output(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Result<String> {
     let run = run_git(dir, args, env)?;
     if !run.success {
@@ -218,17 +296,32 @@ fn git_output(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Re
     Ok(run.stdout)
 }
 
+/// Run git in `dir` with no extra variables, and fail when git fails.
+///
+/// # Arguments
+///
+/// * `dir` - the folder that git runs in
+/// * `args` - the arguments of git
+///
+/// # Returns
+///
+/// The stdout of git without its trailing newlines, such as one path.
 fn git_line(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(git_output(dir, args, &[])?
         .trim_end_matches('\n')
         .to_string())
 }
 
-/// A new random nonce: 16 bytes from the system, in lowercase hex.
+/// Draw a new random nonce: 16 bytes from the system, in lowercase hex.
 ///
 /// The first digit is always a letter from `a` to `f`. A YAML reader then
 /// always reads the nonce as a string, never as a number such as `123e45`.
-/// jagt draws again until the first digit is a letter.
+/// jagt draws again until the first digit is a letter. It fails when the
+/// system gives no random bytes.
+///
+/// # Returns
+///
+/// The nonce, 32 lowercase hex digits.
 pub fn new_nonce() -> Result<String> {
     loop {
         let mut bytes = [0u8; NONCE_BYTES];
@@ -241,8 +334,16 @@ pub fn new_nonce() -> Result<String> {
     }
 }
 
-/// True when `value` has the form of a nonce: 32 lowercase hex digits, of
+/// Say whether `value` has the form of a nonce: 32 lowercase hex digits, of
 /// which the first is a letter from `a` to `f`.
+///
+/// # Arguments
+///
+/// * `value` - the text to check
+///
+/// # Returns
+///
+/// True when `value` is a nonce.
 pub fn is_nonce(value: &str) -> bool {
     value.len() == NONCE_BYTES * 2
         && value.as_bytes()[0].is_ascii_lowercase()
@@ -251,20 +352,50 @@ pub fn is_nonce(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// The SHA-256 of `text`, in lowercase hex.
+/// Hash a text with SHA-256.
+///
+/// # Arguments
+///
+/// * `text` - the text, hashed as its UTF-8 bytes
+///
+/// # Returns
+///
+/// The hash, 64 lowercase hex digits.
 pub fn sha256_hex(text: &str) -> String {
     to_hex(&Sha256::digest(text.as_bytes()))
 }
 
+/// Write bytes in lowercase hex, two digits for each byte.
+///
+/// # Arguments
+///
+/// * `bytes` - the bytes to write
+///
+/// # Returns
+///
+/// The hex text.
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Saves `record` as `<log_dir>/packets/<nonce>.json` and returns the path.
+/// Save `record` as `<log_dir>/packets/<nonce>.json`.
 ///
-/// It makes the log folder when it is missing, with a `.gitignore` that holds
-/// `*`, as `jlog` does, so git never sees the packets. It never replaces a
-/// file: a packet file with the same name stops the render.
+/// It makes `.agents`, the log folder and the packets folder when they are
+/// missing. Where the log folder or the packets folder has no `.gitignore`
+/// yet, it writes one that holds `*`, as `jlog` does, so git never sees the
+/// packets. An existing `.gitignore` is kept as it is.
+/// It never replaces a file: a packet file with the same name stops the
+/// render. It also fails when the nonce of `record` is not a nonce, and when
+/// one of the folders is a symlink or not a folder.
+///
+/// # Arguments
+///
+/// * `log_dir` - the log folder, `.agents/log` of a checkout
+/// * `record` - the facts of the packet
+///
+/// # Returns
+///
+/// The path of the new packet file.
 pub fn save_record(log_dir: &Path, record: &PacketRecord) -> Result<PathBuf> {
     if !is_nonce(&record.nonce) {
         return Err(render_error(
@@ -305,9 +436,19 @@ pub fn save_record(log_dir: &Path, record: &PacketRecord) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Makes `dir` when it is missing. A symlink, or a path that is not a
+/// Make `dir` when it is missing. A symlink, or a path that is not a
 /// folder, stops the render, so a symlink in a repository cannot send the
 /// packet files out of the log folder.
+///
+/// It does not make the parent folders of `dir`.
+///
+/// # Arguments
+///
+/// * `dir` - the folder to make, whose parent must exist
+///
+/// # Returns
+///
+/// `Ok(())` when `dir` is a real folder, or the error that stops the render.
 fn make_real_dir(dir: &Path) -> Result<()> {
     match fs::symlink_metadata(dir) {
         Ok(meta) if meta.file_type().is_symlink() => Err(render_error(&format!(
@@ -325,13 +466,32 @@ fn make_real_dir(dir: &Path) -> Result<()> {
     }
 }
 
-/// Writes a new file. `create_new` fails on any existing path, a symlink too.
+/// Write a new file, and sync it to the disk. `create_new` fails on any
+/// existing path, a symlink too.
+///
+/// # Arguments
+///
+/// * `path` - the path of the new file
+/// * `bytes` - what the file holds
+///
+/// # Returns
+///
+/// `Ok(())` when the file is written, or the I/O error.
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
 
+/// Count an error that says a path exists already as success.
+///
+/// # Arguments
+///
+/// * `error` - the error of [`write_new`]
+///
+/// # Returns
+///
+/// `Ok(())` for an `AlreadyExists` error, or else the error.
 fn ignore_exists(error: io::Error) -> io::Result<()> {
     if error.kind() == io::ErrorKind::AlreadyExists {
         Ok(())
@@ -349,7 +509,7 @@ pub struct Layer {
     pub text: String,
 }
 
-/// Reads the language layers and the repository text of `target` from the
+/// Read the language layers and the repository text of `target` from the
 /// checkout at `root`:
 ///
 /// - `.agents/targets/<language>/<target>.md`, for each language in the
@@ -357,7 +517,17 @@ pub struct Layer {
 /// - `.agents/targets/<target>.md`.
 ///
 /// A missing file is not an error, and neither is a missing `stack.json`.
-/// An empty file adds no layer.
+/// A file of blank lines adds no layer. It fails on a bad `stack.json`, and
+/// on a layer file whose real path leads outside `.agents/targets`.
+///
+/// # Arguments
+///
+/// * `root` - the top folder of the checkout
+/// * `target` - the Just target
+///
+/// # Returns
+///
+/// The layers in that order, each with its label for the provenance.
 pub fn read_layers(root: &Path, target: &str) -> Result<Vec<Layer>> {
     let mut layers = Vec::new();
     for language in stack_languages(root)? {
@@ -379,9 +549,22 @@ pub fn read_layers(root: &Path, target: &str) -> Result<Vec<Layer>> {
     Ok(layers)
 }
 
-/// The languages of the stack: the `profiles` list of `.agents/stack.json`.
+/// Read the languages of the stack: the `profiles` list of `.agents/stack.json`.
 /// Each name must be a plain folder name, so a name such as `..` cannot send
 /// the read out of `.agents/targets`.
+///
+/// A missing file, a missing `profiles` and `profiles: null` give no
+/// languages. It fails when the file is not JSON, when `profiles` is not a
+/// list of names, and when the real path of the file is not
+/// `.agents/stack.json` of the checkout.
+///
+/// # Arguments
+///
+/// * `root` - the top folder of the checkout
+///
+/// # Returns
+///
+/// The names, in the order of the list, with each name once.
 pub fn stack_languages(root: &Path) -> Result<Vec<String>> {
     let Some(content) = read_inside(root, ".agents/stack.json", ".agents/stack.json")? else {
         return Ok(Vec::new());
@@ -411,8 +594,17 @@ pub fn stack_languages(root: &Path) -> Result<Vec<String>> {
     Ok(languages)
 }
 
-/// A language name starts with a letter or a digit, and holds only ASCII
-/// letters, digits, `_`, `.` and `-`.
+/// Say whether a name is a plain language name. A language name starts with
+/// a letter or a digit, and holds only ASCII letters, digits, `_`, `.` and
+/// `-`.
+///
+/// # Arguments
+///
+/// * `name` - the name from `profiles`
+///
+/// # Returns
+///
+/// True when the name is plain.
 fn is_language_name(name: &str) -> bool {
     name.chars()
         .next()
@@ -422,15 +614,35 @@ fn is_language_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// Reads a layer file. A missing file and a file of blank lines give `None`.
+/// Read a layer file. A missing file and a file of blank lines give `None`.
+///
+/// # Arguments
+///
+/// * `root` - the top folder of the checkout
+/// * `relative` - the path of the file, relative to `root`
+/// * `allowed` - the path, relative to `root`, that the file must be or be inside
+///
+/// # Returns
+///
+/// The text of the file, or `None`.
 fn read_optional(root: &Path, relative: &str, allowed: &str) -> Result<Option<String>> {
     Ok(read_inside(root, relative, allowed)?.filter(|text| !text.trim().is_empty()))
 }
 
-/// Reads `root/relative`. A missing file gives `None`. The real path of the
+/// Read `root/relative`. A missing file gives `None`. The real path of the
 /// file must be `root/allowed` or inside it, with `root` as a real path. So a
 /// symlink in the repository cannot put another file into the packet, such
 /// as an ignored `.env` file, `.git/config` or a key outside the worktree.
+///
+/// # Arguments
+///
+/// * `root` - the top folder of the checkout
+/// * `relative` - the path of the file, relative to `root`
+/// * `allowed` - the path, relative to `root`, that the file must be or be inside
+///
+/// # Returns
+///
+/// The text of the file, or `None` when it is missing.
 fn read_inside(root: &Path, relative: &str, allowed: &str) -> Result<Option<String>> {
     let path = root.join(relative);
     let real = match fs::canonicalize(&path) {
@@ -459,7 +671,16 @@ fn read_inside(root: &Path, relative: &str, allowed: &str) -> Result<Option<Stri
     }
 }
 
-/// Joins the layers in order, with one blank line between two layers.
+/// Join the layers in order, with one blank line between two layers. The
+/// whitespace at the end of each layer is dropped.
+///
+/// # Arguments
+///
+/// * `layers` - the layers, in the order of the join
+///
+/// # Returns
+///
+/// The joined text, with no newline at its end. It is empty when there are no layers.
 pub fn join_layers(layers: &[Layer]) -> String {
     let mut joined = String::new();
     for layer in layers {
@@ -471,6 +692,15 @@ pub fn join_layers(layers: &[Layer]) -> String {
     joined
 }
 
+/// Make a [`JagtError::Render`] from a message.
+///
+/// # Arguments
+///
+/// * `message` - what went wrong
+///
+/// # Returns
+///
+/// The error.
 fn render_error(message: &str) -> JagtError {
     JagtError::Render(message.to_string())
 }

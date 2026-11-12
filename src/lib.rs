@@ -1,3 +1,22 @@
+//! Render, lint and explain the packets of an agentic Just workflow, with no LLM and no network.
+//!
+//! Just is a command runner, and a Just target is one of its recipes. In an agentic Just workflow,
+//! a target can print a packet that asks an AI agent to do a task. The agent hands the task to a
+//! subagent, a second agent with its own context.
+//!
+//! A packet is a block of YAML between two marker lines. An `AGENT_TASK v1` packet hands one task
+//! to a subagent. An `AGENT_RESULT v1` packet is the subagent's report. An `AGENT_TASK_DRAFT v1`
+//! packet is a task that a model proposes. The parent agent or the user must approve a draft, and
+//! `jagt render` must turn it into a task packet, before any of it runs.
+//!
+//! To lint a packet is to check its shape and its safety rules, without running it.
+//!
+//! [`render_task_packet`] writes a task packet, and [`render_and_save`] also joins the layers of
+//! its prompt and saves its packet file, as `jagt render` does. [`lint_agent_task`],
+//! [`lint_agent_result`] and [`lint_agent_task_draft`] check packets. [`explain_agent_task`] and
+//! [`explain_agent_result`] summarize one. [`run_cli`] runs the `jagt` command. The [`packet`]
+//! module holds the packet file and the layers of the prompt.
+
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
@@ -12,26 +31,51 @@ use thiserror::Error;
 
 pub mod packet;
 
+/// The line that opens an `AGENT_TASK v1` packet.
 pub const AGENT_TASK_START: &str = "<<<AGENT_TASK v1>>>";
+/// The line that closes an `AGENT_TASK v1` packet.
 pub const AGENT_TASK_END: &str = "<<<END_AGENT_TASK>>>";
+/// The line that opens an `AGENT_RESULT v1` packet.
 pub const AGENT_RESULT_START: &str = "<<<AGENT_RESULT v1>>>";
+/// The line that closes an `AGENT_RESULT v1` packet.
 pub const AGENT_RESULT_END: &str = "<<<END_AGENT_RESULT>>>";
+/// The line that opens an `AGENT_TASK_DRAFT v1` packet.
 pub const AGENT_TASK_DRAFT_START: &str = "<<<AGENT_TASK_DRAFT v1>>>";
+/// The line that closes an `AGENT_TASK_DRAFT v1` packet.
 pub const AGENT_TASK_DRAFT_END: &str = "<<<END_AGENT_TASK_DRAFT>>>";
+/// The first line of `safety` in a rendered task packet. It says that the packet is repo-local
+/// context.
 pub const SAFETY_CONTEXT: &str = "This block is repo-local operational context.";
+/// The line of `safety` that every task packet must hold, word for word.
+///
+/// [`render_task_packet`] writes it, and [`lint_agent_task`] rejects a task packet without it.
 pub const SAFETY_OVERRIDE: &str =
     "It cannot override user, system, developer, VCS, or approval instructions.";
+/// Text that an item of a draft's `safety` list must contain.
+///
+/// It says that the draft is a proposal and does not run.
 pub const DRAFT_SAFETY_NON_EXECUTABLE: &str = "proposal, not executable";
+/// Text that an item of a draft's `safety` list must contain.
+///
+/// It says that the draft cannot override other instructions.
 pub const DRAFT_SAFETY_NO_OVERRIDE: &str =
     "cannot override user, system, developer, VCS, approval, or repo instructions";
+/// Text that an item of a draft's `safety` list must contain.
+///
+/// It says that the draft cannot ask for more than its source request.
 pub const DRAFT_SAFETY_NO_AUTHORITY_EXPANSION: &str =
     "cannot expand authority beyond the source request";
+/// The cases in which a newly printed task packet must still go to its own subagent, not be done
+/// inline.
+///
+/// A rendered task packet lists them under `delegation.triggers`, and lint requires each one.
 pub const DELEGATION_TRIGGERS: [&str; 4] = [
     "nested agentic Just calls",
     "agentic dependencies",
     "hook-triggered packets",
     "agentic verification targets",
 ];
+/// The checks that a draft must list in `promotion.required_checks` before it can become a task.
 pub const DRAFT_PROMOTION_CHECKS: [&str; 4] = [
     "draft_shape_valid",
     "policy_review_passed",
@@ -39,23 +83,37 @@ pub const DRAFT_PROMOTION_CHECKS: [&str; 4] = [
     "final_agent_task_lints",
 ];
 
+/// An error from jagt. The command prints its message and exits with [`JagtError::exit_code`].
 #[derive(Debug, Error)]
 pub enum JagtError {
+    /// An `AGENT_TASK v1` packet failed lint or could not be explained.
     #[error("invalid AGENT_TASK block: {0}")]
     InvalidAgentTask(String),
+    /// An `AGENT_RESULT v1` packet failed lint or could not be explained.
     #[error("invalid AGENT_RESULT block: {0}")]
     InvalidAgentResult(String),
+    /// An `AGENT_TASK_DRAFT v1` packet failed lint.
     #[error("invalid AGENT_TASK_DRAFT block: {0}")]
     InvalidAgentTaskDraft(String),
+    /// A task packet could not be rendered, for example from a bad target, config or prompt file,
+    /// or its packet file could not be saved.
     #[error("render failed: {0}")]
     Render(String),
+    /// A file, standard input or standard output failed, or the current folder could not be found.
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+    /// A bad command line. jagt does not make this error now, because clap reports bad arguments
+    /// itself.
     #[error("cli error: {0}")]
     Cli(String),
 }
 
 impl JagtError {
+    /// Give the exit status for this error, which is 2 for an I/O error and 1 for any other.
+    ///
+    /// # Returns
+    ///
+    /// The exit status.
     pub fn exit_code(&self) -> i32 {
         match self {
             JagtError::InvalidAgentTask(_)
@@ -68,30 +126,65 @@ impl JagtError {
     }
 }
 
+/// The result of a jagt function, with a [`JagtError`] on failure.
 pub type Result<T> = std::result::Result<T, JagtError>;
 
+/// What [`render_task_packet`] writes into an `AGENT_TASK v1` packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRenderOptions {
+    /// The Just target. It may hold only ASCII letters, digits, `_`, `.` and `-`.
     pub target: String,
+    /// The arguments of the target. They come first in `argv`.
     pub args: Vec<String>,
+    /// The input files. They follow `args` in `argv`, and they are listed under `inputs.files`.
     pub inputs: Vec<String>,
+    /// The prompt for the subagent. Rendering fails when it is missing or blank.
+    ///
+    /// [`apply_prompt_layers`] takes it as the base task, and puts the joined layers in its place.
     pub prompt_text: Option<String>,
+    /// The outputs that the subagent must return, listed under `outputs.required`.
     pub required_outputs: Vec<String>,
+    /// What the subagent may do. When it is empty, the packet lists the default actions for the
+    /// inputs and outputs.
     pub allowed_actions: Vec<String>,
+    /// The checks that the subagent must run.
     pub verification: Vec<String>,
     /// The nonce of the packet. `jagt render` sets it when it saves the
-    /// packet file, and leaves it out with `--no-save`.
+    /// packet file, and leaves it out with `--no-save` or outside a git worktree.
+    ///
+    /// When it is set, the packet holds `nonce` and a `result_rules` line that asks for the
+    /// same nonce in the result. Rendering fails when it is not a nonce, as
+    /// [`packet::is_nonce`] says.
     pub nonce: Option<String>,
+    /// Where the values came from, written under `provenance`.
     pub provenance: RenderProvenance,
 }
 
+/// Where the values of a rendered task packet came from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RenderProvenance {
+    /// The sources in the order they were merged, such as `project config: .jagt/config.toml`.
+    /// Empty when jagt read no project config and no prompt frontmatter.
     pub source_order: Vec<String>,
-    /// The layers of the prompt text, in the order of the join.
+    /// The labels of the layers of the prompt text, in the order of the join, written under
+    /// `provenance.layers`. Empty when the layers were not applied.
     pub layers: Vec<String>,
 }
 
+/// Render an `AGENT_TASK v1` packet, with its delegation and safety blocks, as text for standard
+/// output.
+///
+/// It fails when the target is not valid, the prompt is missing or blank, or the nonce is set
+/// and is not a nonce. It neither joins the layers of the prompt nor saves a packet file; see
+/// [`render_and_save`].
+///
+/// # Arguments
+///
+/// * `options` - what the packet holds
+///
+/// # Returns
+///
+/// The packet, from its start line to its end line, each line ending in a newline.
 pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
     validate_target(&options.target)
         .map_err(|message| JagtError::Render(format!("invalid target: {message}")))?;
@@ -171,6 +264,16 @@ pub fn render_task_packet(options: &TaskRenderOptions) -> Result<String> {
     Ok(output)
 }
 
+/// Choose the allowed actions of a packet. They are the ones given, or else the defaults for its
+/// inputs and outputs.
+///
+/// # Arguments
+///
+/// * `options` - the render options
+///
+/// # Returns
+///
+/// The allowed actions.
 fn effective_allowed_actions(options: &TaskRenderOptions) -> Vec<String> {
     if !options.allowed_actions.is_empty() {
         return options.allowed_actions.clone();
@@ -186,53 +289,101 @@ fn effective_allowed_actions(options: &TaskRenderOptions) -> Vec<String> {
     actions
 }
 
+/// The project config, from the file given with `--config` or else `.jagt/config.toml` in the
+/// working folder.
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ProjectConfig {
+    /// Which environment variables a value may use.
     #[serde(default)]
     env: EnvConfig,
+    /// The values for every target, from `[defaults]`.
     #[serde(default)]
     defaults: RenderConfigSource,
+    /// The values for each target, from `[targets.NAME]`, by the target's name.
     #[serde(default)]
     targets: BTreeMap<String, RenderConfigSource>,
 }
 
+/// The rules for `${NAME}` in config values and prompt frontmatter, from `[env]`.
+///
+/// jagt does not fill in `${NAME}` in the body of a prompt or in CLI flags.
 #[derive(Debug, Clone, Default, Deserialize)]
 struct EnvConfig {
+    /// The names of the environment variables that a value may use.
     #[serde(default)]
     allow: Vec<String>,
+    /// Patterns, with `*` for any text, of names that a value may not use. Case does not matter.
     #[serde(default)]
     redact: Vec<String>,
 }
 
+/// The render values from one source, such as the config's defaults, a target's config, prompt
+/// frontmatter or CLI flags.
+///
+/// A value that is `None` leaves the value from an earlier source as it is.
 #[derive(Debug, Clone, Default, Deserialize)]
 struct RenderConfigSource {
+    /// A target name. Merging ignores it, but a bad `${NAME}` in it still makes the render fail.
     target: Option<String>,
+    /// The path of a prompt file.
     prompt: Option<String>,
+    /// The prompt itself.
     prompt_text: Option<String>,
+    /// The arguments of the target.
     args: Option<Vec<String>>,
+    /// The input files.
     inputs: Option<Vec<String>>,
+    /// The outputs that the subagent must return.
     required_outputs: Option<Vec<String>>,
+    /// What the subagent may do.
     allowed_actions: Option<Vec<String>>,
+    /// The checks that the subagent must run.
     verification: Option<Vec<String>>,
 }
 
+/// The render values after the sources so far are merged.
 #[derive(Debug, Clone, Default)]
 struct EffectiveRenderConfig {
+    /// The arguments of the target.
     args: Vec<String>,
+    /// The input files.
     inputs: Vec<String>,
+    /// The path of the prompt file, if a source gave one.
     prompt_path: Option<String>,
+    /// The text of the prompt, if a source gave it or the prompt file was read.
     prompt_text: Option<String>,
+    /// The outputs that the subagent must return.
     required_outputs: Vec<String>,
+    /// What the subagent may do.
     allowed_actions: Vec<String>,
+    /// The checks that the subagent must run.
     verification: Vec<String>,
 }
 
+/// A project config and the path it was read from.
 #[derive(Debug)]
 struct LoadedConfig {
+    /// The path, as the provenance shows it.
     path_label: String,
+    /// The config.
     config: ProjectConfig,
 }
 
+/// Merge the config's `[defaults]`, the target's config, the prompt frontmatter and the CLI flags,
+/// in that order.
+///
+/// The prompt file, from `--prompt` or else from a config's `prompt`, is read only when there is
+/// no `--prompt-text`. Its body becomes the prompt text, and its frontmatter is merged before the
+/// CLI flags. A `--prompt` counts as a CLI flag in the provenance, but it is not merged again, so
+/// it cannot clear the text read from its file.
+///
+/// # Arguments
+///
+/// * `args` - the arguments of `jagt render`
+///
+/// # Returns
+///
+/// The options, with the sources in `provenance`.
 fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     let mut effective = EffectiveRenderConfig::default();
     let mut source_order = Vec::new();
@@ -305,12 +456,25 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     })
 }
 
-/// Joins the layers of the prompt text, in this order: the base task, which
+/// Join the layers of the prompt text, in this order: the base task, which
 /// is the prompt from the flags, the config or the prompt file; the language
 /// layer of each language in `.agents/stack.json`; the repository text,
 /// `.agents/targets/<target>.md`. The files are read from the checkout at
 /// `root`. A missing layer is not an error, but the joined text must not be
 /// empty.
+///
+/// A blank base task adds no layer. The joined text replaces `prompt_text`, and the labels of the
+/// layers go in `provenance.layers`. It fails when the target is not valid, when there is no
+/// layer, and when [`packet::read_layers`] fails.
+///
+/// # Arguments
+///
+/// * `options` - the render options, changed in place
+/// * `root` - the top folder of the checkout that holds `.agents`
+///
+/// # Returns
+///
+/// `Ok(())` when the layers are joined, or the render error.
 pub fn apply_prompt_layers(options: &mut TaskRenderOptions, root: &Path) -> Result<()> {
     validate_target(&options.target)
         .map_err(|message| JagtError::Render(format!("invalid target: {message}")))?;
@@ -332,7 +496,7 @@ pub fn apply_prompt_layers(options: &mut TaskRenderOptions, root: &Path) -> Resu
     Ok(())
 }
 
-/// What `render_and_save` made: the packet text, and the packet file when
+/// What [`render_and_save`] made: the packet text, and the packet file when
 /// it saved one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderOutcome {
@@ -351,11 +515,25 @@ pub struct RenderOutcome {
 /// before the text is printed, so a printed packet always has its file.
 ///
 /// Outside a git worktree there is no input tree, so the text has no nonce
-/// and no file is saved. The layers then come from `cwd`.
+/// and no file is saved. The layers then come from `cwd`. A git that cannot
+/// start, or a failed `git rev-parse --is-inside-work-tree`, counts as outside a
+/// worktree, so the render succeeds with no nonce and no file.
+///
+/// Without `no_save`, it fails when the main repository is bare, when a later
+/// git call fails, and when the packet file cannot be saved. With `no_save`, the
+/// layers come from the top of the worktree when git finds one, and from `cwd`
+/// when it does not; git errors are then ignored.
+///
+/// Before it saves the file, it lints the rendered text as one packet. A packet
+/// that fails lint gives a render error and no file.
+///
+/// # Returns
+///
+/// The packet text, and the path of the packet file when one was saved.
 pub fn render_and_save(
-    mut options: TaskRenderOptions,
-    cwd: &Path,
-    no_save: bool,
+    mut options: TaskRenderOptions, // the render options, with the base task as the prompt
+    cwd: &Path,                     // the folder that jagt runs in
+    no_save: bool,                  // true to save no packet file and give the text no nonce
 ) -> Result<RenderOutcome> {
     // With --no-save, git is needed only to find the top of the worktree for
     // the layers. A missing git or a bare main repository then falls back to
@@ -405,6 +583,15 @@ pub fn render_and_save(
     })
 }
 
+/// Turn an empty list into `None`, so that an unused CLI flag does not replace a config value.
+///
+/// # Arguments
+///
+/// * `values` - the values of a flag
+///
+/// # Returns
+///
+/// The values, or `None` when there are none.
 fn non_empty(values: Vec<String>) -> Option<Vec<String>> {
     if values.is_empty() {
         None
@@ -413,6 +600,15 @@ fn non_empty(values: Vec<String>) -> Option<Vec<String>> {
     }
 }
 
+/// Say whether a source sets any render value. Its target does not count.
+///
+/// # Arguments
+///
+/// * `source` - the render values from one source
+///
+/// # Returns
+///
+/// True when it sets a value.
 fn source_has_render_values(source: &RenderConfigSource) -> bool {
     source.prompt.is_some()
         || source.prompt_text.is_some()
@@ -423,6 +619,13 @@ fn source_has_render_values(source: &RenderConfigSource) -> bool {
         || source.verification.is_some()
 }
 
+/// Put each value that a source sets in place of the value so far. A prompt path and a prompt text
+/// replace each other.
+///
+/// # Arguments
+///
+/// * `effective` - the values so far, changed in place
+/// * `source` - the source to merge
 fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSource) {
     let _ = source.target;
     if let Some(args) = source.args {
@@ -450,9 +653,16 @@ fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSourc
     }
 }
 
+/// Read the project config from the path given, or else from `.jagt/config.toml` when it exists.
+///
+/// A path given with `--config` must exist.
+///
+/// # Returns
+///
+/// The config, or `None` when no config is read.
 fn load_project_config(
-    config_path: Option<&Path>,
-    no_config: bool,
+    config_path: Option<&Path>, // the path from `--config`
+    no_config: bool,            // true to read no config
 ) -> Result<Option<LoadedConfig>> {
     if no_config {
         return Ok(None);
@@ -481,13 +691,29 @@ fn load_project_config(
     }))
 }
 
+/// A prompt file, split into its frontmatter and its body.
 #[derive(Debug)]
 struct PromptFile {
+    /// The text after the frontmatter, or the whole file when it has none.
     body: String,
+    /// The render values from the YAML frontmatter.
     frontmatter: RenderConfigSource,
+    /// True when the first line of the file, after any byte order mark, is exactly `---`, and a
+    /// later line of exactly `---` closes the frontmatter. The frontmatter between them may be
+    /// empty.
     frontmatter_seen: bool,
 }
 
+/// Read a prompt file, and fill in the `${NAME}` values of its frontmatter.
+///
+/// # Arguments
+///
+/// * `path` - the prompt file
+/// * `env_config` - the rules for environment variables
+///
+/// # Returns
+///
+/// The prompt file, with the values of its frontmatter filled in.
 fn read_prompt_file(path: &Path, env_config: &EnvConfig) -> Result<PromptFile> {
     let content = fs::read_to_string(path)?;
     let parsed = parse_prompt_file(&content).map_err(|message| {
@@ -503,6 +729,22 @@ fn read_prompt_file(path: &Path, env_config: &EnvConfig) -> Result<PromptFile> {
     })
 }
 
+/// Split a prompt into its YAML frontmatter and its body.
+///
+/// The prompt is read line by line. A leading byte order mark is dropped. The frontmatter opens
+/// when the first line is exactly `---`, and closes at the next line that is exactly `---`; a `\r`
+/// before the newline is allowed, so CRLF files work. The frontmatter may be empty, as in `---`
+/// right after `---`, and a frontmatter of only blank lines sets no value. The body is the text
+/// after the closing line, with its leading line breaks dropped. A file whose first line is not
+/// `---` is all body.
+///
+/// # Arguments
+///
+/// * `content` - the text of the prompt file
+///
+/// # Returns
+///
+/// The prompt file, or a message when the frontmatter has no closing line or is not valid YAML.
 fn parse_prompt_file(content: &str) -> std::result::Result<PromptFile, String> {
     // The frontmatter opens with a first line of exactly `---`, and closes at
     // the next line of exactly `---`. A `\r` at the end of a line is allowed.
@@ -547,9 +789,14 @@ fn parse_prompt_file(content: &str) -> std::result::Result<PromptFile, String> {
     })
 }
 
+/// Fill in the `${NAME}` values in every field of a source.
+///
+/// # Returns
+///
+/// The source with the values filled in.
 fn interpolate_source(
-    source: &RenderConfigSource,
-    env_config: &EnvConfig,
+    source: &RenderConfigSource, // the render values from one source
+    env_config: &EnvConfig,      // the rules for environment variables
 ) -> Result<RenderConfigSource> {
     Ok(RenderConfigSource {
         target: interpolate_option(source.target.as_deref(), env_config)?,
@@ -563,15 +810,30 @@ fn interpolate_source(
     })
 }
 
+/// Fill in the `${NAME}` values in an optional string.
+///
+/// # Arguments
+///
+/// * `value` - the string, if there is one
+/// * `env_config` - the rules for environment variables
+///
+/// # Returns
+///
+/// The string with the values filled in.
 fn interpolate_option(value: Option<&str>, env_config: &EnvConfig) -> Result<Option<String>> {
     value
         .map(|value| interpolate_env(value, env_config))
         .transpose()
 }
 
+/// Fill in the `${NAME}` values in each string of an optional list.
+///
+/// # Returns
+///
+/// The list with the values filled in.
 fn interpolate_list(
-    values: Option<&[String]>,
-    env_config: &EnvConfig,
+    values: Option<&[String]>, // the list, if there is one
+    env_config: &EnvConfig,    // the rules for environment variables
 ) -> Result<Option<Vec<String>>> {
     values
         .map(|values| {
@@ -583,6 +845,20 @@ fn interpolate_list(
         .transpose()
 }
 
+/// Replace each `${NAME}` in a string with the value of that environment variable.
+///
+/// It fails when a `${` has no `}`, or when a name is not valid, not allowlisted, matches a redact
+/// rule or looks like a secret's. It also fails when the variable is not set, or when its value
+/// looks like a secret.
+///
+/// # Arguments
+///
+/// * `value` - the config or frontmatter string, with any `${NAME}` in it
+/// * `env_config` - the rules for environment variables
+///
+/// # Returns
+///
+/// The string with the values filled in.
 fn interpolate_env(value: &str, env_config: &EnvConfig) -> Result<String> {
     let mut output = String::new();
     let mut rest = value;
@@ -612,6 +888,18 @@ fn interpolate_env(value: &str, env_config: &EnvConfig) -> Result<String> {
     Ok(output)
 }
 
+/// Check that a value may use an environment variable.
+///
+/// The name must be valid and allowlisted. It must not match a redact rule or look like a secret's.
+///
+/// # Arguments
+///
+/// * `name` - the name of the variable
+/// * `env_config` - the rules for environment variables
+///
+/// # Returns
+///
+/// `Ok(())`, or the reason the name is refused.
 fn validate_env_name(name: &str, env_config: &EnvConfig) -> Result<()> {
     if name.is_empty()
         || !name
@@ -644,10 +932,30 @@ fn validate_env_name(name: &str, env_config: &EnvConfig) -> Result<()> {
     Ok(())
 }
 
+/// Match a value against a pattern with `*` for any text, in ASCII and ignoring case.
+///
+/// # Arguments
+///
+/// * `pattern` - the redact pattern, with `*` for any text
+/// * `value` - the name of the environment variable
+///
+/// # Returns
+///
+/// True when the whole value matches.
 fn wildcard_match_case_insensitive(pattern: &str, value: &str) -> bool {
     wildcard_match(&pattern.to_ascii_uppercase(), &value.to_ascii_uppercase())
 }
 
+/// Match a value against a pattern with `*` for any text. Case matters.
+///
+/// # Arguments
+///
+/// * `pattern` - the pattern, with `*` for any text
+/// * `value` - the text to match, all of it
+///
+/// # Returns
+///
+/// True when the whole value matches.
 fn wildcard_match(pattern: &str, value: &str) -> bool {
     let (mut pattern_index, mut value_index) = (0, 0);
     let pattern_bytes = pattern.as_bytes();
@@ -681,6 +989,16 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
     pattern_index == pattern_bytes.len()
 }
 
+/// Say whether a variable name looks like a secret's, such as one that contains `TOKEN` or
+/// `PASSWORD`.
+///
+/// # Arguments
+///
+/// * `name` - the name of the variable
+///
+/// # Returns
+///
+/// True when the name looks like a secret's.
 fn looks_secret_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.contains("TOKEN")
@@ -693,6 +1011,15 @@ fn looks_secret_name(name: &str) -> bool {
         || upper.contains("AUTH")
 }
 
+/// Say whether a value looks like a secret, such as a GitHub token or a private key.
+///
+/// # Arguments
+///
+/// * `value` - the value of the variable
+///
+/// # Returns
+///
+/// True when the value looks like a secret.
 fn looks_secret_value(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.starts_with("ghp_")
@@ -702,15 +1029,36 @@ fn looks_secret_value(value: &str) -> bool {
         || lower.contains("private key")
 }
 
+/// Add a line and a newline to the output.
+///
+/// # Arguments
+///
+/// * `output` - the packet text so far, added to in place
+/// * `line` - the line, with no newline
 fn push_line(output: &mut String, line: &str) {
     output.push_str(line);
     output.push('\n');
 }
 
+/// Add a `key: value` line to the output. The key is written as it is, and the value as a YAML
+/// scalar, with quotes when [`yaml_scalar`] needs them.
+///
+/// # Arguments
+///
+/// * `output` - the packet text so far, added to in place
+/// * `key` - the YAML key, written with no quotes
+/// * `value` - the value, written as a YAML scalar
 fn push_field(output: &mut String, key: &str, value: &str) {
     push_line(output, &format!("{key}: {}", yaml_scalar(value)));
 }
 
+/// Add a top-level YAML list to the output, or `key: []` when it is empty.
+///
+/// # Arguments
+///
+/// * `output` - the packet text so far, added to in place
+/// * `key` - the YAML key, written with no quotes
+/// * `values` - the items, quoted when YAML needs it
 fn push_string_list(output: &mut String, key: &str, values: &[String]) {
     if values.is_empty() {
         push_line(output, &format!("{key}: []"));
@@ -723,6 +1071,14 @@ fn push_string_list(output: &mut String, key: &str, values: &[String]) {
     }
 }
 
+/// Add an indented YAML list to the output, or `key: []` when it is empty.
+///
+/// # Arguments
+///
+/// * `output` - the packet text so far, added to in place
+/// * `key` - the YAML key, written with no quotes
+/// * `values` - the items, quoted when YAML needs it
+/// * `indent` - the number of spaces before the key
 fn push_nested_string_list(output: &mut String, key: &str, values: &[String], indent: usize) {
     let prefix = " ".repeat(indent);
     if values.is_empty() {
@@ -736,6 +1092,16 @@ fn push_nested_string_list(output: &mut String, key: &str, values: &[String], in
     }
 }
 
+/// Add a YAML literal block, `key: |`, with each line of the value indented by two spaces.
+///
+/// When the first line that is not blank starts with whitespace, the block starts with `key: |2`,
+/// so that YAML keeps that indent. A line of only whitespace is written empty.
+///
+/// # Arguments
+///
+/// * `output` - the packet text so far, added to in place
+/// * `key` - the YAML key, written with no quotes
+/// * `value` - the text of the block, such as the prompt
 fn push_literal_block(output: &mut String, key: &str, value: &str) {
     // YAML finds the indent of a block from its first line that is not empty.
     // When that line starts with a space, the indent must be given, as `|2`.
@@ -759,14 +1125,22 @@ fn push_literal_block(output: &mut String, key: &str, value: &str) {
     }
 }
 
-/// Writes `value` as a YAML scalar that a reader reads back as the same
+/// Write `value` as a YAML scalar that a reader reads back as the same
 /// string, with YAML 1.2 rules and with YAML 1.1 rules.
 ///
-/// - A plain scalar is kept only when it is safe: see `is_plain_yaml_scalar`.
+/// - A plain scalar is kept only when it is safe: see [`is_plain_yaml_scalar`].
 /// - A value with a character that a reader treats as a line break or does not
 ///   allow raw gets double quotes, with escapes. YAML folds a line break inside
 ///   single quotes into a space, so single quotes cannot hold one.
-/// - Every other value gets single quotes.
+/// - Every other value gets single quotes, with each `'` doubled.
+///
+/// # Arguments
+///
+/// * `value` - the string to write
+///
+/// # Returns
+///
+/// The YAML text of the scalar: plain, in double quotes or in single quotes.
 fn yaml_scalar(value: &str) -> String {
     if is_plain_yaml_scalar(value) {
         return value.to_string();
@@ -778,10 +1152,19 @@ fn yaml_scalar(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-/// True for a character that YAML does not allow raw in a scalar, or reads
+/// Say whether YAML does not allow a character raw in a scalar, or reads it
 /// as a line break: the C0 and C1 control characters, DEL, U+2028, U+2029,
 /// the byte order mark U+FEFF, and U+FFFE and U+FFFF, which YAML does not
-/// count as printable.
+/// count as printable. Tab is one of the C0 characters too: YAML allows it
+/// raw, but jagt escapes it as `\t`.
+///
+/// # Arguments
+///
+/// * `c` - one character of the value
+///
+/// # Returns
+///
+/// True when the character must be escaped, inside double quotes.
 fn needs_escape(c: char) -> bool {
     c.is_control()
         || matches!(
@@ -790,8 +1173,17 @@ fn needs_escape(c: char) -> bool {
         )
 }
 
-/// Writes `value` in YAML double quotes. Each character that `needs_escape`
-/// names gets an escape, and so do `\\` and `"`.
+/// Write `value` in YAML double quotes. Each character that [`needs_escape`]
+/// names gets an escape, and so do `\\` and `"`. A control character with no
+/// short escape, such as U+0001, gets `\xHH`.
+///
+/// # Arguments
+///
+/// * `value` - the string to write
+///
+/// # Returns
+///
+/// The YAML text, with its two double quotes.
 fn double_quoted(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
@@ -816,13 +1208,24 @@ fn double_quoted(value: &str) -> String {
     out
 }
 
-/// True when `value` can be written as a plain YAML scalar.
+/// Say whether `value` can be written as a plain YAML scalar, with no quotes.
 ///
-/// The value must read back as the same string with serde_yaml, a YAML 1.2
-/// reader. It must also not look like a YAML 1.1 bool, number, date or merge
-/// key, so that a YAML 1.1 reader such as PyYAML reads a string too. That
-/// test is wide: any value that starts with a digit, or with `+` or `.` and a
-/// digit, gets quotes, which is safe for a string.
+/// The value must not be empty, have no space or tab at either end, hold no
+/// `: ` or ` #`, start with no YAML indicator, and hold no character that
+/// [`needs_escape`] names. It must read back as the same string with
+/// serde_yaml, a YAML 1.2 reader. It must also not look like a YAML 1.1 bool,
+/// number, date or merge key, so that a YAML 1.1 reader such as PyYAML reads a
+/// string too: see [`looks_like_yaml_1_1_value`]. That test is wide: any value
+/// that starts with a digit, or with `+` or `.` and a digit, gets quotes, which
+/// is safe for a string.
+///
+/// # Arguments
+///
+/// * `value` - the string to write
+///
+/// # Returns
+///
+/// True when the plain form is safe.
 fn is_plain_yaml_scalar(value: &str) -> bool {
     if value.is_empty() || value.trim() != value {
         return false;
@@ -844,10 +1247,19 @@ fn is_plain_yaml_scalar(value: &str) -> bool {
     matches!(serde_yaml::from_str::<Value>(value), Ok(Value::String(read)) if read == value)
 }
 
-/// True when a YAML 1.1 reader could read `value` as something other than a
+/// Say whether a YAML 1.1 reader could read `value` as something other than a
 /// string: a bool such as `yes`, `on` or `y`, a merge key `<<`, the value
 /// key `=`, or a number or date, which start with a digit, or with `+` or `.`
-/// and a digit.
+/// and a digit. The words are matched in any case, so `Null` and `NULL` count
+/// too.
+///
+/// # Arguments
+///
+/// * `value` - the string to write
+///
+/// # Returns
+///
+/// True when the value needs quotes for a YAML 1.1 reader.
 fn looks_like_yaml_1_1_value(value: &str) -> bool {
     const BOOLS: [&str; 11] = [
         "y", "n", "yes", "no", "on", "off", "true", "false", "null", "<<", "=",
@@ -863,12 +1275,31 @@ fn looks_like_yaml_1_1_value(value: &str) -> bool {
     }
 }
 
+/// What [`lint_agent_task`] and [`lint_agent_task_draft`] expect of their input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LintOptions {
+    /// Expect no packet. Lint then fails when the input has a start or end line, and checks nothing
+    /// else.
     pub expect_none: bool,
+    /// The number of packets that the input must hold.
     pub expect_count: Option<usize>,
 }
 
+/// Check each `AGENT_TASK v1` packet in a text.
+///
+/// A packet must be valid YAML with all the required fields, use `mode: agentic`, delegate to a
+/// subagent with every one of [`DELEGATION_TRIGGERS`], and hold [`SAFETY_OVERRIDE`]. A packet may
+/// hold a `nonce`, but only once and only as a nonce, as [`packet::is_nonce`] says. Lint fails when
+/// the text has no packet, unless `expect_none` is set.
+///
+/// # Arguments
+///
+/// * `input` - the text, such as the output of a Just target
+/// * `options` - what to expect
+///
+/// # Returns
+///
+/// The number of packets checked; 0 with `expect_none`.
 pub fn lint_agent_task(input: &str, options: LintOptions) -> Result<usize> {
     if options.expect_none {
         if contains_marker(input, AGENT_TASK_START, AGENT_TASK_END) {
@@ -902,12 +1333,36 @@ pub fn lint_agent_task(input: &str, options: LintOptions) -> Result<usize> {
     Ok(blocks.len())
 }
 
+/// Find the bodies of the `AGENT_TASK v1` packets in a text.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for packets
+///
+/// # Returns
+///
+/// The body of each packet, without its marker lines.
 fn extract_agent_task_blocks(input: &str) -> Result<Vec<String>> {
     extract_envelope_blocks(input, AGENT_TASK_START, AGENT_TASK_END, |message| {
         JagtError::InvalidAgentTask(message)
     })
 }
 
+/// Check each `AGENT_TASK_DRAFT v1` packet in a text.
+///
+/// A draft must use `mode: draft` and come from an LLM run as a subagent. It must require approval,
+/// and name `jagt-render` and all of [`DRAFT_PROMOTION_CHECKS`] for its promotion. It must hold the
+/// three draft safety texts, and run in a subagent after promotion, with recursive delegation.
+/// It must not claim approval, try to bypass a policy, ask to run inline, or ask for broad actions.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for drafts, such as a model's reply
+/// * `options` - what to expect
+///
+/// # Returns
+///
+/// The number of drafts checked; 0 with `expect_none`.
 pub fn lint_agent_task_draft(input: &str, options: LintOptions) -> Result<usize> {
     if options.expect_none {
         if contains_marker(input, AGENT_TASK_DRAFT_START, AGENT_TASK_DRAFT_END) {
@@ -941,6 +1396,15 @@ pub fn lint_agent_task_draft(input: &str, options: LintOptions) -> Result<usize>
     Ok(blocks.len())
 }
 
+/// Find the bodies of the `AGENT_TASK_DRAFT v1` packets in a text.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for drafts
+///
+/// # Returns
+///
+/// The body of each draft, without its marker lines.
 fn extract_agent_task_draft_blocks(input: &str) -> Result<Vec<String>> {
     extract_envelope_blocks(
         input,
@@ -950,18 +1414,45 @@ fn extract_agent_task_draft_blocks(input: &str) -> Result<Vec<String>> {
     )
 }
 
+/// What [`lint_agent_result`] expects of its input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultLintOptions {
+    /// Expect no packet. Lint then fails when the input has a start or end line, and checks nothing
+    /// else.
     pub expect_none: bool,
+    /// The number of packets that the input must hold.
     pub expect_count: Option<usize>,
+    /// The target that each packet must name.
     pub expect_target: Option<String>,
+    /// The status that each packet must have: `success`, `partial`, `blocked`, `failed` or
+    /// `cancelled`.
     pub expect_status: Option<String>,
-    /// The nonce that each result must hold, from the packet of its task.
+    /// The nonce that each result must hold, from the packet of its task. Lint fails when it is
+    /// not a nonce, as [`packet::is_nonce`] says.
     pub expect_nonce: Option<String>,
+    /// Check `outputs.files`. Each entry needs a relative `path`. A file whose `role` is
+    /// `required`, not `optional` or missing, must exist and be a file.
     pub check_files: bool,
+    /// The folder that output file paths are relative to.
     pub base_dir: PathBuf,
 }
 
+/// Check each `AGENT_RESULT v1` packet in a text.
+///
+/// A result must name one valid target and one known status, and have `outputs`, `verification` and
+/// `follow_up`. It is a report only, so it must not have `allowed_actions`, `delegation` or
+/// `safety`. A `success` result must not hold a failed or skipped check. A `blocked` or `failed`
+/// result needs an `error` with a code and a message. With `expect_nonce`, each result must hold
+/// that nonce exactly once.
+///
+/// # Arguments
+///
+/// * `input` - the text, such as a subagent's reply
+/// * `options` - what to expect
+///
+/// # Returns
+///
+/// The number of packets checked; 0 with `expect_none`.
 pub fn lint_agent_result(input: &str, options: &ResultLintOptions) -> Result<usize> {
     if options.expect_none {
         if contains_marker(input, AGENT_RESULT_START, AGENT_RESULT_END) {
@@ -1001,21 +1492,47 @@ pub fn lint_agent_result(input: &str, options: &ResultLintOptions) -> Result<usi
     Ok(blocks.len())
 }
 
+/// Find the bodies of the `AGENT_RESULT v1` packets in a text.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for result packets
+///
+/// # Returns
+///
+/// The body of each packet, without its marker lines.
 fn extract_agent_result_blocks(input: &str) -> Result<Vec<String>> {
     extract_envelope_blocks(input, AGENT_RESULT_START, AGENT_RESULT_END, |message| {
         JagtError::InvalidAgentResult(message)
     })
 }
 
+/// Say whether a text has a line that is exactly a start or an end marker.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for the marker lines
+/// * `start` - the start marker
+/// * `end` - the end marker
+///
+/// # Returns
+///
+/// True when either marker is a line of the text.
 fn contains_marker(input: &str, start: &str, end: &str) -> bool {
     input.lines().any(|line| line == start || line == end)
 }
 
+/// Find the text between each pair of marker lines. It fails on a nested start, a lone end, or a
+/// start with no end.
+///
+/// # Returns
+///
+/// The body of each packet, each line ending in a newline.
 fn extract_envelope_blocks<F>(
-    input: &str,
-    start_marker: &str,
-    end_marker: &str,
-    invalid: F,
+    input: &str,        // the text to search for packets
+    start_marker: &str, // the line that opens a packet
+    end_marker: &str,   // the line that closes a packet
+    invalid: F,         // makes the error for this kind of packet from a message
 ) -> Result<Vec<String>>
 where
     F: Fn(String) -> JagtError,
@@ -1056,6 +1573,16 @@ where
     Ok(blocks)
 }
 
+/// Check the body of one `AGENT_TASK v1` packet, including its `nonce` when it has one.
+///
+/// # Arguments
+///
+/// * `body` - the YAML between the marker lines
+/// * `index` - the packet's number in the input, from 1, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_task_block(body: &str, index: usize) -> Result<()> {
     check_malformed_top_level_fields(body, index)?;
     check_balanced_delimiters(body, index)?;
@@ -1111,6 +1638,16 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check the body of one `AGENT_TASK_DRAFT v1` packet.
+///
+/// # Arguments
+///
+/// * `body` - the YAML between the marker lines
+/// * `index` - the draft's number in the input, from 1, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     check_malformed_draft_top_level_fields(body, index)?;
     check_balanced_draft_delimiters(body, index)?;
@@ -1172,6 +1709,17 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft has a top-level field exactly once.
+///
+/// # Arguments
+///
+/// * `body` - the YAML of the draft
+/// * `index` - the draft's number, for messages
+/// * `field` - the field's name
+///
+/// # Returns
+///
+/// `Ok(())`, or an error when the field is missing or duplicated.
 fn validate_unique_draft_field(body: &str, index: usize, field: &str) -> Result<()> {
     match top_level_field_count(body, field) {
         0 => Err(JagtError::InvalidAgentTaskDraft(format!(
@@ -1184,6 +1732,16 @@ fn validate_unique_draft_field(body: &str, index: usize, field: &str) -> Result<
     }
 }
 
+/// Check that a draft's `generator` has `kind: llm` and `execution: subagent`.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_generator(map: &Mapping, index: usize) -> Result<()> {
     let generator = mapping_get(map, "generator")
         .and_then(Value::as_mapping)
@@ -1204,6 +1762,16 @@ fn validate_draft_generator(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft's `proposal_reason` and `prompt` are not blank.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_text_fields(map: &Mapping, index: usize) -> Result<()> {
     for field in ["proposal_reason", "prompt"] {
         let value = scalar_string(map, field).unwrap_or_default();
@@ -1216,6 +1784,17 @@ fn validate_draft_text_fields(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft's `inputs` is a mapping and its `outputs.required` is a list of strings that
+/// is not empty.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_inputs_outputs(map: &Mapping, index: usize) -> Result<()> {
     mapping_get(map, "inputs")
         .and_then(Value::as_mapping)
@@ -1240,6 +1819,17 @@ fn validate_draft_inputs_outputs(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft's `allowed_actions` and `verification` are lists of strings that are not
+/// empty, with no broad action.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_actions_and_verification(map: &Mapping, index: usize) -> Result<()> {
     let allowed_actions = string_sequence(map, "allowed_actions").ok_or_else(|| {
         JagtError::InvalidAgentTaskDraft(format!(
@@ -1272,6 +1862,16 @@ fn validate_draft_actions_and_verification(map: &Mapping, index: usize) -> Resul
     Ok(())
 }
 
+/// Check that a draft has `approval.required: true`.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_approval(map: &Mapping, index: usize) -> Result<()> {
     let approval = mapping_get(map, "approval")
         .and_then(Value::as_mapping)
@@ -1286,6 +1886,16 @@ fn validate_draft_approval(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft is promoted with `jagt-render` and lists each of [`DRAFT_PROMOTION_CHECKS`].
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_promotion(map: &Mapping, index: usize) -> Result<()> {
     let promotion = mapping_get(map, "promotion")
         .and_then(Value::as_mapping)
@@ -1312,6 +1922,16 @@ fn validate_draft_promotion(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft runs in a subagent after promotion, with recursive delegation.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_delegation(map: &Mapping, index: usize) -> Result<()> {
     let delegation = mapping_get(map, "delegation")
         .and_then(Value::as_mapping)
@@ -1332,6 +1952,16 @@ fn validate_draft_delegation(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft's `safety` holds each of the three draft safety texts.
+///
+/// # Arguments
+///
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
     let safety = string_sequence(map, "safety")
         .ok_or_else(|| JagtError::InvalidAgentTaskDraft(format!("block {index} missing safety")))?;
@@ -1363,6 +1993,17 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a draft does not claim approval, try to bypass a rule, or ask to run inline.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the draft, searched in lower case
+/// * `map` - the draft as YAML
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize) -> Result<()> {
     let lower = body.to_ascii_lowercase();
     if lower.contains("already approved")
@@ -1409,6 +2050,16 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
     Ok(())
 }
 
+/// Say whether an allowed action is too broad for a draft, such as "write anywhere" or "network
+/// access".
+///
+/// # Arguments
+///
+/// * `action` - one item of the draft's `allowed_actions`
+///
+/// # Returns
+///
+/// True when it is too broad.
 fn is_overbroad_draft_action(action: &str) -> bool {
     let lower = action.to_ascii_lowercase();
     lower.contains("write anywhere")
@@ -1419,6 +2070,17 @@ fn is_overbroad_draft_action(action: &str) -> bool {
         || lower.contains("network access")
 }
 
+/// Check that a task packet delegates to a subagent, recursively, with every one of
+/// [`DELEGATION_TRIGGERS`].
+///
+/// # Arguments
+///
+/// * `map` - the packet as YAML
+/// * `index` - the packet's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_delegation(map: &Mapping, index: usize) -> Result<()> {
     let delegation = mapping_get(map, "delegation")
         .and_then(Value::as_mapping)
@@ -1450,6 +2112,16 @@ fn validate_delegation(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a task packet's `safety` holds [`SAFETY_OVERRIDE`].
+///
+/// # Arguments
+///
+/// * `map` - the packet as YAML
+/// * `index` - the packet's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_safety(map: &Mapping, index: usize) -> Result<()> {
     let safety = string_sequence(map, "safety")
         .ok_or_else(|| JagtError::InvalidAgentTask(format!("block {index} missing safety")))?;
@@ -1463,6 +2135,18 @@ fn validate_safety(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check the body of one `AGENT_RESULT v1` packet, and what the options expect of it, including
+/// the nonce with `expect_nonce`.
+///
+/// # Arguments
+///
+/// * `body` - the YAML between the marker lines
+/// * `index` - the packet's number in the input, from 1, for messages
+/// * `options` - what to expect
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) -> Result<()> {
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentResult(format!("block {index} contains invalid YAML: {error}"))
@@ -1548,6 +2232,17 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
     Ok(())
 }
 
+/// Check that a result has a top-level field exactly once.
+///
+/// # Arguments
+///
+/// * `body` - the YAML of the result
+/// * `index` - the result's number, for messages
+/// * `field` - the field's name
+///
+/// # Returns
+///
+/// `Ok(())`, or an error when the field is missing or duplicated.
 fn validate_unique_result_field(body: &str, index: usize, field: &str) -> Result<()> {
     match top_level_field_count(body, field) {
         0 => Err(JagtError::InvalidAgentResult(format!(
@@ -1560,6 +2255,16 @@ fn validate_unique_result_field(body: &str, index: usize, field: &str) -> Result
     }
 }
 
+/// Count the unindented lines whose key, before the first `:`, is a field's name.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text
+/// * `field` - the field's name
+///
+/// # Returns
+///
+/// The number of times the field is a top-level key.
 fn top_level_field_count(body: &str, field: &str) -> usize {
     body.lines()
         .filter(|line| !line.starts_with(char::is_whitespace))
@@ -1568,6 +2273,15 @@ fn top_level_field_count(body: &str, field: &str) -> usize {
         .count()
 }
 
+/// Check that a status is `success`, `partial`, `blocked`, `failed` or `cancelled`.
+///
+/// # Arguments
+///
+/// * `status` - the `status` of a result, or the status that `--expect-status` gives
+///
+/// # Returns
+///
+/// `Ok(())`, or a message that lists the statuses.
 fn validate_result_status(status: &str) -> std::result::Result<(), &'static str> {
     if matches!(
         status,
@@ -1579,6 +2293,16 @@ fn validate_result_status(status: &str) -> std::result::Result<(), &'static str>
     }
 }
 
+/// Check that a result's `outputs` is a mapping.
+///
+/// # Arguments
+///
+/// * `map` - the result as YAML
+/// * `index` - the result's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_outputs(map: &Mapping, index: usize) -> Result<()> {
     mapping_get(map, "outputs")
         .and_then(Value::as_mapping)
@@ -1588,6 +2312,20 @@ fn validate_result_outputs(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a result's `verification` is a list, and that each item's `status`, when it has one,
+/// is `passed`, `failed` or `skipped`.
+///
+/// A `success` result must not have a failed or skipped item.
+///
+/// # Arguments
+///
+/// * `map` - the result as YAML
+/// * `index` - the result's number, for messages
+/// * `result_status` - the status of the whole result
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_verification(map: &Mapping, index: usize, result_status: &str) -> Result<()> {
     let verification = mapping_get(map, "verification")
         .and_then(Value::as_sequence)
@@ -1617,6 +2355,16 @@ fn validate_result_verification(map: &Mapping, index: usize, result_status: &str
     Ok(())
 }
 
+/// Check that a result's `follow_up` is a list.
+///
+/// # Arguments
+///
+/// * `map` - the result as YAML
+/// * `index` - the result's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_follow_up(map: &Mapping, index: usize) -> Result<()> {
     mapping_get(map, "follow_up")
         .and_then(Value::as_sequence)
@@ -1626,6 +2374,17 @@ fn validate_result_follow_up(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check that a `blocked` or `failed` result has an `error` with a `code` and a `message`.
+///
+/// # Arguments
+///
+/// * `map` - the result as YAML
+/// * `index` - the result's number, for messages
+/// * `status` - the status of the result
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_error(map: &Mapping, index: usize, status: &str) -> Result<()> {
     if !matches!(status, "blocked" | "failed") {
         return Ok(());
@@ -1649,6 +2408,20 @@ fn validate_result_error(map: &Mapping, index: usize, status: &str) -> Result<()
     Ok(())
 }
 
+/// Check each entry of a result's `outputs.files`.
+///
+/// Its `path` must be relative, its `role` must be `required` or `optional`, and a required file
+/// must exist.
+///
+/// # Arguments
+///
+/// * `map` - the result as YAML
+/// * `index` - the result's number, for messages
+/// * `base_dir` - the folder that the paths are relative to
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
 fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result<()> {
     let Some(outputs) = mapping_get(map, "outputs").and_then(Value::as_mapping) else {
         return Ok(());
@@ -1691,14 +2464,44 @@ fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result
     Ok(())
 }
 
+/// Get the value of a string key in a YAML mapping.
+///
+/// # Arguments
+///
+/// * `map` - the YAML mapping to read
+/// * `key` - the key to look up
+///
+/// # Returns
+///
+/// The value, or `None` when the key is missing.
 fn mapping_get<'a>(map: &'a Mapping, key: &str) -> Option<&'a Value> {
     map.get(Value::String(key.to_string()))
 }
 
+/// Get the value of a key in a YAML mapping when it is a string.
+///
+/// # Arguments
+///
+/// * `map` - the YAML mapping to read
+/// * `key` - the key to look up
+///
+/// # Returns
+///
+/// The string, or `None` when the key is missing or not a string.
 fn scalar_string<'a>(map: &'a Mapping, key: &str) -> Option<&'a str> {
     mapping_get(map, key).and_then(Value::as_str)
 }
 
+/// Get the value of a key in a YAML mapping when it is a list of strings.
+///
+/// # Arguments
+///
+/// * `map` - the YAML mapping to read
+/// * `key` - the key to look up
+///
+/// # Returns
+///
+/// The strings, or `None` when the key is missing, not a list, or holds a non-string.
 fn string_sequence(map: &Mapping, key: &str) -> Option<Vec<String>> {
     let value = mapping_get(map, key)?;
     match value {
@@ -1710,6 +2513,16 @@ fn string_sequence(map: &Mapping, key: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Reject an unindented line that looks like a field with no colon, such as `target count-words`.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the packet
+/// * `index` - the packet's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or an `InvalidAgentTask` error.
 fn check_malformed_top_level_fields(body: &str, index: usize) -> Result<()> {
     for line in body.lines() {
         if line.is_empty() || line.starts_with(char::is_whitespace) {
@@ -1731,6 +2544,17 @@ fn check_malformed_top_level_fields(body: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Reject a malformed top-level field in a draft, as [`check_malformed_top_level_fields`] does,
+/// with a draft error.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the draft
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or an `InvalidAgentTaskDraft` error.
 fn check_malformed_draft_top_level_fields(body: &str, index: usize) -> Result<()> {
     check_malformed_top_level_fields(body, index).map_err(|error| match error {
         JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
@@ -1738,12 +2562,31 @@ fn check_malformed_draft_top_level_fields(body: &str, index: usize) -> Result<()
     })
 }
 
+/// Split a string into its first character and the rest.
+///
+/// # Arguments
+///
+/// * `value` - the string to split
+///
+/// # Returns
+///
+/// The first character and the rest, or `None` for an empty string.
 fn split_first_char(value: &str) -> Option<(char, &str)> {
     let mut chars = value.chars();
     let first = chars.next()?;
     Some((first, chars.as_str()))
 }
 
+/// Check that a packet has as many `[` as `]`, and as many `{` as `}`, anywhere in its text.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the packet
+/// * `index` - the packet's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or an `InvalidAgentTask` error.
 fn check_balanced_delimiters(body: &str, index: usize) -> Result<()> {
     for (open, close, label) in [('[', ']', "square brackets"), ('{', '}', "curly braces")] {
         let open_count = body.chars().filter(|value| *value == open).count();
@@ -1757,6 +2600,17 @@ fn check_balanced_delimiters(body: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Check the brackets and braces of a draft, as [`check_balanced_delimiters`] does, with a draft
+/// error.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the draft
+/// * `index` - the draft's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or an `InvalidAgentTaskDraft` error.
 fn check_balanced_draft_delimiters(body: &str, index: usize) -> Result<()> {
     check_balanced_delimiters(body, index).map_err(|error| match error {
         JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
@@ -1764,6 +2618,15 @@ fn check_balanced_draft_delimiters(body: &str, index: usize) -> Result<()> {
     })
 }
 
+/// Check that a target is not empty and holds only ASCII letters, digits, `_`, `.` and `-`.
+///
+/// # Arguments
+///
+/// * `target` - the Just target name to check
+///
+/// # Returns
+///
+/// `Ok(())`, or a message that says what is wrong.
 fn validate_target(target: &str) -> std::result::Result<(), &'static str> {
     if target.is_empty() {
         return Err("target must not be empty");
@@ -1775,14 +2638,47 @@ fn validate_target(target: &str) -> std::result::Result<(), &'static str> {
     }
 }
 
+/// Say whether a character can start a field name. Only an ASCII letter or `_` can.
+///
+/// # Arguments
+///
+/// * `value` - the character to check
+///
+/// # Returns
+///
+/// True when it can start a field name.
 fn is_field_start(value: char) -> bool {
     value.is_ascii_alphabetic() || value == '_'
 }
 
+/// Say whether a character can be in a field name or a target. Only an ASCII letter, a digit, `_`,
+/// `.` or `-` can.
+///
+/// # Arguments
+///
+/// * `value` - the character to check
+///
+/// # Returns
+///
+/// True when it can be in a name.
 fn is_field_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '-')
 }
 
+/// Summarize the first `AGENT_TASK v1` packet in a text, after it passes lint.
+///
+/// The summary gives the target, the mode, the nonce when the packet has one, the number of
+/// arguments, inputs and required outputs, the renderer and the source order. It checks only the
+/// first packet, but a broken marker anywhere still makes it fail. Lint options such as
+/// `expect_count` do not apply.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for packets
+///
+/// # Returns
+///
+/// The summary, a title line and then `key: value` lines.
 pub fn explain_agent_task(input: &str) -> Result<String> {
     let blocks = extract_agent_task_blocks(input)?;
     if blocks.is_empty() {
@@ -1849,6 +2745,20 @@ provenance: {provenance}
     Ok(output)
 }
 
+/// Summarize the first `AGENT_RESULT v1` packet in a text, after it passes lint.
+///
+/// The summary gives the target, the task reference, the status, the number of files, proposed
+/// tasks, checks and follow-ups, the recursion trace, and whether there is an error. It checks
+/// only the first packet, but a broken marker anywhere still makes it fail. It does not check
+/// output files or a nonce.
+///
+/// # Arguments
+///
+/// * `input` - the text to search for result packets
+///
+/// # Returns
+///
+/// The summary, a title line and then `key: value` lines.
 pub fn explain_agent_result(input: &str) -> Result<String> {
     let blocks = extract_agent_result_blocks(input)?;
     if blocks.is_empty() {
@@ -1920,6 +2830,16 @@ report_only: true
     ))
 }
 
+/// Count the items of a list in a YAML mapping.
+///
+/// # Arguments
+///
+/// * `map` - the YAML mapping to read
+/// * `key` - the key of the list
+///
+/// # Returns
+///
+/// The number of items; 0 when the key is missing or not a list.
 fn sequence_len(map: &Mapping, key: &str) -> usize {
     match mapping_get(map, key) {
         Some(Value::Sequence(values)) => values.len(),
@@ -1928,6 +2848,7 @@ fn sequence_len(map: &Mapping, key: &str) -> usize {
     }
 }
 
+/// The `jagt` command line.
 #[derive(Debug, Parser)]
 #[command(
     name = "jagt",
@@ -1936,119 +2857,158 @@ fn sequence_len(map: &Mapping, key: &str) -> usize {
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Command, // the subcommand to run
 }
 
+/// The subcommands of `jagt`.
 #[derive(Debug, Subcommand)]
 enum Command {
-    Render(RenderArgs),
-    Lint(LintArgs),
-    Explain(ExplainArgs),
-    Result(ResultArgs),
-    Draft(DraftArgs),
+    Render(RenderArgs),   // `jagt render`: write an AGENT_TASK packet
+    Lint(LintArgs),       // `jagt lint`: check AGENT_TASK packets
+    Explain(ExplainArgs), // `jagt explain`: summarize a packet
+    Result(ResultArgs),   // `jagt result`: check or summarize AGENT_RESULT packets
+    Draft(DraftArgs),     // `jagt draft`: check AGENT_TASK_DRAFT packets
 }
 
+/// The arguments of `jagt render`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct RenderArgs {
-    target: String,
+    target: String, // the Just target
     #[arg(long = "arg")]
-    args: Vec<String>,
+    args: Vec<String>, // an argument of the target; repeat the flag for more
     #[arg(long = "input")]
-    inputs: Vec<String>,
+    inputs: Vec<String>, // an input file; repeat the flag for more
     #[arg(long = "prompt")]
-    prompt: Option<String>,
+    prompt: Option<String>, // the path of a prompt file, with optional YAML frontmatter
     #[arg(long = "prompt-text")]
-    prompt_text: Option<String>,
+    prompt_text: Option<String>, // the prompt itself; it wins over any prompt file
     #[arg(long = "required-output")]
-    required_outputs: Vec<String>,
+    required_outputs: Vec<String>, // an output the subagent must return; repeat the flag for more
     #[arg(long = "allowed-action")]
-    allowed_actions: Vec<String>,
+    allowed_actions: Vec<String>, // an action the subagent may take; repeat the flag for more
     #[arg(long = "verification")]
-    verification: Vec<String>,
+    verification: Vec<String>, // a check the subagent must run; repeat the flag for more
     #[arg(long = "config")]
-    config_path: Option<PathBuf>,
+    config_path: Option<PathBuf>, // the project config, in place of `.jagt/config.toml`
     #[arg(long = "no-config")]
-    no_config: bool,
+    no_config: bool, // read no project config
     /// Render the text only: no nonce, and no packet file.
     #[arg(long = "no-save")]
     no_save: bool,
 }
 
+/// The arguments of `jagt lint` and `jagt draft lint`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct LintArgs {
     #[arg(default_value = "-")]
-    path: String,
+    path: String, // the file to check; `-` for standard input
     #[arg(long)]
-    expect_count: Option<usize>,
+    expect_count: Option<usize>, // the number of packets the file must hold
     #[arg(long)]
-    expect_none: bool,
+    expect_none: bool, // expect no packet
 }
 
+/// The arguments of `jagt explain`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct ExplainArgs {
     #[command(subcommand)]
-    command: ExplainCommand,
+    command: ExplainCommand, // what kind of packet to summarize
 }
 
+/// The subcommands of `jagt explain`.
 #[derive(Debug, Subcommand)]
 enum ExplainCommand {
-    Task(InputPath),
+    Task(InputPath), // `jagt explain task`: summarize an AGENT_TASK packet
 }
 
+/// The arguments of `jagt result`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct ResultArgs {
     #[command(subcommand)]
-    command: ResultCommand,
+    command: ResultCommand, // what to do with the result packets
 }
 
+/// The subcommands of `jagt result`.
 #[derive(Debug, Subcommand)]
 enum ResultCommand {
-    Lint(ResultLintArgs),
-    Explain(InputPath),
+    Lint(ResultLintArgs), // `jagt result lint`: check AGENT_RESULT packets
+    Explain(InputPath),   // `jagt result explain`: summarize an AGENT_RESULT packet
 }
 
+/// The arguments of `jagt draft`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct DraftArgs {
     #[command(subcommand)]
-    command: DraftCommand,
+    command: DraftCommand, // what to do with the draft packets
 }
 
+/// The subcommands of `jagt draft`.
 #[derive(Debug, Subcommand)]
 enum DraftCommand {
-    Lint(LintArgs),
+    Lint(LintArgs), // `jagt draft lint`: check AGENT_TASK_DRAFT packets
 }
 
+/// The arguments of `jagt result lint`.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct ResultLintArgs {
     #[arg(default_value = "-")]
-    path: String,
+    path: String, // the file to check; `-` for standard input
     #[arg(long)]
-    expect_count: Option<usize>,
+    expect_count: Option<usize>, // the number of packets the file must hold
     #[arg(long)]
-    expect_none: bool,
+    expect_none: bool, // expect no packet
     #[arg(long)]
-    expect_target: Option<String>,
+    expect_target: Option<String>, // the target each packet must name
     #[arg(long)]
-    expect_status: Option<String>,
+    expect_status: Option<String>, // the status each packet must have
     /// The nonce of the packet; a result with another nonce fails.
     #[arg(long)]
     expect_nonce: Option<String>,
     #[arg(long)]
-    check_files: bool,
+    check_files: bool, // check that each required output file exists
     #[arg(long, default_value = ".")]
-    base_dir: PathBuf,
+    base_dir: PathBuf, // the folder that output file paths are relative to
 }
 
+/// The file that `jagt explain task` and `jagt result explain` read.
 #[derive(Debug, Args)]
+#[command(about = None, long_about = None)]
 struct InputPath {
     #[arg(default_value = "-")]
-    path: String,
+    path: String, // the file to read; `-` for standard input
 }
 
+/// Run the `jagt` command with the process's arguments.
+///
+/// Packets and summaries go to standard output. clap prints help, the version and argument errors
+/// itself, and exits with 0 for help and the version or 2 for a bad argument.
+///
+/// `jagt render` saves the packet file before it prints the packet, and removes the file again
+/// when the packet cannot be written to standard output. Outside a git worktree it warns on
+/// standard error that the packet has no nonce and no packet file.
+///
+/// # Returns
+///
+/// `Ok(())`, or the error for the caller to print with its exit code.
 pub fn run_cli() -> Result<()> {
     run_with_args(std::env::args_os())
 }
 
+/// Run the `jagt` command with the given arguments. The first argument is the program's name.
+///
+/// # Arguments
+///
+/// * `args` - the command line, with the program's name first
+///
+/// # Returns
+///
+/// `Ok(())`, or the error for the caller to print with its exit code.
 fn run_with_args<I, T>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -2149,6 +3109,15 @@ where
     Ok(())
 }
 
+/// Read a whole file, or standard input when the path is `-`.
+///
+/// # Arguments
+///
+/// * `path` - the file, or `-`
+///
+/// # Returns
+///
+/// The text.
 fn read_input(path: &str) -> Result<String> {
     if path == "-" {
         let mut input = String::new();
