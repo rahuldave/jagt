@@ -109,7 +109,7 @@ Verification:
 
 Goal: finish the first public-quality pass after the core behavior is stable.
 
-Deliverables:
+Deliverables, all settled in the Outcome below:
 
 - Decide whether to generate JSON Schema, maintain schema by hand, or defer
   schema output.
@@ -118,6 +118,17 @@ Deliverables:
   has enough immediate value for MVP.
 - Add CI, license, packaging, and release follow-ups if this is becoming a
   public project.
+
+Outcome:
+
+- **Schema:** none. The protocol contract of the `jagt-protocol` skill, from
+  jnterfaces, defines each packet, and the three lint commands check it. There
+  is no `jagt schema` command.
+- **Later commands:** `render --dry-run` and `init` are dropped, and `targets`
+  and `normalize` are deferred. `jagt_deterministic_renderer_spec.md` gives the
+  reasons.
+- **Release:** CI, the package file list, an install section and a release tag
+  are follow-up work. The MIT licence is in place.
 
 Verification:
 

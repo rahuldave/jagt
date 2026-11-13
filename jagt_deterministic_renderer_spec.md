@@ -165,18 +165,20 @@ reference-checker options before result linting is considered complete:
 diagnostics, and source/provenance information. Explanation commands must not
 rewrite input files.
 
-### Later Commands
+### Commands Left Out
 
-```bash
-jagt schema [--format json|markdown]
-jagt init
-jagt targets
-jagt render --dry-run <target>
-jagt normalize [PATH|-]
-```
+The first draft of this spec listed five later commands. Phase 4 decided each
+one:
 
-`schema` should wait until the Rust data model is stable enough to generate or
-maintain a schema without churn.
+| Command | Decision | Reason |
+|---|---|---|
+| `jagt schema` | Dropped | jagt has no formal schema. See "Schema" under Decisions. |
+| `jagt render --dry-run` | Dropped | `jagt render --no-save` renders the packet, without a nonce, and saves no file. |
+| `jagt init` | Dropped | The jnterfaces installer sets up a repository. |
+| `jagt targets` | Deferred | No caller needs a list of targets yet. |
+| `jagt normalize` | Deferred | No caller needs a packet rewritten in a standard form yet. |
+
+A deferred command comes back when a caller needs it.
 
 ## Deterministic Inputs
 
@@ -413,11 +415,8 @@ Phase 3 should add result support:
 3. Expected target/status checks.
 4. Optional required-file existence checks.
 
-Phase 4 should add schema and polish:
-
-1. JSON or Markdown schema output.
-2. `jagt init` if useful.
-3. Normalization or dry-run support if a concrete use case appears.
+Phase 4 decided the schema and the later commands. It adds no command. See
+"Commands Left Out" and "Schema" under Decisions.
 
 ## Scope
 
@@ -462,7 +461,12 @@ Phase 4 should add schema and polish:
 - Default config path: `.jagt/config.toml`.
 - Render output: text envelopes only for MVP.
 - File output: no `--out` for MVP.
-- Schema strategy: Rust structs first; schema generation is later.
+- Schema: jagt has no formal schema, such as a JSON Schema file, and no
+  `jagt schema` command. The protocol contract of the `jagt-protocol` skill in
+  jnterfaces defines each packet, and `jagt lint`, `jagt result lint` and
+  `jagt draft lint` check it. A schema file would be one more copy of the rules
+  to keep in step, and no tool outside jagt checks packets yet. Revisit this
+  when such a tool appears.
 - Provenance: required for packets emitted by `jagt`; optional for packets
   accepted by the linter.
 - `task_ref` digest: not MVP. Revisit when result/task pairing needs a stable
@@ -470,12 +474,12 @@ Phase 4 should add schema and polish:
 
 ## Open Questions
 
-- Should `jagt` eventually generate JSON Schema from Rust types, maintain JSON
-  Schema by hand, or avoid formal schema output?
 - Which crate set should the implementation use for CLI parsing, YAML/TOML,
   frontmatter, redaction globs, and tests?
 - Should GitHub/CI/release packaging be part of the first public milestone or a
-  follow-up after the CLI behavior stabilizes?
+  follow-up after the CLI behavior stabilizes? Phase 4 recorded it as a
+  follow-up. It covers CI, the package file list, an install section and a
+  release tag.
 
 ## References
 
