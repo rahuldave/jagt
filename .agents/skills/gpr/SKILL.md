@@ -1,11 +1,19 @@
 ---
 name: gpr
 description: Gest Promote. Promote or sync durable Gest work with GitHub issues using gh, storing GitHub metadata back on Gest entities.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GPR: Gest Promote
 
 Use when work should become externally visible on GitHub.
+
+## Integration and delivery policy
+
+Read [the integration and delivery contract](references/integration_delivery_workflow.md)
+for explicit branch roles, selected PR bases, independent review evidence,
+CI gates, issue completion, installation provenance and safe cleanup. Apply it
+throughout this skill; the repository default is not an implicit PR target.
 
 ## Promotion Criteria
 
@@ -39,3 +47,11 @@ Also attach metadata to the development iteration when applicable.
 ## GitHub Context From Tags
 
 When promoting work to GitHub, include public-safe tag classification context from `references/tag_dependency_workflow.md` when it helps reviewers understand scope. Do not expose private Gest IDs unless the target repo policy allows them.
+
+## Completion target
+
+Record the issue's intended milestone: experimental integration, mainline, or
+release. For non-default-base PRs use `Refs #N` and an explicit issue link;
+GitHub does not apply PR closing keywords there. Update or close the issue
+manually after merge only when its acceptance scope is actually complete and
+that action is authorized. Keep parent initiatives open for remaining slices.

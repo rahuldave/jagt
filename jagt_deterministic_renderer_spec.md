@@ -11,7 +11,7 @@ there is no standard deterministic renderer, linter, or explanation tool.
 Projects need a small, reproducible CLI that can render task packets from
 stable inputs such as CLI arguments, repo config, allowlisted environment
 variables, and Markdown prompt files. The tool must not use an LLM. Its job is
-to make packet creation boring, testable, and portable across Git/GitButler and
+to make packet creation boring, testable, and portable across Git and
 jj skill repos.
 
 Call the tool `jagt`: just agent task.

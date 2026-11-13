@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "profiles": [],
+  "choices": {
+    "cx": true,
+    "jagt-protocol": true,
+    "prose": false,
+    "reporter": false,
+    "tasker": true
+  },
+  "tools": [],
+  "variants": {
+    "tasker": "git"
+  },
+  "parts": {
+    ".gitignore": {
+      ".agents/stack-log.jsonl": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
+      },
+      ".agents/stack-pending.json": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
+      }
+    },
+    "AGENTS.md": {
+      "Read and follow @.agents/instructions/tasker.md": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker"
+      }
+    },
+    ".claude/settings.json": {
+      "hooks.SessionStart {} $CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Bash\"} $CLAUDE_PROJECT_DIR/.claude/hooks/raw-git-write-guard.sh": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Bash\"} $CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-context.sh": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Write|Edit\"} $CLAUDE_PROJECT_DIR/.claude/hooks/pre-edit-context.sh": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      }
+    },
+    ".codex/hooks.json": {
+      "hooks.SessionStart {\"matcher\": \"startup|resume|clear\"} sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/session-start.sh\"'": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Bash\"} sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/raw-git-write-guard.sh\"'": {
+        "state": "present",
+        "needs": [
+          "tasker"
+        ]
+      }
+    },
+    ".agents/instructions/tasker.md": {
+      "(own file)": {
+        "state": "added",
+        "holder": "tasker",
+        "needs": [
+          "tasker"
+        ],
+        "hash": "735e5646d8880c87add07b958a5bfd6259cbe987c2f10da112213ea8cd5cc3d0"
+      }
+    }
+  },
+  "parts_version": 1
+}

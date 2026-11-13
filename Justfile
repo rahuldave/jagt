@@ -1,6 +1,10 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 cargo_target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 
+# The recipes of jnterfaces and of the tasker role, from just install.
+import? '.agents/install.just'
+import? '.agents/just/roles/agent_gest_git_skills.just'
+
 default: verify
 
 setup:
@@ -29,8 +33,7 @@ test target="":
 smoke:
     cargo run -- --help
 
-# The demo runs from a temporary folder, outside any git worktree, so that
-# jagt render saves no packet file in this repository.
+# Run the protocol demo outside any git worktree, so jagt saves no packet file here
 protocol-demo:
     cd "$(mktemp -d)" && bash "{{justfile_directory()}}/.agents/skills/jagt-protocol/scripts/run_protocol_demo.sh" "{{absolute_path(cargo_target_dir)}}/debug/jagt"
 

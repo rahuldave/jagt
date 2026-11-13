@@ -1,32 +1,38 @@
-# Gest-Codex Workflow
+# Gest-Codex workflow
 
-Last updated: 2026-05-04.
+Last updated: 2026-09-25.
 
-This document defines how Codex should use Gest, GitHub, and the local skill
-family while working in a Gest-tracked repository. The goal is to preserve
-creative flow without losing a durable task tree.
+Read [Integration branches, review, and delivery](integration_delivery_workflow.md)
+for the shared contract. It covers selected bases, independent review, CI, issues,
+installation and cleanup.
 
-## Core Model
+This document says how Codex uses Gest, GitHub and the local family of skills
+in a repository that Gest tracks. The goal is to keep the creative flow of the
+work and also keep a durable tree of tasks.
 
-Every substantial request becomes Gest-tracked work. The tracker records both
-durable product structure and the concrete work done in a session.
+## Core model
 
-There are four distinct concepts:
+Every substantial request becomes work that Gest tracks. The tracker records
+the durable structure of the product and the concrete work of a session.
 
-- **GitHub issue**: external, human-visible durable intent.
-- **Development iteration**: a Gest execution plan for larger scoped work,
-  usually attached to a GitHub issue and possibly spanning many sessions.
-- **Session iteration**: a Gest execution plan for the current chat/session,
-  including exploratory or tactical tasks.
-- **Outline task**: a durable Gest task in the internal task tree. User requests
-  should be parented under the best existing outline task, or a new outline task
-  should be created when needed.
+The model has four different concepts:
 
-The mode of an iteration does not determine whether work can run in parallel.
-Parallelism depends on task independence, file overlap, and risk.
+- **GitHub issue**: durable intent that people outside the tracker can see.
+- **Development iteration**: a Gest plan of execution for larger work with a
+  clear scope. It usually belongs to a GitHub issue, and it can last for many
+  sessions.
+- **Session iteration**: a Gest plan of execution for the current chat or
+  session. It can include exploratory or tactical tasks.
+- **Outline task**: a durable Gest task in the internal tree of tasks. Put each
+  user request under the best outline task that exists. If none fits, create a
+  new outline task.
 
-Workflow mode also does not determine how tests are written. Treat these as
-orthogonal axes:
+The mode of an iteration does not decide whether work can run in parallel.
+Parallel work depends on how independent the tasks are, on the files that they
+share, and on risk.
+
+The mode of the workflow also does not decide how you write tests. Treat these
+settings as separate axes:
 
 ```text
 workflow.kind=session|development
@@ -37,23 +43,23 @@ language.profile=python|ruby|typescript|go|rust|mixed|unknown
 contract.source=agents-md|just-agent-contract|manual
 ```
 
-Session work may use `test-first` when the behavior is small and clear, such as
-a regression fix. Development work may begin with `characterization-first` or
-`exploratory` when the code needs to be understood before a good red/green loop
-exists. Development mode raises the expected breadth of verification and review;
-it does not force one test strategy.
+Session work can use `test-first` when the behavior is small and clear, for
+example the fix of a regression. Development work can start with
+`characterization-first` or `exploratory` when you must understand the code
+before a good red and green loop exists. Development mode asks for broader
+verification and review, but it does not force one test strategy.
 
-## Branch, Stack, And Worktree Policy
+## Branch, stack, and worktree policy
 
-Main should stay integration-ready. Any Gest-tracked workflow that writes files
-should choose an explicit VCS execution mode before editing. Keep two decisions
-separate:
+The mainline and the persistent integration branches stay ready to integrate.
+Each Gest workflow that writes files chooses an explicit mode of version
+control (VCS) execution before it edits. Keep two decisions separate:
 
-- **branch model**: how the work will be reviewed and integrated
-- **execution model**: where agents are allowed to write
+- **branch model**: how the work gets review and how it is integrated
+- **execution model**: where agents can write
 
-Use branch names keyed to the highest meaningful Gest task for the current
-workstream, not necessarily the permanent product root:
+Name a branch after the highest Gest task that has meaning for the current
+workstream. That task is not always the permanent root of the product:
 
 ```text
 gest/<task-id-short>-two-word-summary
@@ -62,57 +68,62 @@ session/<task-id-short>-two-word-summary
 
 Use these branch modes:
 
-- `session-branch`: one tactical session branch. Good for a small session leaf
+- `session-branch`: one tactical session branch. It suits a small session leaf,
   or several small related session edits under one parent.
-- `development-branch`: one durable branch for one coherent feature, bug, or
-  workflow change. Multiple commits are fine when they are useful checkpoints.
-- `stacked-session`: multiple meaty dependent session slices that should remain
-  separately reviewable.
-- `stacked-development`: multiple meaty dependent development slices that should
-  become stacked branches or stacked PRs.
-- `parallel-worktrees`: multiple independent meaty slices worked at the same
-  time in separate physical worktrees.
+- `development-branch`: one durable branch for one coherent feature, bug or
+  change to the workflow. Several commits are fine when they are useful
+  checkpoints.
+- `stacked-session`: several large session slices that depend on each other and
+  must stay separate for review.
+- `stacked-development`: several large development slices that depend on each
+  other and become stacked branches or stacked PRs.
+- `parallel-worktrees`: several large independent slices that agents work on at
+  the same time, in separate physical worktrees.
 
 Use these execution modes:
 
 - `main-worktree`: one agent writes in the current checkout.
-- `git-worktrees`: one git worktree per parallel task.
-- `gitbutler-workspace`: one sequential agent in the GitButler-managed
-  workspace.
-- `jj-workspaces`: one jj workspace per parallel task, if the project is using
+- `git-worktrees`: one git worktree for each parallel task.
+- `jj-workspaces`: one jj workspace for each parallel task, if the project uses
   jj.
 
-GitButler stacks are based on GitButler's applied branch workspace model. That
-is good for sequential stack curation, but not for multiple agents writing to
-the same working tree. Therefore:
+One checkout holds one branch at a time, so several agents must not write to
+the same working tree. Follow these rules:
 
-- never run parallel write agents in one `gitbutler-workspace`
-- never use GitButler parallel lanes as the agent parallelism primitive
-- if work must be parallel, use physical `git-worktrees` first and integrate the
-  results into a branch or stack afterward
-- when working inside GitButler mode, use current `but` CLI writes such as
-  `but branch new`, `but stage`, `but commit`, `but push`, and `but pr`; do not
-  use raw `git commit`, `git switch`, `git checkout`, or branch-mutating git
-  commands
+- if work must be parallel, give each writer its own physical worktree, with
+  `just worktree-new NAME` or `git worktree add`, and integrate the results into
+  a branch or stack after that
+- to build a stack with plain git, start each branch from the branch below it,
+  and open the PR of each branch with `gh pr create --base <parent-branch>`
+- after a change to a lower branch, run
+  `git rebase --update-refs --onto <lower-branch> <old-lower-tip>` on the top
+  branch, so that Git moves each branch of the stack together.
+  `<old-lower-tip>` is the lower branch before the change, saved with
+  `git rev-parse <lower-branch>`. `<lower-branch>@{1}` is that commit only
+  after one change. Git 2.38 and later have `--update-refs`.
+- plain `git commit`, `git switch` and `git checkout` need no marker
 
 Default integration:
 
 - simple branches: rebase onto the target branch, then fast-forward or squash
-  when appropriate
-- GitButler stacks: review/merge bottom-up; GitHub merge commits are acceptable
-  for stack ergonomics when using GitButler-managed stacked PRs
-- parallel worktrees: integrate each finished worktree intentionally before
-  starting dependent follow-on work
+  when that is correct
+- stacks: review and merge from the bottom up. GitHub merge commits are
+  acceptable for stacked PRs, because they make the stack easier to handle.
+- parallel worktrees: integrate each finished worktree on purpose before you
+  start follow-on work that depends on it
 
-Record branch and execution state in Gest metadata when work is more than a
-tiny local edit:
+When work is more than a tiny local edit, record the state of the branch and of
+the execution in Gest metadata:
 
 ```text
-vcs.tool=git|git-butler|jj
-vcs.base_branch=main
+vcs.tool=git|jj
+vcs.default_branch=<repository-default>
+vcs.integration_branch=<selected-persistent-target>
+vcs.base_branch=<immediate-PR-base>
+vcs.branch_role=topic|stack-topic|integration
 vcs.base_sha=<sha>
 vcs.branch_mode=session-branch|development-branch|stacked-session|stacked-development|parallel-worktrees
-vcs.execution=main-worktree|git-worktrees|gitbutler-workspace|jj-workspaces
+vcs.execution=main-worktree|git-worktrees|jj-workspaces
 vcs.parallel_allowed=true|false
 vcs.branch=<branch-name>
 vcs.stack_root=<branch-name>
@@ -129,17 +140,16 @@ language.profile=python|ruby|typescript|go|rust|mixed|unknown
 contract.source=agents-md|just-agent-contract|manual
 ```
 
-`vcs.parallel_allowed=false` is required when
-`vcs.tool=git-butler` and `vcs.execution=gitbutler-workspace`. Parallel claims
-are allowed only when each writable task has a distinct physical
-`vcs.workspace_path`, such as separate git worktrees.
+If `vcs.execution=main-worktree`, set `vcs.parallel_allowed=false`. Parallel
+claims are allowed only when each task that writes has its own physical
+`vcs.workspace_path`, for example separate git worktrees.
 
-## Task Hierarchy
+## Task hierarchy
 
-Gest parent tasks are represented with native `child-of` / `parent-of` links.
-Tags help filtering, but links are the source of truth for hierarchy.
+Native `child-of` and `parent-of` links show the parent tasks in Gest. Tags help
+you filter, but the links are the source of truth for the hierarchy.
 
-Preferred depth:
+The preferred depth:
 
 ```text
 depth 0: product area / GitHub-scale initiative
@@ -148,60 +158,66 @@ depth 2: concrete implementable task
 depth 3: tiny tactical subtask, only when useful
 ```
 
-Every concrete implementation task should have a parent unless it is truly
-standalone. Long-lived outline parents may remain open across multiple sessions.
-Do not complete a parent just because one session leaf is done.
+Give each concrete implementation task a parent, if the task does not stand
+alone. Outline parents can stay open across many sessions. Do not complete a parent only because one session leaf is done.
 
-For multi-stage substantial work, create a small GTW-owned task treelet. The
-parent represents the user request. Child leaves represent the stage commands
-that are separately verifiable, for example `gsp`, `gpl`, `gim`, `gfm`, `gte`,
-`gdo`, `grv`, `gpr`, and `gcm`. Do not create busywork tasks for trivial stages,
-but do record in the completion note which stages ran or were intentionally
-skipped.
+For substantial work in several stages, create a small tree of tasks that GTW
+owns. The parent stands for the user request. Each child leaf stands for a stage
+command that you can verify on its own. Examples are `gsp`, `gpl`, `gim`, `gfm`,
+`gte`, `gdo`, `grv`, `gpr` and `gcm`. Do not create busywork tasks for trivial
+stages. But the completion note must say which stages ran, and which stages
+you skipped on purpose.
 
 ## Classification
 
-Before editing files, Codex decides which class fits the request:
+Before Codex edits files, it decides which class fits the request:
 
-- **Session leaf only**: tiny, tactical, unlikely to matter after the session.
-- **Session leaf under existing outline**: small work that clearly belongs under
-  a durable product/workflow area.
-- **New outline task plus session leaves**: new durable area, but not yet worth a
-  GitHub issue or formal spec.
-- **Development iteration**: larger scoped effort with acceptance criteria,
-  phases, possible parallel work, likely GitHub visibility, or multi-session
-  continuation.
+- **Session leaf only** is for tiny and tactical work that is not likely to
+  matter after the session.
+- **Session leaf under existing outline** is for small work that belongs
+  under a durable area of the product or the workflow.
+- **New outline task plus session leaves** is for a new durable area that does
+  not yet need a GitHub issue or a formal spec.
+- **Development iteration** is for a larger effort with a clear scope. It has
+  acceptance criteria and phases, and it can have parallel work. It probably
+  needs to be visible on GitHub, or it continues over several sessions.
 
-Promote session-shaped work to development when it needs a spec/design decision,
-spans multiple sessions, should be visible on GitHub, has multiple durable
-acceptance criteria, creates a reusable product area, or requires staged
-delivery.
+Promote session work to development work when any of these is true:
+
+- it needs a decision about the spec or the design
+- it continues over several sessions, or it must be visible on GitHub
+- it has several durable acceptance criteria
+- it creates a reusable area of the product, or it needs delivery in stages
 
 ## Specs
 
-Create a Gest spec artifact when the request needs product/design shaping before
-implementation. A spec is appropriate when:
+Create a Gest spec artifact when the request needs the shape of the product or
+the design before implementation. A spec is correct when:
 
-- the desired behavior is not yet clear
-- there are several approaches with trade-offs
-- acceptance criteria need to be negotiated
-- the work affects multiple systems or future workflows
-- GitHub-visible development is likely
+- the wanted behavior is not yet clear
+- several approaches exist, and each has its trade-offs
+- the acceptance criteria need agreement
+- the work changes several systems or future workflows
+- the development will probably be visible on GitHub
 
-When a spec is created, implementation should happen in follow-on Gest tasks.
-Do not bury implementation work inside the spec artifact itself.
+After you create a spec, do the implementation in follow-on Gest tasks. Do not
+hide implementation work inside the spec artifact.
 
-## GitHub Promotion
+## GitHub promotion
 
-GitHub issues are for durable external visibility, not for every leaf task.
-Promote work to GitHub when it is user-visible, architecture-relevant,
-multi-session, release-worthy, or worth tracking outside the local Gest ledger.
-For development depth-1 parents and development iterations, the GitHub decision
-is mandatory: create or sync the issue with `gpr`, or record why the work is
-staying local.
+GitHub issues give durable visibility outside the tracker, and they are not for
+every leaf task. Promote work to GitHub in these cases:
 
-When a GitHub issue exists, store it as metadata on both the development
-iteration and the top-level outline task when applicable:
+- users can see the work, or it changes the architecture
+- it continues over several sessions, or it belongs in a release
+- it needs tracking outside the local Gest ledger
+
+Development parents at depth 1 and development iterations must have a GitHub
+decision. Create or sync the issue with `gpr`, or record why the work stays
+local.
+
+When a GitHub issue exists, store it as metadata on the development iteration.
+Also store it on the top-level outline task, when there is one:
 
 ```text
 github.issue=<number>
@@ -210,69 +226,76 @@ workflow.kind=development
 outline.root=<gest-task-id>
 ```
 
-GitHub is visibility. Gest remains the local execution ledger.
+The GitHub issue makes the work visible to other people, and Gest still
+records its execution locally.
 
-## Tag And Dependency Impact
+## Tag and dependency impact
 
-Before creating or splitting tasks, classify the request against the existing
-Gest tag vocabulary. Record `classification.tags.reviewed=true`,
-`classification.tags.new=<comma-separated-new-tags>`, and
-`impact.ast_grep.required=true|false` where relevant. Use
-`tag_dependency_workflow.md`.
+Before you create or split tasks, classify the request against the existing
+vocabulary of Gest tags. Where it applies, record
+`classification.tags.reviewed=true`,
+`classification.tags.new=<comma-separated-new-tags>` and
+`impact.ast_grep.required=true|false`. Use the
+[tag dependency workflow](tag_dependency_workflow.md).
 
-For code-facing work, use `ast-grep` to inspect semantic dependers of changed
-contracts. If a tag or dependency search reveals coupled surfaces, expand the
-current task or create/link child tasks before implementation is complete.
+For work on code, use `ast-grep` to find the semantic dependers of each changed
+contract. A depender is code that uses the contract. If a search of tags or
+dependencies finds coupled surfaces, expand the current task, or create and
+link child tasks, before the implementation is complete.
 
-## Testing Strategy
+## Testing strategy
 
-`gte` owns both test design and test execution. For implementation tasks, choose
-and record a strategy before editing production code when practical:
+`gte` owns the design of the tests and their execution. For an implementation
+task, choose and record a strategy before you edit production code, when you
+can:
 
-- `test-first`: write the smallest meaningful failing test, run it to confirm a
-  useful red failure, implement, confirm green, refactor, then run broader
+- `test-first`: write the smallest meaningful test that fails. Run it to see a
+  useful red failure. Then implement, see green, refactor and run broader
   checks.
-- `characterization-first`: capture current behavior before refactoring,
-  migration, or risky semantic change.
-- `test-after`: implement first only when test-first is awkward or the expected
-  behavior is still forming; add focused behavior coverage before completion.
-- `exploratory`: probe unknown APIs, UI affordances, or tooling; record why
-  test-first does not fit and what later test boundary should be created.
-- `no-test-needed`: docs-only, planning-only, or pure workflow prose, with a
-  concrete reason.
+- `characterization-first`: record the current behavior before a refactor, a
+  migration or a risky change of semantics.
+- `test-after`: implement first only when test-first is awkward, or when the
+  expected behavior is still not clear. Add focused tests of the behavior
+  before completion.
+- `exploratory`: probe unknown APIs, UI affordances or tools. Record why
+  test-first does not fit, and which test boundary to create later.
+- `no-test-needed`: work on docs only, on planning only, or on workflow prose
+  only, with a concrete reason.
 
-For bug fixes, parsers, exports, imports, persistence, APIs, and shared
-contracts, prefer `test-first` or `characterization-first` unless there is a
-clear reason not to. Completion notes should include the strategy, focused
-commands, broader commands, and any deferred test boundary.
+For bug fixes, parsers, exports, imports, persistence, APIs and shared
+contracts, prefer `test-first` or `characterization-first`. Use another
+strategy only for a clear reason. Completion notes give the strategy, the
+focused commands, the broader commands and each test boundary that you put off.
 
-## Adversarial Review
+## Adversarial review
 
-`grv` is the local review aggregator and should become adversarial for
-non-trivial changes. It should review through distinct lenses:
+`grv` collects the local review, and it becomes adversarial for changes that are
+not trivial. It reviews through separate lenses:
 
-- correctness and regression risk
-- test adequacy, including whether new tests would fail on the old code
-- Git/GitButler workflow safety
-- docs, setup, and command-contract drift
-- security, privacy, or data safety when relevant
-- browser/UI behavior when relevant
-- language/runtime idioms when the profile is known
+- correctness and the risk of a regression
+- whether the tests are enough, including whether new tests fail on the old code
+- the safety of the Git workflow
+- drift in the docs, the setup and the command contract
+- security, privacy or data safety, when relevant
+- browser and UI behavior, when relevant
+- the idioms of the language and the runtime, when Codex knows the profile
 
-Default to independent read-only review sub-agents when sub-agents are
-available, authorized, and the lenses can be checked independently. If
-sub-agents are not used, Codex should still apply the lenses explicitly and
-record why local review was sufficient. Gest mutations and checkpoint decisions
-should remain centralized unless deliberately assigned.
+By default, use independent read-only review subagents when subagents are
+available, you have permission to use them, and each lens can be checked on its
+own. If Codex does not use subagents, it still applies
+each lens explicitly. It also records why a local review was enough. Keep Gest
+changes and checkpoint decisions in one place, if you do not assign them on
+purpose.
 
-For reusable workflow changes, reviewers must preserve adapter boundaries:
-plain Git branches, GitButler branches/stacks, and physical git worktrees are
-different execution/review tools. Do not rewrite GitButler stack guidance into
-jj bookmark semantics or treat GitButler parallel lanes as agent isolation.
+Reviewers of reusable workflow changes keep the boundaries between adapters.
+Plain Git branches, stacks of branches, and physical git worktrees are
+different tools for execution and review. Do not rewrite the guidance for
+stacks into the semantics of jj bookmarks. Do not treat two branches in one
+checkout as isolation for agents.
 
 ## Tags
 
-Use tags as filters, not as hierarchy.
+Use tags as filters, and not as a hierarchy.
 
 Core workflow tags:
 
@@ -310,18 +333,18 @@ Work-type tags:
 - `cleanup`
 - `regression`
 
-Metadata should hold source-of-truth facts such as `workflow.kind`, `depth`,
-`github.issue`, `github.url`, `outline.root`, `parent_task`, and `vcs.*`
-branch/execution metadata.
+Put the facts that are the source of truth in metadata. Examples are
+`workflow.kind`, `depth`, `github.issue`, `github.url`, `outline.root`,
+`parent_task`, and the `vcs.*` metadata of the branch and the execution.
 
-## Completion Notes
+## Completion notes
 
-Task descriptions are intent: what the task was created to accomplish. Do not
-rewrite descriptions at completion just to record what happened.
+A task description is its intent. It says what the task was created to do. At
+completion, do not rewrite the description only to record what happened.
 
-For non-trivial completed leaf tasks, add a Gest task note before marking the
-task done. Notes are first-class Gest data, appear in `gest task show` and the
-web timeline, and sync under `.gest/task/notes/`.
+For each leaf task that is not trivial, add a Gest task note before you mark the
+task done. Notes are first-class Gest data. They appear in `gest task show` and
+in the web timeline, and they sync under `.gest/task/notes/`.
 
 Use this shape:
 
@@ -338,200 +361,232 @@ gest task note add <task-id> --agent codex --body "Done: ...\nVerification: ..."
 gest task complete <task-id> --quiet
 ```
 
-Use metadata for machine-queryable facts, for example changed files, GitHub
-issue IDs, or verification command lists. Use notes for prose work logs. For
-tiny mechanical tasks, the status transition and final chat summary may be
-enough.
+Use metadata for facts that a machine queries. Examples are the changed files,
+the IDs of GitHub issues, and the lists of verification commands. Use notes for
+the work log in prose. For a tiny mechanical task, the change of status and the
+final summary in the chat can be enough.
 
-## Commit Cadence
+## Commit cadence
 
-Committing is VCS hygiene, not a Gest task by itself. Do not create a Gest task
-whose only purpose is "make a commit" unless the Git history work is itself
-substantial, such as splitting a messy changeset or recovering from a bad
-history operation.
+A commit is part of the hygiene of version control, and it is not a Gest task by
+itself. Do not create a Gest task only to make a commit. The exception is
+substantial work on the Git history, for example the split of a messy changeset
+or a recovery from a bad history operation.
 
-Session-mode work should not auto-commit every small leaf. Commit session work
-when the user asks, when a coherent checkpoint would be useful, or when a
-long-lived parent/subtree reaches a stable point. Small exploratory tasks may
-stay uncommitted while the workflow is still moving.
+Session-mode work does not commit each small leaf automatically. Commit session
+work at these times:
 
-Session classification alone is not a sufficient reason to skip `gcm`. A
-verified slice is a commit-required checkpoint when it changes
-deployment/runtime configuration, persistence, migrations, schemas, public APIs,
-user-visible UI, reusable workflow material, publishable docs/templates, or a
-non-trivial multi-file changeset. After verification and review, run
-`git status --short --branch` before final response. If it shows Codex-owned
-changes and any commit-required trigger applies, route through `gcm` before
-handoff. If the worktree stays dirty intentionally, record the concrete
-no-commit reason in the Gest note and final response.
+- when the user asks
+- when a coherent checkpoint is useful
+- when a long-lived parent or subtree gets to a stable point
 
-Development-mode work should have stronger commit checkpoints:
+Small exploratory tasks can stay uncommitted while the workflow still changes.
 
-- after a depth-1 feature/workstream or coherent depth-2 implementation subtree
-  is complete and verified
-- before switching to a substantially different product area
-- before handing work to another agent/session
-- after resolving a risky bug or migration where rollback clarity matters
-- before pushing or syncing to a GitHub issue/PR
+A session classification alone is not enough reason to skip `gcm`. A verified
+slice is a checkpoint that needs a commit when it changes one of these things:
 
-In development mode, do not merely ask the user whether each slice should be
-committed. After completing and verifying a coherent depth-2 implementation
-leaf or tightly related set of leaves, make the commit judgment yourself. If the
-slice changes schema, persistence, query semantics, migrations, public APIs,
-user-visible UI, or non-trivial verification, prefer committing it before
-claiming the next implementation slice. Small design-only, exploratory, or
-strictly dependent leaves may stay uncommitted until they combine into the next
-coherent checkpoint.
+- the configuration of deployment or of the runtime
+- persistence, migrations or schemas
+- public APIs or the UI that users see
+- reusable workflow material, or docs and templates that you publish
+- a changeset of several files that is not trivial
 
-When committing a slice, derive the commit body from the completed Gest task
-notes: summarize `Done`, include `Verification`, mention real `Follow-up`
-items, and cite changed subsystems or files when that helps future bisecting.
-The commit message must not include Gest IDs. A future `git bisect` should land
-on a narrow layer such as schema/indexing, repository/query behavior, UI, or
-verification rather than a whole multi-layer feature.
+After verification and review, run `git status --short --branch` before the
+final response. If the output shows changes that Codex owns, and a trigger for a
+commit applies, go through `gcm` before the handoff. If the worktree stays dirty
+on purpose, record the concrete reason for no commit. Put it in the Gest note
+and in the final response.
 
-When a commit is appropriate, inspect status/diff, stage explicit files, and use
-`gcm`. Never use `git add .` by default. Never put Gest IDs in commit messages.
-Use GitHub issue footers only when the relevant Gest metadata contains a real
-GitHub issue and the commit semantically closes or references it.
+Development-mode work has stronger commit checkpoints:
 
-Every Codex-created commit needs a separate push/sync decision. Do not treat
-GitHub issue promotion as a substitute for `git push`. Before and after the
-commit, inspect `git status --short --branch`; if the branch has an upstream
-and the user has not asked for local-only work, push the verified checkpoint.
-If the branch has no upstream, set one with `git push -u origin <branch>` or
-the repo's equivalent; "no upstream" is not a no-push reason. If the branch is
-still local or `ahead` at handoff, the checkpoint is incomplete unless a real
-push blocker is explicit in the task note/final summary.
+- after a feature or workstream at depth 1, or a coherent implementation
+  subtree at depth 2, is complete and verified
+- before you change to a very different area of the product
+- before you give the work to another agent or session
+- after you fix a risky bug or migration, where a clear rollback is important
+- before you push or sync to a GitHub issue or PR
 
-When Codex pushes changes to a branch other than the repository's mainline
-branch, that push must be followed by a pull-request checkpoint: create or
-update the PR for the branch, run `gpa` on that PR, report the PR review
-findings/state to the user, and ask whether to merge. Only merge without a
-second question when the user explicitly asked for the merge in the current
-turn. For reusable workflow/template repo changes, push and PR creation are
-required unless blocked; record the exact blocker instead of leaving the branch
-only pushed.
+In development mode, make the commit decision yourself. Do not leave each
+slice to a question to the user. Decide after you complete and verify a coherent
+implementation leaf at depth 2, or a set of closely related leaves.
 
-After a PR is merged, inspect the repository's project instructions and command
-contract for deploy/release expectations. If the repo defines a deploy command
-for that kind of change, run it or record the exact blocker before handoff.
+Some slices change the schema, persistence, the semantics of queries, migrations, public
+APIs, the UI that users see, or verification that is not trivial. Prefer to
+commit such a slice before you claim the next implementation slice. Small
+leaves that are only design, exploratory, or strictly dependent can stay
+uncommitted. Commit them when they join into the next coherent checkpoint.
 
-Before final response for substantial work, run a dirty-worktree gate for each
-edited repo. A completed Gest task is not a substitute for a Git checkpoint. If
-there are Codex-owned changes and a commit-required checkpoint trigger applies,
-run `gcm` or explicitly document why no commit is being made.
+When you commit a slice, make the commit body from the notes of the completed
+Gest tasks:
 
-## Checkpoint Hygiene
+- summarize `Done`
+- include `Verification`
+- mention each real item of `Follow-up`
+- name the changed subsystems or files, when that helps a later bisect
+
+The commit message must not include Gest IDs. A later `git bisect` must land on
+a narrow layer. Examples are schema and indexing, the behavior of the repository
+and its queries, the UI, and verification. It must not land on a whole feature of
+several layers.
+
+When a commit is correct, read the status and the diff, stage explicit files,
+and use `gcm`. Never use `git add .` by default. Never put Gest IDs in commit
+messages. Use GitHub issue footers only when the Gest metadata has a real GitHub
+issue and the commit closes it or refers to it.
+
+Each commit that Codex creates needs its own decision about push and sync. The
+promotion of a GitHub issue does not replace `git push`.
+
+Read `git status --short --branch` before and after the commit. If the branch has an
+upstream and the user did not ask for local-only work, push the verified
+checkpoint. If the branch has no upstream, set one with
+`git push -u origin <branch>` or the equivalent of the repository. "No
+upstream" is not a reason to not push. If the branch is still local or `ahead`
+at the handoff, the checkpoint is incomplete. The exception is a real push
+blocker that the task note or the final summary states.
+
+When Codex pushes a topic or stack branch, a pull-request checkpoint must follow
+the push:
+
+1. Create or update the PR for the branch.
+2. Run `gpa` on that PR.
+3. Report the review findings and the state of the PR to the user.
+4. Ask whether to merge.
+
+Merge only when the user already gave permission for that particular merge. The
+permission stays valid across turns. For changes to a reusable workflow or
+template repository, the push and the creation of the PR are required, if
+nothing blocks them. If something blocks them, record the exact blocker. Do not
+leave the branch pushed with no PR.
+
+After a PR is merged, read the project instructions and the command contract of
+the repository for what they expect about deploy and release. If the repository
+defines a deploy command for that kind of change, run it, or record the exact
+blocker before the handoff.
+
+Before the final response for substantial work, check each repository that you
+edited for a dirty worktree. A completed Gest task does not replace a
+Git checkpoint. If there are changes that Codex owns, and a trigger for a
+commit checkpoint applies, run `gcm`. Otherwise, write down why you make no
+commit.
+
+## Checkpoint hygiene
 
 At every durable checkpoint, run the project hygiene that keeps later agents
 oriented. Durable checkpoints include:
 
-- any Git commit created by Codex
-- closing a depth-1 task or product/workstream parent
-- completing an iteration
-- handoff after a substantial implementation session
+- any Git commit that Codex creates
+- the close of a task at depth 1, or of a parent of a product area or workstream
+- the completion of an iteration
+- the handoff after a substantial implementation session
 
 Checkpoint steps:
 
-1. Regenerate the overall Gest graph and a focused graph for the latest relevant
-   iteration. Treat graph generation as a Gest database operation: do not run it
-   in parallel with any `gest` command.
-2. For user-visible, architecture-relevant, multi-session, or release-worthy
-   work, decide whether GitHub promotion is appropriate. For development
-   depth-1 parents and development iterations, this decision is mandatory. Use
-   `gpr` to create/update the GitHub issue and write `github.issue` /
-   `github.url` metadata back to Gest, or record the explicit reason promotion
-   was skipped in the task note or final summary.
-3. For every Codex-created commit, verify push state with
+1. Keep the native links of the task hierarchy and of dependencies current.
+   Gest keeps its graphs up to date by itself. Look at them when you need to,
+   with no export checkpoint.
+2. Some work is visible to users, changes the architecture, continues over
+   several sessions or belongs in a release. For such work, decide whether to
+   promote it to GitHub. For development parents at depth 1 and for development
+   iterations, the decision is mandatory. Use `gpr` to create or update the
+   GitHub issue. Then write the `github.issue` and `github.url` metadata back to
+   Gest. Otherwise, record the explicit reason that you skipped the promotion,
+   in the task note or the final summary.
+3. For each commit that Codex creates, check the push state with
    `git status --short --branch`. If an upstream exists and the branch is
-   ahead, push it or record the explicit local-only/blocker reason. Report the
-   final branch relationship separately from the GitHub issue decision.
-4. If Codex pushed a non-mainline branch, create/update its PR, run `gpa`,
-   report the PR review findings/state, and ask before merge unless the user
-   already explicitly asked for that merge.
-5. For every code change, run an explicit review pass before task completion.
-   Use `grv` or a code-review stance over the current diff/commit, then fix or
-   record any findings before closing the leaf, parent, or iteration. Missing
-   focused tests for changed callable code or APIs are review findings.
-6. Verify the final Gest status after closing the parent or iteration and report
-   the graph paths, commit hashes, push status, review status, and GitHub issue
-   decision.
+   ahead, push it, or record the explicit reason for local-only work or the
+   blocker. Report the final relationship of the branch apart from
+   the decision about the GitHub issue.
+4. If Codex pushed a topic or stack branch, create or update its PR and run
+   `gpa`. Report the review findings and the state of the PR. Ask before the
+   merge, if the user did not already ask for that merge explicitly.
+5. For each code change, do an explicit review pass before the task is
+   complete. Use `grv`, or a stance of code review over the current diff or
+   commit. Then fix or record each finding before you close the leaf, the
+   parent or the iteration. Missing focused tests for changed callable code or
+   APIs are review findings.
+6. After you close the parent or the iteration, check the final Gest status.
+   Report the selected base, the commit hashes, the push status, the review
+   status and the decision about the GitHub issue.
 
-## Template Sync
+## Template sync
 
-Reusable workflow changes should not live only in one target workspace. When
-changing the `g*` skills, `AGENTS.md` workflow guidance, Gest/Codex playbook, or
-reusable tools such as `gest_mermaid_graph.py`, copy the reusable parts into the
-version-controlled workflow template repository. Then check, commit, and push
-that repository. The template repo is the source for workflow material that
-should be mixed into other projects. Keep project-specific details out of the
-template repo.
+Reusable workflow changes must not live only in one target workspace. Some
+changes are to the `g*` skills, the workflow guidance in `AGENTS.md`, the
+Gest/Codex playbook or reusable tools. Copy the reusable parts of such a change
+into the workflow template repository, which is under version control. Then
+check, commit and push that repository. The template repository is the source of
+the workflow material that other projects take in. Keep the details of one
+project out of the template repository.
 
-## Iterations And Phases
+## Iterations and phases
 
-Iterations are execution plans. Phases are parallelism boundaries.
+Iterations are plans of execution. Phases are the boundaries of parallel work.
 
-Use a **session iteration** for current-session work, including creative
-experimentation. Use a **development iteration** for larger scoped work that may
-span sessions or map to GitHub.
+Use a **session iteration** for the work of the current session, including
+creative experiments. Use a **development iteration** for larger work with a
+clear scope that can continue over several sessions or map to GitHub.
 
-Do not hardcode every task to `--phase 1`. Assign phases deliberately:
+Do not give every task `--phase 1`. Choose the phases on purpose:
 
 - Phase 1: research, reproduction, or design
 - Phase 2: implementation
 - Phase 3: verification
 - Phase 4: docs, publishing, or cleanup
 
-Tasks in the same phase must be independent enough to run concurrently. If one
-task blocks another, put them in different phases and add a `blocked-by` link.
+Tasks in the same phase must be independent enough to run at the same time. If
+one task blocks another, put them in different phases, and add a `blocked-by`
+link.
 
-## Parallel Work
+## Parallel work
 
-Parallel work can happen in session or development iterations. Decide based on
-the task graph, not the iteration kind.
+Parallel work can happen in session iterations or in development iterations.
+Decide from the graph of tasks, and not from the kind of iteration.
 
-Use git worktrees/subagents when tasks are independent, code-touching, and risky
-to interleave in one working tree. Keep work local and sequential when tasks are
-tightly coupled, small, or dependent on immediate context.
+Use git worktrees and subagents when the tasks are independent, touch code, and
+are risky to mix in one working tree. Keep the work local and sequential when
+the tasks are closely coupled, small, or need the context of the moment.
 
 For parallel Gest orchestration:
 
 1. Claim tasks with `gest iteration next <iteration-id> --claim --agent <name>`.
-2. Create one git worktree per independent task when useful.
-3. Run implementation in each worktree.
-4. Merge or cherry-pick results before advancing to the next phase.
-5. Clean up worktrees after verification.
+2. Create one git worktree for each independent task, when it helps.
+3. Run the implementation in each worktree.
+4. Merge or cherry-pick the results before you go to the next phase.
+5. Remove the worktrees after verification.
 
-Gest commands should be short and serialized where possible. In this workspace,
-local `.gest/` sync can make read-looking commands perform database writes.
+Keep Gest commands short, and run them one at a time where you can. In this
+workspace, a command that seems only to read can still write to the database,
+because of the local `.gest/` sync.
 
-## Serialization And Storage
+## Serialization and storage
 
-Current forked Gest builds from June 8, 2026 and later prefer project-local
-storage for local projects:
+Current forked Gest builds from June 8, 2026 and later prefer storage in the
+project for local projects:
 
 ```text
 <project-root>/.gest/gest.db
 ```
 
-This is the expected path when the project has `.gest/` and the user has not
-set an explicit `database.url` or `storage.data_dir` override. In Codex, that
-usually avoids sandbox write failures because the SQLite file is inside the
-workspace writable root. Continue to serialize Gest commands because local sync
-and SQLite writes can still conflict within one workspace.
+Gest expects this path when the project has `.gest/` and the user did not set
+an explicit override in `database.url` or `storage.data_dir`. In Codex, the path
+usually prevents write failures in the sandbox. The reason is that the SQLite
+file is inside the root of the workspace that Codex can write. Run Gest commands
+one at a time anyway, because local sync and SQLite writes can still conflict
+in one workspace.
 
-Legacy or stock system Gest builds may still store the canonical data in:
+Legacy or stock system Gest builds can still store the canonical data in:
 
 ```text
 ~/Library/Application Support/gest/gest.db
 ```
 
 For those builds, the `.gest/` directory is a local sync mirror. The database is
-the source of truth, but commands can import/export mirror changes. Debug output
-has shown `sync import` running before `gest task list`.
+the source of truth, but commands can import changes from the mirror and export
+changes to it. Debug output showed `sync import` that ran before
+`gest task list`.
 
-Current SQLite pragmas observed locally:
+Current SQLite pragmas, as seen on the local machine:
 
 ```text
 journal_mode=delete
@@ -539,104 +594,111 @@ busy_timeout=0
 locking_mode=normal
 ```
 
-Before the project-local fork, local and global modes both used the same global
-database, so the readonly warning was not inherently a local-mode issue. The
-recommended legacy permission normalization is:
+Before the fork that stores data in the project, local mode and global mode both
+used the same global database. So the readonly warning was not a problem of
+local mode as such. The recommended normalization of permissions for legacy
+builds is:
 
 ```bash
 chmod 755 ~/Library/Application\ Support/gest/
 chmod 644 ~/Library/Application\ Support/gest/gest.db
 ```
 
-Those permissions were already present locally. A non-escalated Codex run with
-`GEST_LOG__LEVEL=trace` reproduced `attempt to write a readonly database` during
-sync import, while the same trace run outside the sandbox did not. Treat that
-warning as likely environment/sandbox-related unless it also reproduces in a
-normal terminal.
+Those permissions were already set on the local machine. A Codex run without
+escalation, with `GEST_LOG__LEVEL=trace`, reproduced
+`attempt to write a readonly database` during sync import. The same trace run
+outside the sandbox did not. Treat that warning as a probable result of the
+environment or the sandbox, if it does not also appear in a normal terminal.
 
 In Codex, the legacy failure happens because the canonical Gest database is
-outside the workspace writable roots. A command such as `gest task list` can
-still write before listing because local sync imports mirrored `.gest/` state
-into tables such as `authors`, `tags`, `tasks`, `relationships`,
-`transactions`, and `sync_digests`.
+outside the roots of the workspace that Codex can write. A command such as
+`gest task list` can still write before it lists. The reason is that local sync
+imports the mirrored `.gest/` state into tables, for example `authors`, `tags`,
+`tasks`, `relationships`, `transactions` and `sync_digests`.
 
 Codex command policy:
 
-- with the newer project-local fork, prefer `.gest/gest.db` and avoid sandbox
-  escalation unless another path or command requires it
-- with legacy or stock system Gest, run Gest mutations with `require_escalated`
-  because they may need to write to the global database
-- for read-looking Gest commands, retry with `require_escalated` if they emit
-  `attempt to write a readonly database` or a sync-import readonly warning
-- request or use a narrow approval prefix such as `["gest"]`
-- keep Gest commands serialized even when escalated, except for deliberate
-  `gest iteration next --claim` orchestration
+- with the newer fork that stores data in the project, prefer `.gest/gest.db`.
+  Do not escalate out of the sandbox, if another path or command does not
+  require it.
+- with legacy or stock system Gest, run Gest changes with `require_escalated`,
+  because they can need to write to the global database
+- if a Gest command that seems to only read gives
+  `attempt to write a readonly database` or a readonly warning from sync
+  import, run it again with `require_escalated`
+- ask for or use a narrow approval prefix, for example `["gest"]`
+- run Gest commands one at a time even with escalation. The exception is
+  deliberate orchestration with `gest iteration next --claim`.
 
-Therefore:
+So follow these rules:
 
 - do not run Gest commands in parallel during normal Codex work
-- use `--json` and `--quiet` for parseable outputs
-- verify state after any `database is locked` or sync warning before retrying
-- when diagnosing storage, check `gest --version`, `gest config show`, and
-  whether `.gest/gest.db` exists before assuming the global path is canonical
+- use `--json` and `--quiet` for output that a program parses
+- after a `database is locked` or sync warning, check the state before you try
+  again
+- when you diagnose storage, check `gest --version`, `gest config show`, and
+  whether `.gest/gest.db` exists. Do this before you assume that the global
+  path is canonical.
 
-## Deferred Hooks
+## Deferred hooks
 
-The current workflow is intentionally skill-and-instruction driven. Do not add
-blocking hooks until the workflow has been used enough to see what actually
-helps and what gets in the way.
+The current workflow works through skills and instructions on purpose. Do not
+add hooks that block commands until people have used the workflow enough. Then
+they can see what helps and what gets in the way.
 
-Hook ideas to revisit:
+Hook ideas to look at again:
 
-- **Session start**: inject a concise reminder of `gtw`, the `g*` skill family,
-  session/development classification, outline parenting, GitHub promotion, and
-  serialized Gest commands.
-- **Pre-edit**: inject project-local style and testing guidance before source
-  edits, for example `project docs/dev/code-style.md`, `project docs/dev/testing.md`, and
-  project-specific invariants.
-- **Pre-commit**: inject commit conventions, remind Codex never to include Gest
-  IDs in commit messages, and only use GitHub issue footers when metadata
+- **Session start**: add a short reminder of `gtw` and the `g*` family of
+  skills. Also remind the agent of the classification as session or
+  development, outline parents, GitHub promotion, and Gest commands one at a
+  time.
+- **Pre-edit**: before source edits, add the local guidance of the project
+  about style and tests. Examples are the code-style and testing guides of the
+  project, and the invariants of the project.
+- **Pre-commit**: add the commit conventions. Remind Codex never to put Gest IDs
+  in commit messages, and to use GitHub issue footers only when metadata
   exists.
-- **Gest safety**: warn or block malformed Gest commands, such as creating a
-  `subissue` without a `child-of` parent or running multiple Gest writes in
-  parallel.
-- **Worklog/session end**: capture concise session summaries or task notes when
-  a long session ends.
+- **Gest safety**: warn about or block malformed Gest commands. Examples are a
+  `subissue` with no `child-of` parent, and several Gest writes in parallel.
+- **Worklog/session end**: record short session summaries or task notes when a
+  long session ends.
 
-Questions to answer after using the workflow:
+Questions to answer after people use the workflow:
 
-- Which reminders do agents actually forget?
-- Which checks are better as hooks versus `gtw` instructions?
-- Should hooks live in project-local config, global Codex config, or both?
-- Should hooks only inject context, or should any of them block commands?
-- Do parallel worktrees need hook support for per-worktree context?
+- Which reminders do agents forget in practice?
+- Which checks are better as hooks, and which as `gtw` instructions?
+- Should hooks live in the local config of the project, in the global Codex
+  config, or in both?
+- Should hooks only add context, or should some of them block commands?
+- Do parallel worktrees need hook support for the context of each worktree?
 
-## Skill Family
+## Skill family
 
-User-invoked Gest skills use three-letter names beginning with `g`.
+Gest skills that the user calls have names of three letters that start with
+`g`.
 
-- `gtw`: Gest Track Work. Router/default skill for substantial work.
-- `gbs`: Gest Brainstorm. Explore ideas and decide whether a spec or outline is
-  needed.
-- `gsu`: Gest Setup. Bootstrap or refresh tool choices, installs, ignore rules,
-  command contracts, Justfile targets, and project setup docs.
-- `gsp`: Gest Spec. Draft or update a Gest spec artifact.
-- `gpl`: Gest Plan. Decompose a spec or outline task into tasks, phases, links,
+- `gtw`: Gest Track Work. The router and default skill for substantial work.
+- `gbs`: Gest Brainstorm. Explore ideas, and decide whether a spec or an outline
+  is necessary.
+- `gsu`: Gest Setup. Set up or refresh the choice of tools, installs, ignore
+  rules, command contracts, Justfile targets and the setup docs of the project.
+- `gsp`: Gest Spec. Write or update a Gest spec artifact.
+- `gpl`: Gest Plan. Break a spec or an outline task into tasks, phases, links
   and iterations.
 - `gis`: Gest Issue. Create or update durable Gest outline tasks.
 - `gpr`: Gest Promote. Promote or sync durable Gest work with GitHub issues.
-- `gim`: Gest Implement. Implement one concrete Gest task end to end.
-- `gor`: Gest Orchestrate. Execute a phased iteration, sequentially or in
-  parallel depending on task independence.
+- `gim`: Gest Implement. Implement one concrete Gest task from start to end.
+- `gor`: Gest Orchestrate. Run a phased iteration, in sequence or in parallel,
+  as the independence of the tasks lets it.
 - `grv`: Gest Review. Review the current changeset.
-- `gfm`: Gest Format. Run formatting, linting, typechecking, compile/static
-  checks, and diff hygiene.
-- `gte`: Gest Test. Run unit, regression, smoke, API, and integration tests.
-- `gdo`: Gest Docs. Check, create, update, and verify user-facing,
-  developer-facing, and in-code docs affected by the task.
-- `gpa`: Gest PR Accept. Review and accept GitHub pull requests as the
-  GitHub-facing checkpoint of Gest-tracked workstreams.
-- `gcm`: Gest Commit. Create a Git commit tied to GitHub metadata when present.
+- `gfm`: Gest Format. Run the format, lint, typecheck, compile and static checks,
+  and diff hygiene.
+- `gte`: Gest Test. Run unit, regression, smoke, API and integration tests.
+- `gdo`: Gest Docs. Check, create, update and verify the docs that the task
+  changes. The docs can be for users, for developers or in the code.
+- `gpa`: Gest PR Accept. Review and accept GitHub pull requests. A pull request
+  is the checkpoint on GitHub of a workstream that Gest tracks.
+- `gcm`: Gest Commit. Create a Git commit, with GitHub metadata when it exists.
 
 Optional later skills:
 
@@ -644,162 +706,187 @@ Optional later skills:
 - `gdc`: Gest Doc Code.
 - `gps`: Gest Promote Spec.
 
-`gtw` should route to these stages conceptually. The user may invoke any stage
-directly, but ordinary requests can simply use `gtw` or natural language.
+`gtw` routes to these stages as a concept. The user can call any stage directly.
+But an ordinary request can use `gtw` or natural language.
 
-## Stage Responsibilities
+## Stage responsibilities
 
 ### GTW
 
-1. Inspect existing Gest state.
-2. Classify request as session/development and spec/no-spec.
+1. Read the existing Gest state.
+2. Classify the request as session or development, and as spec or no spec.
 3. Choose or create the best outline parent.
-4. Decide tags, metadata, and depth.
-5. Decide if parallel work is useful.
-6. Decide the branch model and execution model, recording `vcs.*` metadata for
-   non-trivial writes.
-7. Create/claim concrete leaf tasks before edits. For multi-stage work, create
-   a treelet with child leaves for separately verifiable stage commands.
-8. Route to the appropriate stage skill.
-9. Complete leaf tasks after verification and report IDs.
+4. Decide the tags, metadata and depth.
+5. Decide whether parallel work is useful.
+6. Decide the branch model and the execution model. For writes that are not
+   trivial, record the `vcs.*` metadata.
+7. Create or claim concrete leaf tasks before edits. For work in several stages,
+   create a small tree with a child leaf for each stage command that you can
+   verify on its own.
+8. Route to the correct stage skill.
+9. Complete the leaf tasks after verification, and report their IDs.
 
 ### GBS
 
-1. Explore existing code/docs/Gest context.
+1. Explore the existing code, docs and Gest context.
 2. Ask clarifying questions when necessary.
-3. Propose approaches and trade-offs.
-4. Decide whether to create a spec, issue, plan, or session leaf.
+3. Propose approaches and their trade-offs.
+4. Decide whether to create a spec, an issue, a plan or a session leaf.
 
 ### GSP
 
-1. Draft problem, scope, proposed behavior, acceptance criteria, and open
-   questions.
-2. Review with the user when the direction is not settled.
-3. Save as a Gest artifact tagged `spec`.
-4. Link the artifact to outline tasks when appropriate.
+1. Write the problem, the scope, the proposed behavior, the acceptance criteria
+   and the open questions.
+2. Review them with the user when the direction is not settled.
+3. Save them as a Gest artifact with the tag `spec`.
+4. Link the artifact to outline tasks when that is correct.
 
 ### GPL
 
-1. Read a spec, outline task, or GitHub-backed task.
-2. Decide single-task vs multi-task decomposition.
-3. Create depth 1/depth 2 tasks.
+1. Read a spec, an outline task, or a task that a GitHub issue backs.
+2. Decide between one task and a breakdown into several tasks.
+3. Create tasks at depth 1 and depth 2.
 4. Assign explicit phases and blocking links.
-5. Create or update session/development iterations.
-6. Report parallelization opportunities.
+5. Create or update session or development iterations.
+6. Report where work can run in parallel.
 
 ### GIS
 
-1. Draft user story, context, and acceptance criteria.
+1. Write the user story, the context and the acceptance criteria.
 2. Create or update a durable Gest task.
-3. Apply `outline`, `issue`, or `subissue` tags.
-4. Link with `child-of` and set depth metadata.
+3. Apply the tag `outline`, `issue` or `subissue`.
+4. Link with `child-of`, and set the depth metadata.
 
 ### GPR
 
-1. Read the task/iteration/spec to promote.
-2. Sanitize internal details.
-3. Draft GitHub issue body.
-4. Ask user confirmation before `gh issue create` or `gh issue edit`.
-5. Store GitHub metadata on Gest entities.
+1. Read the task, iteration or spec to promote.
+2. Remove the internal details.
+3. Write the body of the GitHub issue.
+4. Ask the user to confirm before `gh issue create` or `gh issue edit`.
+5. Store the GitHub metadata on the Gest entities.
 
 ### GIM
 
 1. Read and claim one concrete task.
-2. Split it first if it is too broad.
-3. Confirm the task's branch/execution mode before editing. In GitButler mode,
-   use only `but` writes and keep execution sequential unless a physical
-   worktree was assigned.
-4. Implement minimal scoped changes.
+2. If the task is too broad, split it first.
+3. Confirm the branch and execution mode of the task before you edit. Keep the
+   execution sequential, if no one assigned a physical worktree.
+4. Make small changes inside the scope.
 5. Run `gfm` for mechanical checks.
-6. Run `gte` for tests; changed callable code and APIs need focused tests.
-7. Run `gdo` when user-facing docs, developer-facing docs, or in-code docs are
-   affected.
+6. Run `gte` for tests. Changed callable code and APIs need focused tests.
+7. Run `gdo` when the change touches docs for users, docs for developers or
+   docs in the code.
 8. Run `grv` after every code change.
-9. Complete the leaf task and add parent notes/status updates.
+9. Complete the leaf task, and add notes and status updates to the parent.
 
 ### GOR
 
-1. Read iteration status and graph.
-2. Group tasks by phase.
-3. Decide sequential vs parallel execution per phase.
-4. Block shared GitButler workspace parallelism. If `vcs.tool=git-butler` and
-   `vcs.execution=gitbutler-workspace`, run tasks sequentially even when they
-   are in the same phase.
-5. Use physical git worktrees/subagents for independent tasks when useful, and
-   record each `vcs.workspace_path`.
-6. Integrate results and advance phases.
-7. Clean up worktrees and report failures.
+1. Read the status and the graph of the iteration.
+2. Group the tasks by phase.
+3. For each phase, decide between sequential and parallel execution.
+4. Block parallel work in one shared checkout. If
+   `vcs.execution=main-worktree`, run the tasks in sequence, even when they are
+   in the same phase.
+5. Use physical git worktrees and subagents for independent tasks when that
+   helps. Record each `vcs.workspace_path`.
+6. Integrate the results into the selected branch or stack, and go to the next
+   phase.
+7. Remove only the physical worktrees that workers own. First do the checks of
+   ownership, dirty files, integration and dependencies in the
+   integration-delivery policy. Report each worktree that you keep.
 
 ### GRV
 
-Review the current changeset for correctness, safety, regressions, style, and
-test coverage. Findings come first. Run after every code change before task
-completion.
+Review the current changeset for correctness, safety, regressions, style and
+test coverage. Give the findings first. Run it after every code change, before
+the task is complete.
 
 ### GFM
 
-Run formatting, linting, typechecking, compile/static checks, and diff hygiene.
-Fix mechanical issues. Do not use `gfm` as a substitute for tests.
+Run the format, lint, typecheck, compile and static checks, and diff hygiene.
+Fix mechanical issues. Do not use `gfm` in place of tests.
 
 ### GTE
 
-Run unit tests, API regression tests, smoke checks, and integration/browser
-checks appropriate to the change. Browser spot checks are exploratory
-implementation verification; durable browser integration tests are rerunnable
-scripts or tests. Add tests when changed callable code lacks focused coverage.
+Run the unit tests, API regression tests, smoke checks, and integration and
+browser checks that suit the change. A browser spot check is an exploratory
+verification of the implementation. A durable browser integration test is a
+script or test that you can run again. Add tests when changed callable code has
+no focused tests.
 
 ### GDO
 
-Check whether user-facing docs, developer-facing docs, or in-code docs are
-needed, then create or update them. Prefer documented and typed code when it
-clarifies callable behavior, public contracts, non-obvious domain logic, or
-future maintenance.
+Check whether the task needs docs for users, docs for developers or docs in the
+code, and then create or update them. Prefer code with docs and types when they
+make clear the callable behavior, public contracts, domain logic that is not
+obvious, or future maintenance.
 
 ### GPA
 
-Review a GitHub pull request as an integration checkpoint. Gather PR metadata,
-diff, commits, checks, review state, mergeability, branch state, and related
-Gest tasks/artifacts/iterations. Produce findings first, then a Gest context
-appendix, human review checklist, merge recommendation, and post-merge
-bookkeeping plan. If the PR body lacks Gest context, offer to update it before
-approval or merge.
+Review a GitHub pull request as a checkpoint of integration. Collect these
+facts about the PR:
 
-Post-merge bookkeeping must restore a consistent local state, not merely mark
-the GitHub PR merged. Before merge, verify the PR branch actually contains the
-intended changes with `gh pr diff` or `git show --stat`; empty GitButler
-commits and zero-change `WIP Assignments` commits are red flags. After merge,
-plain-Git workstreams should fetch/prune remotes, switch to the merged base
-branch, verify the local base and `origin/<base>` are equal, delete merged local
-`session/*` and `gest/*` branches when they are not checked out elsewhere, and
-confirm no open PRs remain for the workstream. GitButler workstreams must not
-run raw branch-mutating Git while GitButler owns the workspace; run
-`but teardown` first when the stack is done, then synchronize the base branch in
-normal Git mode. Do not leave the user's terminal on `gitbutler/workspace`
-unless active GitButler work is explicitly continuing.
+- its metadata, diff, commits and checks
+- its review state, whether it can merge, and the state of its branch
+- the related Gest tasks, artifacts and iterations
+
+Give the findings first. Then give an appendix of the Gest context and a checklist
+for human review. End with a recommendation about the merge, and a plan for the
+bookkeeping after the merge. If the body of the PR has no Gest context, offer to
+update it before approval or merge.
+
+The bookkeeping after the merge must bring back a consistent local state. To
+mark the GitHub PR merged is not enough. Before the merge, check with
+`gh pr diff` or `git show --stat` that the PR branch contains the intended
+changes. Empty commits, and commits with no changes, are warning signs.
+
+After the merge, do these things:
+
+- fetch and prune the remotes
+- update the selected base in a suitable clean checkout, when one exists
+- check the base against `origin/<base>`
+- delete only the merged temporary topic branches that you checked and that
+  have no worktree or stack dependents
+- keep the primary checkout branch, which is recorded separately, even when the
+  base of the PR is a different integration branch
+
+Keep the persistent integration branches, whatever their names are. Remove only
+the physical worktrees that workers own. First confirm that their changes
+reached the intended target, that all valuable files are accounted for, and
+that no task or stack depends on them. The integration-delivery policy gives the
+details. Confirm that each remaining PR belongs to follow-on work that someone
+intends.
+
+For a stack, merge from the bottom up. After each merge, retarget the next PR
+with `gh pr edit <number> --base <new-base>`. Then fetch, and run
+`git rebase --update-refs --onto origin/<new-base> <old-lower-tip>` on the top
+branch of the stack. `<old-lower-tip>` is the commit of the merged branch
+before the merge, which is the local branch, because the merge on GitHub does
+not move it. With `--onto`, Git does not replay the merged commits after a
+squash merge.
 
 ### GCM
 
-Inspect status/diff/log, draft a conventional commit, ask for confirmation when
-needed, stage explicit files, and commit. In GitButler-managed workspaces, use
-`but status`, `but diff`, `but branch list`, `but stage`, and `but commit`
-instead of raw git writes. Include GitHub issue footers only when metadata
-exists. Never include Gest IDs in commit messages.
+Read the status, the diff and the log. Write a conventional commit, ask for
+confirmation when necessary, stage explicit files and commit with plain git.
+Include GitHub issue footers only
+when metadata exists. Never include Gest IDs in commit messages.
 
-## Project Defaults
+## Project defaults
 
-Replace this section in each target repository with the project-specific command
-contract. Prefer `just` targets when present, and document target arguments.
-When creating or changing Just recipes, consult:
+In each target repository, replace this section with the command contract of the
+project. Prefer `just` targets when they exist, and document the arguments of
+each target. When you create or change Just recipes, read these pages:
 
 - Just dependencies: https://just.systems/man/en/dependencies.html
 - Just skill reference: https://raw.githubusercontent.com/casey/just/refs/heads/master/skills/just/SKILL.md
 
-For Just, dependency order is meaningful: dependencies run before the recipe
-that depends on them, and in the listed order. Prefer native Just dependencies
-for ordered recipe composition, such as
-`verify: lint typecheck static test smoke diff-check`, instead of recursively
-calling `just` inside a recipe. Dependencies with the same arguments run once
-per `just` invocation. This is not Make-style file freshness analysis.
+In Just, the order of dependencies has a meaning. Dependencies run before the
+recipe that depends on them, and in the order of the list. For recipes that run
+in order, prefer native Just dependencies to a recursive call of `just` inside a
+recipe. An example is `verify: lint typecheck static test smoke diff-check`.
+Dependencies with the same arguments run once in each call of `just`. Just does
+not check whether files are fresh, as Make does.
 
 Common checks include:
 
@@ -816,7 +903,7 @@ git diff --check
 
 Recommended test layout:
 
-- `tests/`: inner-function and focused callable-code unit tests.
-- `regression_tests/`: bug and API regression tests.
-- `integration_tests/`: end-to-end and browser-agent-driven checks, preferably
-  as rerunnable shell scripts for repeated UI flows.
+- `tests/`: unit tests of inner functions and focused tests of callable code.
+- `regression_tests/`: regression tests of bugs and of APIs.
+- `integration_tests/`: end-to-end checks and checks that a browser agent
+  drives. Prefer shell scripts that you can run again for UI flows that repeat.

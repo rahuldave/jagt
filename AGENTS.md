@@ -1,4 +1,19 @@
+<!-- begin lines of tasker, the tasker role, from agent_gest_git_skills at 666306e. -->
+<!-- Last written to AGENTS.md by `install_stack.py --target . tasker`. The record is parts."AGENTS.md" in .agents/stack.json. -->
+Read and follow @.agents/instructions/tasker.md
+<!-- end lines of tasker. `just uninstall tasker` removes them. -->
+
 # Agent Instructions
+
+The installer manages `.agents/instructions/tasker.md`, so do not edit it.
+Where this file and `tasker.md` differ, this file wins. For jagt, that applies
+to these rules in `tasker.md`:
+
+- the placeholder command contract, because the section "Project Command
+  Contract" below has the real one;
+- the test layout, because the section "Rust Layout" below has jagt's;
+- the merge rule, because a merge needs the approval of the user each time;
+- the frontend and browser rules, which do not apply to a CLI.
 
 This repository uses Gest to track substantial implementation work. Use the
 project-local Codex skill family under `.agents/skills/`, especially `gtw`, for
@@ -122,17 +137,16 @@ of the workstream that has a meaning of its own, for example
 `gest/<task-id-short>-two-word-summary` or
 `session/<task-id-short>-two-word-summary`.
 
-This repository uses plain git, with branches and pull requests. It does not
-use GitButler. Do not run `but` commands, and do not look for a GitButler
-workspace. Some installed skills under `.agents/skills/` still describe
-GitButler mode or the marker `GEST_VCS_EXECUTION`. Ignore those parts, because
-the plain git rules of this file come first.
+This repository uses plain git, with branches and pull requests.
 
 - **One workstream** gets one branch from `main`, and one pull request
   against `main`.
 - **Dependent slices** that each need a review of their own get stacked
   branches. Start each branch from the branch below it, and open its pull
-  request against that branch. After the lower pull request merges, run
+  request against that branch. While the lower branch is still open, move the
+  upper branches onto a changed lower branch with
+  `git rebase --update-refs --onto <lower-branch> <old-lower-tip>`, as
+  `tasker.md` says. After the lower pull request merges, run
   `git fetch origin`. Then move the upper branch with
   `git rebase --onto origin/main <old-base> <branch>`. The `<old-base>` is the
   last commit of the lower branch before the merge, so use its old SHA after a
@@ -140,9 +154,10 @@ the plain git rules of this file come first.
   `git push --force-with-lease origin <branch>`. Then change the base of its
   pull request with `gh pr edit <number> --base main`.
 - **Independent write tasks that run at the same time** each get a physical
-  git worktree, made with `git worktree add`. Never run two write agents in
-  one worktree. Join the results into the intended branch or stack after the
-  tasks finish.
+  git worktree, made with `just worktree-new NAME`. The recipe runs
+  `git worktree add`, and sets up the worktree from the main checkout. Never
+  run two write agents in one worktree. Join the results into the intended
+  branch or stack after the tasks finish.
 
 Use these commands for the writes:
 
@@ -201,12 +216,13 @@ When Codex pushes a branch other than the repository's mainline branch, create
 or update the pull request for that branch, run `gpa`, report the PR review
 findings/state to the user, and ask whether to merge. Do not merge unless the
 user explicitly asked for that merge in the current turn or gives approval after
-the `gpa` review packet.
+the `gpa` review packet. An approval of one merge does not carry over to the
+next merge.
 
 At every durable checkpoint, run these steps of hygiene:
 
-- Make the overall Gest graph again, and the focused graph for the latest
-  iteration that applies.
+- Check the overall Gest graph, and the focused graph for the latest iteration
+  that applies. Gest keeps the graphs up to date.
 - Decide on GitHub issue promotion with `gpr`, when it applies.
 - Check the push state.
 - Run a review pass with `grv`, or review the code yourself.

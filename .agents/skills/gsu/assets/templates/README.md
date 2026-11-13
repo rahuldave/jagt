@@ -17,15 +17,17 @@ with existing project files so local conventions are preserved.
 
 ## Profiles
 
-- `gitignore/python-uv.gitignore` and `just/python-uv.just`
-- `gitignore/typescript-npm.gitignore` and `just/typescript-npm.just`
-- `gitignore/go.gitignore` and `just/go.just`
-- `gitignore/rust-cargo.gitignore` and `just/rust-cargo.just`
-- `rust/rust-toolchain.toml`
-- `gitignore/browser-agent.gitignore` and `just/browser-agent.just`
-- `just/npm-local-cache.just`
-- `just/agent-contract.just`: optional dynamic agent context targets such as
-  `agent-contract`, `agent-test-plan`, and `agent-review-plan`.
+- `gitignore/python-uv.gitignore`
+- `gitignore/typescript-npm.gitignore`
+- `gitignore/go.gitignore`
+- `gitignore/rust-cargo.gitignore` and `rust/rust-toolchain.toml`
+- `gitignore/browser-agent.gitignore`
+
+The Justfile templates are in the `just` skill of jnterfaces, in
+`.agents/skills/just/assets/templates/`. They are `python-uv.just`,
+`typescript-npm.just`, `go.just`, `rust-cargo.just`, `browser-agent.just`,
+`npm-local-cache.just` and `agent-contract.just`. If the just skill is not
+installed, run `just install` first. jnterfaces always installs that skill.
 
 `gsu` should record the final command contract in `AGENTS.md` after composing
 or adapting these snippets.
@@ -37,5 +39,6 @@ the depending recipe and in the listed order; they are ordered recipe
 composition, not Make-style file freshness analysis.
 
 Use `cx` only for explicit file-producing build or pipeline stages inside
-linewise Just recipes. See `docs/cx_incremental_pipelines.md` before adding
-`cx` to a project command contract.
+linewise Just recipes. Before you add `cx` to a project command contract, read
+the `cx` skill of jnterfaces, `.agents/skills/cx/SKILL.md`. If the cx skill is
+not installed, read `cx --help` and run `cx lint`.

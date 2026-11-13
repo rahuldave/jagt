@@ -1,6 +1,7 @@
 ---
 name: gfm
 description: Gest Format. Run formatting, linting, typechecking, compile/static checks, and mechanical diff hygiene; fix mechanical issues. Use gte for tests and gdo for documentation.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GFM: Gest Format
@@ -21,7 +22,10 @@ runtime tests or documentation checks; route those to `gte` and `gdo`.
 
 Use the target repository's project-specific command contract. Prefer `just`
 targets when `AGENTS.md` maps them. For the reusable Just command-contract
-model, see `references/just_command_contract.md`. Common concepts include:
+model, read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
+contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
+is not installed, use the project's `AGENTS.md` and `just --list`; the source
+is https://github.com/rahuldave/jnterfaces. Common concepts include:
 
 ```bash
 just fmt [path]
@@ -38,12 +42,13 @@ route to `gsu` to establish one. Do not substitute smoke checks for `gte`.
 If the project uses `cx` in its Justfile, run `cx lint` or the mapped
 `just cx-lint` target as a static declaration check. `cx lint` validates
 incremental build/pipeline lines; it is not a test runner and should not be
-used as a substitute for `gte`.
+used as a substitute for `gte`. For `cx` rules, read the `cx` skill of
+jnterfaces, `.agents/skills/cx/SKILL.md`, when it is installed. If the cx
+skill is not installed, `cx lint` and `cx --help` are the reference.
 
-When a repository is GitButler-managed, use `but status` or `but diff` to
-identify branch-owned changes before running mechanical checks. Read-only git
-diff commands are acceptable, but do not use raw git write commands in
-GitButler mode.
+Use `git status` and `git diff` to find the changes of the branch before you
+run the mechanical checks. In a stack of branches, compare each branch with the
+branch below it, for example `git diff <parent-branch>...HEAD`.
 
 ## Tag And Dependency Checks
 

@@ -1,29 +1,44 @@
 # Live AGENT_RESULT Recursive Lab
 
 This lab is the canonical live check for recursive `AGENT_RESULT v1`
-orchestration. It uses two successive subagents. The shell script validates the
-transcript, but it does not simulate the agents.
+orchestration. In recursive orchestration, a subagent returns a proposed task,
+and the parent agent turns the proposal into a task for a second subagent. The
+lab uses two successive subagents. The shell script validates the transcript,
+but it does not simulate the agents.
 
-Use it when changing the `AGENT_TASK v1` / `AGENT_RESULT v1` contract,
-subagent delegation guidance, or recursive orchestration docs.
+Run the lab when you change the `AGENT_TASK v1` / `AGENT_RESULT v1` contract,
+the guidance for subagent delegation, or the docs for recursive orchestration.
 
-## Transcript Directory
+## Execution location
 
-Create a fresh transcript directory:
+Run this maintainer lab from the root of a source checkout of
+`agent_gest_git_skills`. All `scripts/` commands below are relative to that
+checkout. They include the transcript runner, which only the source has. An
+installed skill includes this reference for context, but the target project
+does not receive the lab scripts at its root.
+
+To run the lab from an installed workflow, use a disposable source checkout at
+the revision that `.agents/gest-git-install.json` records. The checkout needs
+the prerequisites of the lab and an authorization to delegate to subagents.
+Remove the checkout that you made afterward.
+
+## Transcript directory
+
+Make a new transcript directory:
 
 ```bash
 lab_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-result-recursive-live.XXXXXX")"
 ```
 
-Write the exact user message to:
+Write the exact user message to this file:
 
 ```text
 $lab_dir/user_message.txt
 ```
 
-## 1. Parent Task
+## 1. Parent task
 
-Write this parent task packet to:
+Write this parent task packet to this file:
 
 ```text
 $lab_dir/01-parent-task.agent-task.txt
@@ -66,133 +81,138 @@ safety:
 <<<END_AGENT_TASK>>>
 ```
 
-Validate it:
+Validate the packet:
 
 ```bash
-scripts/validate_agent_task.sh --expect-count 1 "$lab_dir/01-parent-task.agent-task.txt"
+scripts/jagt_lint_agent_task.sh --expect-count 1 "$lab_dir/01-parent-task.agent-task.txt"
 ```
 
-## 2. First Subagent: Planner
+## 2. First subagent: planner
 
-Delegate the parent task to a real subagent. The planner subagent should return
-exactly one `AGENT_RESULT v1` envelope and should not compute the word count.
-Save the result to:
+Delegate the parent task to a real subagent. The planner subagent returns
+exactly one `AGENT_RESULT v1` envelope, and it does not compute the word count.
+Save the result to this file:
 
 ```text
 $lab_dir/02-planner-result.agent-result.txt
 ```
 
-The result must have:
+The result must have these parts:
 
 - `target: count-chat-message-words`
 - `status: partial`
 - `outputs.proposed_tasks`
-- `tool_hints` containing `command: wc -w`
+- `tool_hints` that contain `command: wc -w`
 - `orchestration.mode: parent-orchestrated`
 - an artifact marker `subagent_role: planner`
 
-Validate it:
+Validate the result:
 
 ```bash
-scripts/validate_agent_result.sh \
+scripts/jagt_lint_agent_result.sh \
   --expect-count 1 \
   --expect-target count-chat-message-words \
   --expect-status partial \
   "$lab_dir/02-planner-result.agent-result.txt"
 ```
 
-## 3. Parent Renders Child Task
+## 3. Parent renders child task
 
-After validating the planner result and checking the proposal against normal
-user, system, developer, approval, tool, and Git/GitButler safety rules, render
-a child task packet to:
+First, validate the planner result. Second, check the proposal against the
+normal safety rules of the user, the system, the developer, approvals, tools
+and Git. Then render a child task packet to this file:
 
 ```text
 $lab_dir/03-child-task.agent-task.txt
 ```
 
-The child task target is `count-chat-message-words-with-wc`, and its prompt
-must tell the worker to run `wc -w` on the exact message in
-`user_message.txt`.
+The target of the child task is `count-chat-message-words-with-wc`. Its prompt
+must tell the worker to run `wc -w` on the exact message in `user_message.txt`.
 
-Validate it:
+Validate the packet:
 
 ```bash
-scripts/validate_agent_task.sh --expect-count 1 "$lab_dir/03-child-task.agent-task.txt"
+scripts/jagt_lint_agent_task.sh --expect-count 1 "$lab_dir/03-child-task.agent-task.txt"
 ```
 
-## 4. Second Subagent: Worker
+## 4. Second subagent: worker
 
-Delegate the child task to a second real subagent. The worker may run the
-deterministic command allowed by the child task. Save the worker result to:
+Delegate the child task to a second real subagent. The worker subagent may run
+the deterministic command that the child task allows. Save the worker result to
+this file:
 
 ```text
 $lab_dir/04-worker-result.agent-result.txt
 ```
 
-The result must have:
+The result must have these parts:
 
 - `target: count-chat-message-words-with-wc`
 - `status: success`
 - `outputs.word_count`
 - an artifact marker `subagent_role: worker`
-- verification showing the deterministic count was checked
+- a verification that shows that the worker checked the deterministic count
 
-Validate it:
+Validate the result:
 
 ```bash
-scripts/validate_agent_result.sh \
+scripts/jagt_lint_agent_result.sh \
   --expect-count 1 \
   --expect-target count-chat-message-words-with-wc \
   --expect-status success \
   "$lab_dir/04-worker-result.agent-result.txt"
 ```
 
-## 5. Parent Final Result
+## 5. Parent final result
 
-After validating the worker result, the parent records the final result to:
+When the worker result is valid, the parent records the final result to this
+file:
 
 ```text
 $lab_dir/05-parent-final.agent-result.txt
 ```
 
-The final result target is the original target, `count-chat-message-words`. It
-should include `outputs.word_count` and a `recursion_trace` naming both
-subagent hops.
+The target of the final result is the original target,
+`count-chat-message-words`. The result includes `outputs.word_count` and a
+`recursion_trace` that names both subagent hops.
 
-## 6. Unsafe Proposal Guard
+## 6. Unsafe proposal guard
 
-Record an unsafe proposed command result to:
+Record a result that proposes an unsafe command to this file:
 
 ```text
 $lab_dir/06-unsafe-proposal.agent-result.txt
 ```
 
-Do not execute it and do not spawn a worker for it. Record the parent decision
-to:
+Do not run the unsafe proposal, and do not start a worker for it. Record the
+decision of the parent to this file:
 
 ```text
 $lab_dir/07-unsafe-decision.txt
 ```
 
-The decision file must contain:
+The decision file must contain these lines:
 
 ```text
 decision: refused
 reason: unsafe_or_unapproved_command
 ```
 
-There must not be an `08-unsafe-worker-result.agent-result.txt` file.
+Do not make a file `08-unsafe-worker-result.agent-result.txt`. The validator
+fails when that file exists.
 
-## 7. Run The Lab Validator
+## 7. Run the lab validator
 
-Run:
+Run the validator:
 
 ```bash
 just agent-result-recursive-live-lab "$lab_dir"
 ```
 
-The validator checks both `AGENT_TASK v1` packets, all three successful-path
-`AGENT_RESULT v1` envelopes, the word count against `wc -w`, the recursion
-trace, and the unsafe-proposal refusal record.
+The validator checks these items:
 
+- both `AGENT_TASK v1` packets
+- the three `AGENT_RESULT v1` envelopes of the successful path
+- the word count, against `wc -w`
+- the recursion trace
+- the record of the refusal of the unsafe proposal

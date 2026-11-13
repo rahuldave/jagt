@@ -1,6 +1,7 @@
 ---
 name: gis
 description: Gest Issue. Create or update durable Gest outline tasks with user story, context, acceptance criteria, tags, metadata, and child-of links.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GIS: Gest Issue
@@ -46,15 +47,15 @@ For tasks that will write files, include VCS metadata when the branch/execution
 shape is known:
 
 ```bash
---metadata vcs.tool=git-butler \
+--metadata vcs.tool=git \
 --metadata vcs.branch_mode=stacked-development \
---metadata vcs.execution=gitbutler-workspace \
+--metadata vcs.execution=main-worktree \
 --metadata vcs.parallel_allowed=false
 ```
 
 Use `vcs.execution=git-worktrees` and a distinct `vcs.workspace_path` per task
-when parallel agents will write concurrently. Do not model GitButler parallel
-lanes as agent parallelism.
+when parallel agents will write concurrently. A stack of branches in one
+checkout is sequential work, not agent parallelism.
 
 ## Tag Classification
 

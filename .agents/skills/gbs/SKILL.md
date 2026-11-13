@@ -1,6 +1,7 @@
 ---
 name: gbs
 description: Gest Brainstorm. Explore rough ideas or ambiguous requests, inspect existing code/docs/Gest context, ask clarifying questions when needed, and decide whether to create a spec, outline issue, plan, or session task.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GBS: Gest Brainstorm
@@ -14,8 +15,8 @@ Use when the user has a rough idea, fuzzy feature, or exploratory direction.
    with `gest task show`, `gest task note list`, or `gest iteration show`.
 2. Identify existing patterns, constraints, risks, and open questions.
 3. For workflow/VCS ideas, separate branch model from execution model. Call out
-   whether GitButler work would be sequential stack curation or physical
-   worktree parallelism.
+   whether the work is a sequence of branches, such as a stack of PRs, or
+   parallel work in physical git worktrees.
 4. Ask clarifying questions one at a time when needed.
 5. Propose 2-3 approaches with trade-offs.
 6. Recommend one of:

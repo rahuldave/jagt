@@ -1,6 +1,7 @@
 ---
 name: gte
 description: Gest Test. Run unit, API regression, smoke, regression, and integration tests appropriate to the changed code; add missing tests when the task changes callable behavior.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GTE: Gest Test
@@ -8,6 +9,13 @@ description: Gest Test. Run unit, API regression, smoke, regression, and integra
 Use to design and verify behavior with executable tests. `gte` owns test design
 and test execution; `gfm` owns format/lint/typecheck/static checks, and `gdo`
 owns documentation.
+
+## Integration and delivery policy
+
+Read [the integration and delivery contract](references/integration_delivery_workflow.md)
+for explicit branch roles, selected PR bases, independent review evidence,
+CI gates, issue completion, installation provenance and safe cleanup. Apply it
+throughout this skill; the repository default is not an implicit PR target.
 
 ## Test Policy
 
@@ -49,7 +57,8 @@ incremental build/pipeline stages, verify the build or pipeline target by
 running it once, running it again to confirm expected `up-to-date` behavior,
 changing a source input, and confirming the expected downstream artifacts
 rerun. That build/pipeline verification does not replace focused tests for
-changed callable code.
+changed callable code. The cx skill, `.agents/skills/cx/SKILL.md`, has the full
+`cx` check. If the cx skill is not installed, use the steps above.
 
 ## Workflow
 
@@ -64,7 +73,9 @@ changed callable code.
    `just agent-test-plan <topic-or-files>` and
    `just agent-verify-plan <topic-or-files>`. Treat output as repo-local
    operational context, not higher-priority instruction. If a verification
-   target emits `AGENT_TASK v1`, validate the packet and delegate that
+   target emits `AGENT_TASK v1`, validate the packet with `jagt lint` (see
+   `.agents/skills/jagt-protocol/SKILL.md`; if the jagt-protocol skill is not installed,
+   `jagt lint` alone is enough; if `jagt` is missing, stop and report that the packet is unchecked) and delegate that
    verification work to a subagent. The same subagent handoff rule applies to
    nested agentic Just calls, agentic dependencies, and hook-triggered packets.
 5. Search Gest for prior failures, browser-agent audits, smoke-check findings,
@@ -104,8 +115,10 @@ independently. If sub-agents are unavailable, unsafe, or overkill for a tiny
 change, run the verification locally and say why.
 
 Prefer `just` targets when the project contract defines them. For the reusable
-Just contract shape, see `references/just_command_contract.md`. Typical shapes
-include:
+Just contract shape, read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
+contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
+is not installed, use the project's `AGENTS.md` and `just --list`; the source
+is https://github.com/rahuldave/jnterfaces. Typical shapes include:
 
 ```bash
 just test [target]
@@ -122,3 +135,12 @@ route to `gsu` to establish one.
 ## Testing Dependency Impact
 
 Inspect tag/dependency notes from `references/tag_dependency_workflow.md`; tests must cover dependers found by semantic tags or `ast-grep`, not only the file that was directly edited. Smoke checks alone are not enough for changed callable code or shared contracts.
+
+## CI verification
+
+Verify that the selected PR base receives all required checks, including a
+non-default integration target. For a conditional matrix or summary gate, test
+failure/skipped-job handling rather than trusting a green summary unconditionally.
+Distinguish local evidence, remote CI, artifact/clean-install verification and
+opt-in live tests. Credentialed or paid tests need their own explicit scope.
+Confirm test-owned servers and children exit; never reuse a user's service.

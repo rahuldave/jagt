@@ -1,20 +1,22 @@
-# Tag Classification And Dependency Impact Workflow
+# Tag classification and dependency impact workflow
 
-This workflow gives agents two extra kinds of memory before and during a task:
+The workflow gives agents two more kinds of memory before and during a task:
 
-- **Tag classification**: every new Gest task should be classified against the
-  project's existing tag vocabulary, with new dynamic tags added only when they
-  describe a genuinely missing concept.
-- **Dependency impact**: every code-facing change should inspect semantic
-  dependers, preferably with `ast-grep`, so coupled surfaces and tests are
-  checked or updated together.
+- **Tag classification**: classify every new Gest task against the existing tag
+  vocabulary of the project. Add a new dynamic tag only when it describes a
+  concept that no existing tag covers.
+- **Dependency impact**: for every change to code, inspect the semantic
+  dependers, preferably with `ast-grep`. A depender is code that uses the
+  changed contract. Then check or update the coupled surfaces and their tests
+  together.
 
-The goal is to catch cases such as changing histogram colors while forgetting
-pill colors that encode the same count/probability concept.
+The goal is to catch a case such as a change to the colors of a histogram that
+forgets the colors of the pills. Both sets of colors encode the same concept
+of a count or a probability.
 
-## Tag Vocabulary Pass
+## Tag vocabulary pass
 
-Before creating or splitting a task, collect current project tags:
+Before you create or split a task, collect the current tags of the project:
 
 ```bash
 gest task list --all --json
@@ -22,11 +24,12 @@ gest artifact list --all --json
 gest iteration list --all --json
 ```
 
-Use the JSON output to build a unique tag vocabulary with counts and examples.
-Then run a model classification pass over the task title, description, related
-files, user language, and nearby Gest memory.
+From the JSON output, build a vocabulary of unique tags, with counts and
+examples. Then run a classification pass with a model. It reads the title and
+description of the task, the related files, the words of the user and the
+nearby Gest memory.
 
-Classifier output should include:
+The output of the classifier should include these parts:
 
 ```text
 Tag classification:
@@ -43,31 +46,31 @@ Coupled concepts to search:
 - <semantic concept or UI behavior>
 ```
 
-Apply selected tags at creation time:
+Apply the selected tags when you create the task:
 
 ```bash
 gest task create "<title>"   --tag <selected-existing-tag>   --tag <new-dynamic-tag>   --metadata classification.tags.reviewed=true   --metadata classification.tags.new="<comma-separated-new-tags>"   --quiet
 ```
 
-For existing tasks, add missing tags with:
+To add missing tags to a task that already exists, run:
 
 ```bash
 gest task tag <task-id> <tag>
 ```
 
-Add a note when the classification is non-obvious:
+If the reason for a classification is not obvious, add a note:
 
 ```bash
 gest task note add <task-id> --agent codex --body "Tag classification: ..."
 ```
 
-Do not treat tags as hierarchy. Use `child-of` / `parent-of` links for
+Do not use tags as a hierarchy. Use `child-of` and `parent-of` links for
 structure, and tags for semantic retrieval.
 
-## Tag-Driven Coupling Search
+## Tag-driven coupling search
 
-After selecting tags, search Gest memory for each high-signal tag or semantic
-concept:
+After you select the tags, search Gest memory for each tag or semantic concept
+that gives a strong signal:
 
 ```bash
 gest search "<selected-tag>" --all --json --limit 20
@@ -75,9 +78,9 @@ gest search "<semantic concept>" --all --json --limit 20
 gest search "Follow-up <semantic concept>" --all --json --limit 20
 ```
 
-Inspect related tasks and notes. If the task touches one surface of a coupled
-concept, either expand the current task or create/link a child task for the
-other surface.
+Read the related tasks and notes. Sometimes the task touches one surface of a
+coupled concept. Then expand the current task, or create a child task for the
+other surface and link it.
 
 Example:
 
@@ -97,21 +100,21 @@ Action:
 - otherwise create a child task for pill/legend parity before implementation
 ```
 
-## ast-grep Dependency Impact Pass
+## ast-grep dependency impact pass
 
-Use `ast-grep` when code changes alter a function, constant, component,
-selector, route, schema field, style token, exported API, or other semantic
-contract.
+Use `ast-grep` when a change to code alters a semantic contract. Examples of a
+contract are a function, a constant, a component, a selector, a route, a field
+of a schema, a style token and an exported API.
 
-Start with the changed symbols. In a GitButler-managed workspace, inspect:
+Start with the changed symbols. Inspect the changes with these commands:
 
 ```bash
-but status
-but diff
-but branch list --all
+git status --short --branch
+git diff
+git branch --list
 ```
 
-In a normal git checkout or a physical git worktree, inspect:
+In a normal git checkout or a physical git worktree, use these commands:
 
 ```bash
 git status --short --branch
@@ -119,7 +122,7 @@ git diff
 git diff --name-only
 ```
 
-Then search structured dependers. Examples:
+Then search for the structured dependers, for example with these patterns:
 
 ```bash
 ast-grep run --lang javascript --pattern 'countOrProbabilityColorScale($$$)' src
@@ -128,16 +131,19 @@ ast-grep run --lang typescript --pattern '$COMPONENT($$$)' app
 ast-grep run --lang python --pattern '$FUNC($$$)' .
 ```
 
-Use `--json=compact` when the result should be recorded or post-processed:
+If you must record the result or process it later, use `--json=compact`:
 
 ```bash
 ast-grep run --lang javascript   --pattern 'countOrProbabilityColorScale($$$)'   --json=compact src
 ```
 
-Fallback to `rg` only when the language is unsupported, the target is a
-stylesheet/template format, or a literal string search is the right query.
+Use `rg` in place of `ast-grep` only in these cases:
 
-Dependency output should drive verification:
+- `ast-grep` does not support the language.
+- The target is in a stylesheet or template format.
+- A search for a literal string is the right query.
+
+Choose the verification from the output of the dependency pass:
 
 ```text
 Dependency impact:
@@ -159,23 +165,23 @@ Verification:
 - regression test for shared color mapping
 ```
 
-If a depender is out of scope for the current task, create or link a follow-up
-task before completion and tag it with the same semantic tag.
+If a depender is outside the scope of the current task, create or link a
+follow-up task before completion. Give it the same semantic tag.
 
-To exercise the workflow as an agent-style dry run, use:
+To try the workflow as a dry run in the style of an agent, run:
 
 ```bash
 just tag-dependency-dry-run
 ```
 
-The dry run builds a small fixture, classifies a histogram color change against
-the existing tags `count-or-probability-coloring`, `histogram-colors`, and
-`probability-pill-colors`, then uses `ast-grep` to prove both histogram and pill
-dependers need to be checked.
+The dry run builds a small fixture. It classifies a change to the colors of a
+histogram against the existing tags `count-or-probability-coloring`,
+`histogram-colors` and `probability-pill-colors`. Then it uses `ast-grep` to
+show that both the histogram dependers and the pill dependers need a check.
 
-## Completion Notes
+## Completion notes
 
-Completion notes for code-facing tasks should mention both passes:
+The completion note of a task that changes code should mention both passes:
 
 ```text
 Done: ...
@@ -185,5 +191,5 @@ Dependency impact: ast-grep searched <patterns>; checked <dependers>; follow-ups
 Follow-up: ...
 ```
 
-For docs-only or planning-only tasks, record why the dependency pass was not
-needed.
+For a task that changes only docs or plans, record why it did not need the
+dependency pass.

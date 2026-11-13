@@ -34,8 +34,8 @@ if [ ! -f "$contract" ]; then
 fi
 
 awk '
-  /^## Agentic Just Targets$/ { copy = 1 }
-  /^## Agent Context Targets$/ { copy = 0 }
+  /^## (Agentic Just Targets|Agentic recipes)$/ { copy = 1 }
+  /^## (Agent Context Targets|Output of other recipes)$/ { copy = 0 }
   copy { print }
 ' "$contract" >"$excerpt"
 

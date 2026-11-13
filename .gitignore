@@ -1,3 +1,9 @@
+# begin lines of jnterfaces, the installer, from jnterfaces at 2cfb176.
+# Last written to .gitignore by `install_stack.py --target . tasker`. The record is parts.".gitignore" in .agents/stack.json.
+.agents/stack-log.jsonl
+.agents/stack-pending.json
+# end lines of jnterfaces. They stay while the project keeps .agents/stack.json.
+
 /target/
 
 # jagt runtime/config scratch space
