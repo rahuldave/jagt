@@ -387,7 +387,9 @@ struct LoadedConfig {
 fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     let mut effective = EffectiveRenderConfig::default();
     let mut source_order = Vec::new();
-    let loaded_config = load_project_config(args.config_path.as_deref(), args.no_config)?;
+    let cwd = std::env::current_dir()?;
+    let root = packet::project_root(&cwd);
+    let loaded_config = load_project_config(args.config_path.as_deref(), args.no_config, &root)?;
     let mut env_config = EnvConfig::default();
 
     if let Some(loaded) = &loaded_config {
@@ -412,12 +414,22 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     if args.prompt_text.is_none()
         && let Some(path) = prompt_path
     {
-        // A `--prompt` is the caller's own choice. A prompt path from a config
-        // comes with the repository, so it must pass the containment check.
-        if args.prompt.is_none() {
-            packet::check_config_prompt_path(&std::env::current_dir()?, &path)?;
-        }
-        let prompt_file = read_prompt_file(Path::new(&path), &env_config)?;
+        // A `--prompt` is the caller's own choice, read from the current
+        // folder. A prompt path from a config comes with the repository, so it
+        // is read from the project root and must pass the containment check.
+        let file = if args.prompt.is_some() {
+            PathBuf::from(&path)
+        } else {
+            // A config given with --config belongs to the project that holds it, so its
+            // prompt path is read from that project's root.
+            let config_root = match args.config_path.as_deref().and_then(Path::parent) {
+                Some(folder) => packet::project_root(&cwd.join(folder)),
+                None => root.clone(),
+            };
+            packet::check_config_prompt_path(&config_root, &path)?;
+            config_root.join(&path)
+        };
+        let prompt_file = read_prompt_file(&file, &env_config)?;
         if prompt_file.frontmatter_seen {
             source_order.push(format!("prompt frontmatter: {path}"));
             merge_source(&mut effective, prompt_file.frontmatter);
@@ -675,9 +687,11 @@ fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSourc
     }
 }
 
-/// Read the project config from the path given, or else from `.jagt/config.toml` when it exists.
+/// Read the project config from the path given, or else from `.jagt/config.toml` of the project
+/// root when it exists.
 ///
-/// A path given with `--config` must exist.
+/// A path given with `--config` must exist. The project root is the top of the git worktree, or
+/// the current folder outside one, so a render from a subfolder reads the same config.
 ///
 /// # Returns
 ///
@@ -685,6 +699,7 @@ fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSourc
 fn load_project_config(
     config_path: Option<&Path>, // the path from `--config`
     no_config: bool,            // true to read no config
+    root: &Path,                // the project root
 ) -> Result<Option<LoadedConfig>> {
     if no_config {
         return Ok(None);
@@ -692,7 +707,7 @@ fn load_project_config(
 
     let (path, explicit) = match config_path {
         Some(path) => (path.to_path_buf(), true),
-        None => (PathBuf::from(".jagt/config.toml"), false),
+        None => (root.join(".jagt/config.toml"), false),
     };
 
     if !explicit && !path.exists() {
@@ -707,10 +722,13 @@ fn load_project_config(
         ))
     })?;
 
-    Ok(Some(LoadedConfig {
-        path_label: path.to_string_lossy().into_owned(),
-        config,
-    }))
+    // The default config is named by its path in the project, as it always was.
+    let path_label = if explicit {
+        path.to_string_lossy().into_owned()
+    } else {
+        ".jagt/config.toml".to_string()
+    };
+    Ok(Some(LoadedConfig { path_label, config }))
 }
 
 /// A prompt file, split into its frontmatter and its body.
@@ -907,6 +925,13 @@ fn interpolate_env(value: &str, env_config: &EnvConfig) -> Result<String> {
     }
 
     output.push_str(rest);
+    // Two values can make a secret together, such as a user and a password
+    // in one URL, so the finished string is checked too.
+    if output != value && looks_secret_value(&output) {
+        return Err(JagtError::Render(
+            "environment interpolation gives a secret-like value".to_string(),
+        ));
+    }
     Ok(output)
 }
 
@@ -1011,8 +1036,15 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
     pattern_index == pattern_bytes.len()
 }
 
-/// Say whether a variable name looks like a secret's, such as one that contains `TOKEN` or
-/// `PASSWORD`.
+/// Say whether a variable name looks like a secret's.
+///
+/// The name is split into parts at each character that is not a letter or a digit. A part such
+/// as `TOKEN`, `PASS`, `DSN` or `WEBHOOK` counts anywhere, and so do known compounds such as
+/// `PGPASS` and `SSHKEY`, and the words `SECRET`, `PASSWORD` and `CREDENTIAL` inside a part. The
+/// parts `KEY`, `KEYS` and `TOKENS` count anywhere, except after a word such as `PUBLIC`,
+/// `CACHE` or `MAX`, or in a name that ends in a word for a place, such as `SSH_KEYS_DIR`. The
+/// parts `AUTH`, `PW` and `PWD` count only at the end, so `SSH_AUTH_SOCK` does not. `AUTHOR`,
+/// `KEYBOARD`, `COMPASS` and `TOKENIZERS_PARALLELISM` do not count.
 ///
 /// # Arguments
 ///
@@ -1023,17 +1055,85 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 /// True when the name looks like a secret's.
 fn looks_secret_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    upper.contains("TOKEN")
-        || upper.contains("SECRET")
-        || upper.contains("PASSWORD")
-        || upper.contains("PRIVATE_KEY")
-        || upper.contains("API_KEY")
-        || upper.contains("ACCESS_KEY")
-        || upper.contains("CREDENTIAL")
-        || upper.contains("AUTH")
+    let parts: Vec<&str> = upper
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some(last) = parts.last() else {
+        return false;
+    };
+    let any_part = parts.iter().any(|part| {
+        matches!(
+            *part,
+            "TOKEN"
+                | "SECRET"
+                | "SECRETS"
+                | "PASS"
+                | "PASSWORD"
+                | "PASSWD"
+                | "PASSPHRASE"
+                | "CREDENTIAL"
+                | "CREDENTIALS"
+                | "CREDS"
+                | "COOKIE"
+                | "COOKIES"
+                | "DSN"
+                | "APIKEY"
+                | "WEBHOOK"
+                | "PGPASS"
+                | "DBPASS"
+                | "SSHKEY"
+                | "ACCESSKEY"
+                | "SECRETKEY"
+                | "PRIVATEKEY"
+                | "MASTERKEY"
+                | "SIGNINGKEY"
+                | "ENCRYPTIONKEY"
+                | "ACCOUNTKEY"
+        ) || ["SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "CREDENTIAL"]
+            .iter()
+            .any(|word| part.contains(word))
+    });
+    // KEY, KEYS and TOKENS count anywhere, as in API_KEY_2 or API_KEYS, unless the word before
+    // makes them a plain name, as in PUBLIC_KEY, CACHE_KEY or MAX_TOKENS, or the name ends in a
+    // word for a place, as in SSH_KEYS_DIR.
+    let place = matches!(
+        *last,
+        "DIR" | "DIRS" | "PATH" | "PATHS" | "FOLDER" | "FILE" | "FILES" | "NAME" | "COUNT"
+    );
+    let key_part = parts.iter().enumerate().any(|(at, part)| {
+        let before = at.checked_sub(1).map(|at| parts[at]);
+        match *part {
+            "KEY" | "KEYS" => !matches!(
+                before,
+                Some("PUBLIC" | "CACHE" | "SORT" | "PARTITION" | "FOREIGN" | "HOT" | "SHORTCUT")
+            ),
+            "TOKENS" => !matches!(before, Some("MAX" | "MIN" | "NUM" | "TOTAL" | "COUNT")),
+            _ => false,
+        }
+    }) && !place;
+    // AUTH, PW and PWD name a secret only at the end, as in GITHUB_AUTH, and not in
+    // SSH_AUTH_SOCK, or in PWD alone, the current folder.
+    let last_part = (matches!(*last, "AUTH" | "SIG" | "SIGNATURE" | "PW" | "PWD")
+        && !(parts.len() == 1 && *last == "PWD"))
+        || (last.len() > 5 && last.ends_with("TOKEN"))
+        || (last.len() > 4 && last.ends_with("AUTH") && parts.len() == 1);
+    any_part || key_part || last_part || upper.contains("CONNECTION_STRING")
 }
 
-/// Say whether a value looks like a secret, such as a GitHub token or a private key.
+/// Say whether a value looks like a secret.
+///
+/// This is a guard against common mistakes, not a proof that a value holds no secret. It looks
+/// for:
+///
+/// - a private key: `-----BEGIN`, `private key`, `private_key` or `privatekey`;
+/// - a URL with a password, such as `postgres://user:pw@host/db`;
+/// - an Azure account key or SAS signature (`AccountKey=`, `SharedAccessKey=`, `sig=`);
+/// - an `Authorization` value: `Basic` or `Bearer` and a long token;
+/// - a Slack or Discord webhook URL;
+/// - a word that starts like a known token, see [`looks_secret_word`];
+/// - a value of 40 base64 characters with upper case, lower case and digits, the form of an AWS
+///   secret access key.
 ///
 /// # Arguments
 ///
@@ -1044,11 +1144,237 @@ fn looks_secret_name(name: &str) -> bool {
 /// True when the value looks like a secret.
 fn looks_secret_value(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    lower.starts_with("ghp_")
-        || lower.starts_with("gho_")
-        || lower.starts_with("github_pat_")
-        || lower.starts_with("sk-")
-        || lower.contains("private key")
+    let marker = [
+        "-----begin",
+        "private key",
+        "private_key",
+        "privatekey",
+        "accountkey=",
+        "sharedaccesskey=",
+        "?sig=",
+        "&sig=",
+        "hooks.slack.com/services/",
+        "discord.com/api/webhooks/",
+        "discordapp.com/api/webhooks/",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    marker
+        || has_url_password(value)
+        || has_auth_scheme_token(value)
+        || has_query_secret(&lower)
+        || looks_aws_secret_key(value.trim())
+        || value
+            .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+            .any(looks_secret_word)
+}
+
+/// Say whether a word starts like a known token.
+///
+/// The tokens are GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), GitLab
+/// (`glpat-`), Slack (`xoxb-` and the like, `xapp-`), Stripe (`sk_live_`, `sk_test_`, `rk_live_`,
+/// `rk_test_`, `whsec_`), DigitalOcean (`dop_v1_`), age (`AGE-SECRET-KEY-`), Google OAuth
+/// (`ya29.`), SendGrid (`SG.`), OpenAI or Anthropic (`sk-`), npm (`npm_`), Hugging Face (`hf_`),
+/// a Google API key (`AIza`), an AWS access key id (`AKIA` or `ASIA`), and a JSON web token. A
+/// prefix that ordinary text uses counts only with a tail of the token's form.
+///
+/// # Arguments
+///
+/// * `word` - a run of letters, digits, `_`, `-` and `.`
+///
+/// # Returns
+///
+/// True when the word looks like a token.
+fn looks_secret_word(word: &str) -> bool {
+    let lower = word.to_ascii_lowercase();
+    // A GitHub token has a long tail of letters and digits, so a path part such as `ghs_build`
+    // does not count.
+    let github = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| {
+            lower.starts_with(prefix)
+                && word.len() >= prefix.len() + 30
+                && word[prefix.len()..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric())
+        });
+    let any_prefix = [
+        "github_pat_",
+        "glpat-",
+        "xoxa-",
+        "xoxb-",
+        "xoxp-",
+        "xoxr-",
+        "xoxs-",
+        "xapp-",
+        "sk_live_",
+        "sk_test_",
+        "rk_live_",
+        "rk_test_",
+        "whsec_",
+        "dop_v1_",
+        "age-secret-key-",
+        "ya29.",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix));
+    // A tail of only letters and digits, at least `min` long, as in npm and Hugging Face tokens.
+    let alnum_tail = |prefix: &str, min: usize| {
+        lower.starts_with(prefix)
+            && word.len() >= prefix.len() + min
+            && word[prefix.len()..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric())
+    };
+    // An OpenAI or Anthropic key has a long tail with digits and upper case.
+    let sk_key = lower.starts_with("sk-") && word.len() >= 23 && {
+        let tail = &word[3..];
+        tail.bytes().any(|byte| byte.is_ascii_digit())
+            && tail.bytes().any(|byte| byte.is_ascii_uppercase())
+    };
+    let sendgrid = word.starts_with("SG.") && word.len() >= 60 && word.split('.').count() == 3;
+    // An AWS access key id is AKIA or ASIA and 16 characters of base32.
+    let aws_key_id = (word.starts_with("AKIA") || word.starts_with("ASIA"))
+        && word.len() == 20
+        && word[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || (b'2'..=b'7').contains(&byte));
+    let google_key = word.starts_with("AIza")
+        && word.len() == 39
+        && word
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    // A JSON web token has three parts, and the first two are JSON, so start with `eyJ`.
+    let parts: Vec<&str> = word.split('.').collect();
+    let json_web_token = parts.len() == 3
+        && parts[0].starts_with("eyJ")
+        && parts[1].starts_with("eyJ")
+        && parts.iter().all(|part| part.len() >= 8);
+    github
+        || any_prefix
+        || alnum_tail("npm_", 30)
+        || alnum_tail("hf_", 30)
+        || sk_key
+        || sendgrid
+        || aws_key_id
+        || google_key
+        || json_web_token
+}
+
+/// Say whether a value holds `Basic` or `Bearer` and a token, as an `Authorization` header does.
+///
+/// # Arguments
+///
+/// * `value` - the value
+///
+/// # Returns
+///
+/// True when `basic ` or `bearer `, in any case, is followed by a token of 8 or more characters
+/// with mixed case, a digit or `=`.
+fn has_auth_scheme_token(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    ["basic ", "bearer "].iter().any(|scheme| {
+        lower.match_indices(scheme).any(|(at, _)| {
+            let token: String = value[at + scheme.len()..]
+                .chars()
+                .take_while(|c| {
+                    c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_' | '.')
+                })
+                .collect();
+            // A word of prose, such as "basic diagnostics", has one case and no digits.
+            let mixed = token.bytes().any(|byte| byte.is_ascii_uppercase())
+                && token.bytes().any(|byte| byte.is_ascii_lowercase());
+            let coded = token
+                .bytes()
+                .any(|byte| byte.is_ascii_digit() || byte == b'=');
+            token.len() >= 8 && (mixed || coded)
+        })
+    })
+}
+
+/// Say whether a URL query names a secret with a value, such as `?password=x` or `&token=x`.
+///
+/// # Arguments
+///
+/// * `lower` - the value, in lower case
+///
+/// # Returns
+///
+/// True when such a pair has a value that is not empty.
+fn has_query_secret(lower: &str) -> bool {
+    [
+        "password",
+        "passwd",
+        "pwd",
+        "pass",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_token",
+        "client_secret",
+    ]
+    .iter()
+    .any(|key| {
+        ["?", "&"].iter().any(|sep| {
+            let pair = format!("{sep}{key}=");
+            lower.match_indices(&pair).any(|(at, _)| {
+                lower[at + pair.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| !matches!(c, '&' | '#') && !c.is_whitespace())
+            })
+        })
+    })
+}
+
+/// Say whether a value has the form of an AWS secret access key: 40 base64 characters, with
+/// upper case, lower case and a digit. A git hash is lower case, so it does not count.
+///
+/// # Arguments
+///
+/// * `value` - the value, trimmed
+///
+/// # Returns
+///
+/// True when it has that form.
+fn looks_aws_secret_key(value: &str) -> bool {
+    // A path, such as `/Users/me/Project2025/src`, is not a key.
+    !value.starts_with(['/', '.', '~'])
+        && value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        && value.bytes().any(|byte| byte.is_ascii_uppercase())
+        && value.bytes().any(|byte| byte.is_ascii_lowercase())
+        && value.bytes().any(|byte| byte.is_ascii_digit())
+}
+
+/// Say whether a value holds a URL with a password, such as `https://user:pw@host/`.
+///
+/// The part after `://` ends at `/`, `?`, `#` or an ASCII space, so a Unicode space cannot hide
+/// the `@`.
+///
+/// # Arguments
+///
+/// * `value` - the text to search
+///
+/// # Returns
+///
+/// True when a `scheme://user:password@` part has a password that is not empty.
+fn has_url_password(value: &str) -> bool {
+    value.match_indices("://").any(|(index, _)| {
+        let rest = &value[index + 3..];
+        let authority_end = rest
+            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_ascii_whitespace())
+            .unwrap_or(rest.len());
+        let authority = &rest[..authority_end];
+        authority.rfind('@').is_some_and(|at| {
+            authority[..at]
+                .split_once(':')
+                .is_some_and(|(_, password)| !password.is_empty())
+        })
+    })
 }
 
 /// Add a line and a newline to the output.
@@ -1682,7 +2008,7 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
 
     if let Some(nonce) = mapping_get(map, "nonce") {
         let valid = nonce.as_str().is_some_and(packet::is_nonce);
-        if !valid || top_level_field_count(body, "nonce") > 1 {
+        if !valid {
             return Err(JagtError::InvalidAgentTask(format!(
                 "block {index} has an invalid nonce: it must be one field of 32 lowercase hex digits that start with a letter"
             )));
@@ -1736,9 +2062,6 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
         }
     }
 
-    validate_unique_draft_field(body, index, "target")?;
-    validate_unique_draft_field(body, index, "mode")?;
-
     let target = scalar_string(map, "target").ok_or_else(|| {
         JagtError::InvalidAgentTaskDraft(format!("block {index} missing valid target"))
     })?;
@@ -1762,29 +2085,6 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     validate_draft_delegation(map, index)?;
     validate_draft_safety(map, index)?;
     Ok(())
-}
-
-/// Check that a draft has a top-level field exactly once.
-///
-/// # Arguments
-///
-/// * `body` - the YAML of the draft
-/// * `index` - the draft's number, for messages
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// `Ok(())`, or an error when the field is missing or duplicated.
-fn validate_unique_draft_field(body: &str, index: usize, field: &str) -> Result<()> {
-    match top_level_field_count(body, field) {
-        0 => Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} missing {field}"
-        ))),
-        1 => Ok(()),
-        _ => Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} duplicated {field}"
-        ))),
-    }
 }
 
 /// Check that a draft's `generator` has `kind: llm` and `execution: subagent`.
@@ -2048,11 +2348,56 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// The top-level fields that a draft may have. Any other field, such as `approved: true`, is an
+/// error, so a draft cannot carry a claim in a field that no check reads.
+const DRAFT_FIELDS: &[&str] = &[
+    "target",
+    "mode",
+    "generator",
+    "proposal_reason",
+    "source_request",
+    "assumptions",
+    "alternatives",
+    "rejected_options",
+    "risks",
+    "source_context",
+    "provenance",
+    "argv",
+    "prompt",
+    "inputs",
+    "outputs",
+    "allowed_actions",
+    "verification",
+    "approval",
+    "promotion",
+    "delegation",
+    "safety",
+    "execute_inline",
+];
+
 /// Check that a draft does not claim approval, try to bypass a rule, or ask to run inline.
+///
+/// This is a first filter, not a judgment of meaning: a model can always word a bypass in a way
+/// that no list of phrases holds. The parent still reviews each draft before promotion, as the
+/// `policy_review_passed` check of the promotion says.
+///
+/// The structure is checked strictly:
+///
+/// - the draft may hold only the fields of [`DRAFT_FIELDS`];
+/// - `approval` may hold only `required`, `approver` and `reason`, and `approver` must be
+///   `parent`, `user` or `parent-or-user`;
+/// - `promotion` may hold only `method` and `required_checks`;
+/// - `execute_inline`, when present, must be `false`.
+///
+/// The text is then searched for phrases that claim approval, bypass a rule or ask to run in the
+/// current agent. Before the search, the text is put in lower case, fullwidth letters become
+/// ASCII, zero-width characters are dropped and each run of whitespace becomes one space. A word
+/// that mixes ASCII letters with other letters, such as a Cyrillic `а` in `bypаss`, is an error.
+/// A phrase does not count when a negation comes just before it, as in "never run it inline".
 ///
 /// # Arguments
 ///
-/// * `body` - the YAML text of the draft, searched in lower case
+/// * `body` - the YAML text of the draft
 /// * `map` - the draft as YAML
 /// * `index` - the draft's number, for messages
 ///
@@ -2060,53 +2405,356 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
 ///
 /// `Ok(())`, or the first problem found.
 fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize) -> Result<()> {
-    let lower = body.to_ascii_lowercase();
-    if lower.contains("already approved")
-        || lower.contains("preapproved")
-        || lower.contains("pre-approved")
-    {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} claims the draft is already approved"
-        )));
+    let error =
+        |message: &str| JagtError::InvalidAgentTaskDraft(format!("block {index} {message}"));
+    let claims_approval = || error("claims the draft is already approved");
+
+    for key in map.keys() {
+        let key = key.as_str().unwrap_or("");
+        if !DRAFT_FIELDS.contains(&key) {
+            return Err(error(&format!("has the unknown field {key}")));
+        }
+    }
+    if let Some(approval) = mapping_get(map, "approval").and_then(Value::as_mapping) {
+        for key in approval.keys() {
+            if !matches!(key.as_str(), Some("required" | "approver" | "reason")) {
+                return Err(claims_approval());
+            }
+        }
+        if let Some(approver) = mapping_get(approval, "approver")
+            && !matches!(
+                approver.as_str(),
+                Some("parent" | "user" | "parent-or-user")
+            )
+        {
+            return Err(error(
+                "approval.approver must be parent, user or parent-or-user",
+            ));
+        }
+    }
+    if let Some(promotion) = mapping_get(map, "promotion").and_then(Value::as_mapping) {
+        for key in promotion.keys() {
+            if !matches!(key.as_str(), Some("method" | "required_checks")) {
+                return Err(error("promotion may hold only method and required_checks"));
+            }
+        }
+    }
+    if mapping_get(map, "execute_inline").is_some_and(|value| value.as_bool() != Some(false)) {
+        return Err(error("attempts direct draft execution"));
     }
 
-    if lower.contains("bypass approval")
-        || lower.contains("bypass approvals")
-        || lower.contains("bypass sandbox")
-        || lower.contains("bypass sandboxing")
-        || lower.contains("bypass user")
-        || lower.contains("bypass system")
-        || lower.contains("bypass developer")
-        || lower.contains("bypass vcs")
-        || lower.contains("bypass repo")
-        || lower.contains("bypass repository")
-        || lower.contains("bypass policy")
-    {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} attempts to bypass approvals or policy"
-        )));
+    let text = normalize_draft_text(body);
+    // A Cyrillic letter that the map does not cover, inside a word of ASCII letters, may hide a
+    // phrase, such as `revieԝ`.
+    if text.split(|c: char| !c.is_alphanumeric()).any(|word| {
+        word.chars().any(|c| c.is_ascii_alphabetic())
+            && word.chars().any(|c| matches!(c, '\u{400}'..='\u{52f}'))
+    }) {
+        return Err(error("mixes ASCII letters with Cyrillic letters in a word"));
     }
-
-    if mapping_get(map, "execute_inline").and_then(Value::as_bool) == Some(true)
-        || lower.contains("execution_after_promotion: parent")
-        || lower.contains("execution_after_promotion: current-agent")
-        || lower.contains("execution_after_promotion: same-subagent")
-        || lower.contains("execution_after_promotion: self")
-        || lower.contains("execution_after_promotion: inline")
-        || lower.contains("execute inline")
-        || lower.contains("run inline")
-        || lower.contains("perform inline")
+    if DRAFT_APPROVAL_CLAIMS
+        .iter()
+        .any(|phrase| affirms(&text, phrase))
     {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} attempts direct draft execution"
-        )));
+        return Err(claims_approval());
     }
-
+    if DRAFT_BYPASS_PHRASES
+        .iter()
+        .any(|phrase| affirms(&text, phrase))
+        || DRAFT_DENIED_WAITS
+            .iter()
+            .any(|phrase| text.contains(phrase))
+    {
+        return Err(error("attempts to bypass approvals or policy"));
+    }
+    if DRAFT_INLINE_PHRASES
+        .iter()
+        .any(|phrase| affirms(&text, phrase))
+    {
+        return Err(error("attempts direct draft execution"));
+    }
     Ok(())
 }
 
-/// Say whether an allowed action is too broad for a draft, such as "write anywhere" or "network
-/// access".
+/// Phrases that claim a draft is approved.
+const DRAFT_APPROVAL_CLAIMS: &[&str] = &[
+    "already approved",
+    "preapproved",
+    "pre-approved",
+    "has been approved",
+    "have been approved",
+    "user approved",
+    "user has approved",
+    "parent approved",
+    "parent has approved",
+    "was approved by",
+    "approval granted",
+    "approval was granted",
+    "approval has been granted",
+    "signed off on this",
+    "has signed off",
+    "user signed off",
+    "parent signed off",
+    "have signed off",
+];
+
+/// Phrases that skip an approval, the sandbox or a rule.
+const DRAFT_BYPASS_PHRASES: &[&str] = &[
+    "bypass approval",
+    "bypass approvals",
+    "bypass the approval",
+    "bypass review",
+    "bypass the review",
+    "bypass the sandbox",
+    "bypass sandbox",
+    "bypass the policy",
+    "bypass policy",
+    "bypass the rules",
+    "bypass rules",
+    "bypass checks",
+    "bypass the checks",
+    "bypass hooks",
+    "bypass the hooks",
+    "circumvent approval",
+    "circumvent the approval",
+    "circumvent review",
+    "circumvent the review",
+    "circumvent the sandbox",
+    "circumvent the policy",
+    "circumvent the rules",
+    "circumvent the checks",
+    "override user instructions",
+    "override the user instructions",
+    "override the system instructions",
+    "ignore the user and",
+    "ignore the user,",
+    "ignore the user.",
+    "ignore the system instructions",
+    "override the user's instructions",
+    "ignore the user's instructions",
+    "ignore the system prompt",
+    "get around the sandbox",
+    "get around approval",
+    "skip approval",
+    "skip the approval",
+    "skip approvals",
+    "skip review",
+    "skip the review",
+    "ignore approval",
+    "ignore the approval",
+    "ignore approvals",
+    "turn off approval",
+    "turn off approvals",
+    "turn off the sandbox",
+    "without approval",
+    "without waiting for approval",
+    "without asking",
+    "approval is not required",
+    "approval is not needed",
+    "no approval needed",
+    "no approval is needed",
+    "no need for approval",
+    "no one needs to approve",
+    "nobody needs to approve",
+    "disable the sandbox",
+    "disable sandbox",
+    "escape the sandbox",
+    "escape sandbox",
+    "outside the sandbox",
+    "override approval",
+    "override the policy",
+    "override policy",
+    "ignore user instructions",
+    "ignore system instructions",
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "--no-verify",
+    "force push",
+    "force-push",
+    "push --force",
+];
+
+/// Phrases with a negation that is itself the bypass, such as "don't wait for approval".
+const DRAFT_DENIED_WAITS: &[&str] = &[
+    "don't wait for approval",
+    "do not wait for approval",
+    "don't wait for review",
+    "do not wait for review",
+    "don't ask for approval",
+    "do not ask for approval",
+    "approval is not required",
+    "approval isn't required",
+];
+
+/// Phrases that ask to run the task in the current agent.
+const DRAFT_INLINE_PHRASES: &[&str] = &[
+    "execute inline",
+    "execute it inline",
+    "execute this inline",
+    "run it inline",
+    "run this inline",
+    "run the task inline",
+    "perform inline",
+    "execute it now",
+    "run it now",
+    "run it yourself",
+    "execute it yourself",
+    "perform the task yourself",
+    "do the task yourself",
+    "do it yourself",
+    "in the current agent",
+    "immediately in this session",
+    "now in this session",
+    "right here in this session",
+    "right here in the current session",
+    "in the current session",
+    "task in this session",
+    "it in this session",
+];
+
+/// Put draft text in a form for the phrase search: lower case, fullwidth letters and Cyrillic or
+/// Greek lookalikes as ASCII, no zero-width characters, and one space for each run of whitespace.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the draft
+///
+/// # Returns
+///
+/// The text in that form.
+fn normalize_draft_text(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut last_space = false;
+    for c in body.chars() {
+        let c = match c {
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            '\u{3000}' => ' ',
+            _ => ascii_lookalike(c).unwrap_or(c),
+        };
+        if matches!(
+            c,
+            '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}' | '\u{ad}'
+        ) {
+            continue;
+        }
+        if c.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+            continue;
+        }
+        last_space = false;
+        out.extend(c.to_lowercase());
+    }
+    out
+}
+
+/// Give the ASCII letter that a Cyrillic, Greek or dotless letter looks like, such as the
+/// Cyrillic `а` in `bypаss`.
+///
+/// # Arguments
+///
+/// * `c` - a character
+///
+/// # Returns
+///
+/// The ASCII letter, or `None` when `c` looks like no ASCII letter.
+fn ascii_lookalike(c: char) -> Option<char> {
+    Some(match c {
+        'а' | 'А' | 'α' | 'Α' => 'a',
+        'в' | 'В' | 'β' | 'Β' => 'b',
+        'с' | 'С' | 'ϲ' => 'c',
+        'ԁ' => 'd',
+        'е' | 'Е' | 'ε' | 'Ε' => 'e',
+        'һ' | 'Н' | 'Η' => 'h',
+        'і' | 'І' | 'ı' | 'ι' | 'Ι' => 'i',
+        'ј' | 'Ј' => 'j',
+        'к' | 'К' | 'κ' | 'Κ' => 'k',
+        'ӏ' => 'l',
+        'М' | 'Μ' => 'm',
+        'п' | 'η' | 'Ν' => 'n',
+        'о' | 'О' | 'ο' | 'Ο' => 'o',
+        'р' | 'Р' | 'ρ' | 'Ρ' => 'p',
+        'ѕ' | 'Ѕ' => 's',
+        'Т' | 'τ' | 'Τ' => 't',
+        'υ' | 'ս' => 'u',
+        'ν' => 'v',
+        'х' | 'Х' | 'χ' | 'Χ' => 'x',
+        'у' | 'У' | 'γ' | 'Υ' => 'y',
+        'Ζ' => 'z',
+        _ => return None,
+    })
+}
+
+/// Say whether `text` holds `phrase` with no negation just before it.
+///
+/// The negation is the word just before the phrase, or the word before that when the word just
+/// before is `to`, `ever`, `be`, `the`, `a` or `any`. So "never run it inline" and "do not bypass approval"
+/// deny the phrase, but "do not hesitate to bypass approval" and "never ask, and bypass the
+/// sandbox" do not. A phrase must start at the start of a word.
+///
+/// # Arguments
+///
+/// * `text` - the text, in the form of [`normalize_draft_text`]
+/// * `phrase` - the phrase, in lower case
+///
+/// # Returns
+///
+/// True when one use of the phrase is not denied.
+fn affirms(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(start, _)| {
+        let before = &text[..start];
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '-')
+        {
+            return false;
+        }
+        // A negation counts only within the same run of words. A mark such as `.`, `,`, `-` or
+        // `?` ends the run, so the "no" of "Should we wait? No - skip approval" is an answer, not
+        // a negation of the phrase.
+        let run_start = before
+            .char_indices()
+            .rfind(|(_, c)| !(c.is_alphanumeric() || *c == '\'' || *c == ' '))
+            .map_or(0, |(at, c)| at + c.len_utf8());
+        let words: Vec<&str> = before[run_start..]
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .filter(|word| !word.is_empty())
+            .collect();
+        let is_negation = |word: &str| {
+            matches!(
+                word,
+                "not"
+                    | "never"
+                    | "no"
+                    | "nor"
+                    | "cannot"
+                    | "can't"
+                    | "don't"
+                    | "doesn't"
+                    | "mustn't"
+                    | "shouldn't"
+                    | "won't"
+                    | "avoid"
+            )
+        };
+        let mut back = words.iter().rev();
+        // "why not bypass approval" asks for the bypass.
+        let why_not = words.len() >= 2 && words[words.len() - 2] == "why";
+        match back.next() {
+            Some(word) if is_negation(word) && !why_not => false,
+            Some(word) if matches!(*word, "to" | "ever" | "be" | "the" | "a" | "any") => {
+                !back.next().is_some_and(|word| is_negation(word))
+            }
+            _ => true,
+        }
+    })
+}
+
+/// Say whether an allowed action is too broad for a draft, such as "write anywhere", "run
+/// arbitrary commands" or "fetch URLs from the internet".
 ///
 /// # Arguments
 ///
@@ -2116,13 +2764,93 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
 ///
 /// True when it is too broad.
 fn is_overbroad_draft_action(action: &str) -> bool {
-    let lower = action.to_ascii_lowercase();
-    lower.contains("write anywhere")
-        || lower.contains("read all files")
-        || lower.contains("read arbitrary")
-        || lower.contains("unrestricted")
-        || lower.contains("any command")
-        || lower.contains("network access")
+    let text = normalize_draft_text(action);
+    let words: Vec<&str> = text
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let negation = |word: &str| matches!(word, "no" | "not" | "never" | "without" | "cannot");
+    let free = |at: usize| !words[at.saturating_sub(2)..at].iter().any(|w| negation(w));
+    // "any" or "all" before a broad object, such as "any file" or "all commands". A list that
+    // the draft names, as in "all files listed in inputs", is not broad.
+    let listed =
+        text.contains("listed") || text.contains("in inputs") || text.contains("from inputs");
+    let broad_object = words.windows(2).enumerate().any(|(at, pair)| {
+        free(at)
+            && matches!(pair[0], "any" | "all" | "every" | "arbitrary")
+            && matches!(
+                pair[1],
+                "file"
+                    | "files"
+                    | "folder"
+                    | "folders"
+                    | "directory"
+                    | "directories"
+                    | "path"
+                    | "paths"
+                    | "command"
+                    | "commands"
+                    | "shell"
+                    | "program"
+                    | "programs"
+                    | "url"
+                    | "urls"
+                    | "host"
+                    | "hosts"
+                    | "site"
+                    | "sites"
+                    | "code"
+                    | "action"
+                    | "actions"
+                    | "tool"
+                    | "tools"
+            )
+            && !(pair[0] == "all" && listed)
+    });
+    let word = |target: &str| {
+        words
+            .iter()
+            .enumerate()
+            .any(|(at, word)| *word == target && free(at))
+    };
+    let phrase = |target: &str| {
+        text.match_indices(target)
+            .any(|(at, _)| !text[..at].split_whitespace().rev().take(2).any(negation))
+    };
+    broad_object
+        || word("arbitrary")
+        || word("anywhere")
+        || word("unrestricted")
+        || word("unlimited")
+        || word("everything")
+        || word("internet")
+        || word("sudo")
+        || word("curl")
+        || word("wget")
+        || [
+            "network access",
+            "use the network",
+            "access the network",
+            "fetch url",
+            "fetch any",
+            "open url",
+            "visit url",
+            "download from",
+            "download files",
+            "download the",
+            "root access",
+            "as root",
+            "shell access",
+            "shell command",
+            "rm -rf",
+            "git push",
+            "outside the repo",
+            "outside of the repo",
+            "outside the project",
+            "modify the codebase",
+        ]
+        .iter()
+        .any(|target| phrase(target))
 }
 
 /// Check that a task packet delegates to a subagent, recursively, with every one of
@@ -2210,10 +2938,9 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
         JagtError::InvalidAgentResult(format!("block {index} body must be a mapping"))
     })?;
 
-    for field in ["target", "status"] {
-        validate_unique_result_field(body, index, field)?;
-    }
-
+    // The YAML reader rejects a duplicated key, and the checks below read
+    // `target` and `status` from the parsed mapping, so a result in any YAML
+    // form, flow style or quoted keys included, is read the same way.
     for field in ["outputs", "verification", "follow_up"] {
         if mapping_get(map, field).is_none() {
             return Err(JagtError::InvalidAgentResult(format!(
@@ -2261,7 +2988,6 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
                 "invalid expected nonce {expected:?}: it must be 32 lowercase hex digits that start with a letter"
             )));
         }
-        validate_unique_result_field(body, index, "nonce")?;
         match scalar_string(map, "nonce") {
             Some(nonce) if nonce == expected => {}
             Some(nonce) => {
@@ -2285,47 +3011,6 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
         validate_result_files(map, index, &options.base_dir)?;
     }
     Ok(())
-}
-
-/// Check that a result has a top-level field exactly once.
-///
-/// # Arguments
-///
-/// * `body` - the YAML of the result
-/// * `index` - the result's number, for messages
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// `Ok(())`, or an error when the field is missing or duplicated.
-fn validate_unique_result_field(body: &str, index: usize, field: &str) -> Result<()> {
-    match top_level_field_count(body, field) {
-        0 => Err(JagtError::InvalidAgentResult(format!(
-            "block {index} missing {field}"
-        ))),
-        1 => Ok(()),
-        _ => Err(JagtError::InvalidAgentResult(format!(
-            "block {index} duplicated {field}"
-        ))),
-    }
-}
-
-/// Count the unindented lines whose key, before the first `:`, is a field's name.
-///
-/// # Arguments
-///
-/// * `body` - the YAML text
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// The number of times the field is a top-level key.
-fn top_level_field_count(body: &str, field: &str) -> usize {
-    body.lines()
-        .filter(|line| !line.starts_with(char::is_whitespace))
-        .filter_map(|line| line.split_once(':').map(|(key, _)| key.trim()))
-        .filter(|key| *key == field)
-        .count()
 }
 
 /// Check that a status is `success`, `partial`, `blocked`, `failed` or `cancelled`.
@@ -2883,35 +3568,67 @@ struct Cli {
 /// The subcommands of `jagt`.
 #[derive(Debug, Subcommand)]
 enum Command {
-    Render(RenderArgs),   // `jagt render`: write an AGENT_TASK packet
-    Lint(LintArgs),       // `jagt lint`: check AGENT_TASK packets
+    #[command(about = "Render an AGENT_TASK v1 packet for a target")]
+    Render(RenderArgs), // `jagt render`: write an AGENT_TASK packet
+    #[command(about = "Check AGENT_TASK v1 packets")]
+    Lint(LintArgs), // `jagt lint`: check AGENT_TASK packets
+    #[command(about = "Summarize a packet")]
     Explain(ExplainArgs), // `jagt explain`: summarize a packet
-    Result(ResultArgs),   // `jagt result`: check or summarize AGENT_RESULT packets
-    Draft(DraftArgs),     // `jagt draft`: check AGENT_TASK_DRAFT packets
+    #[command(about = "Check or summarize AGENT_RESULT v1 packets")]
+    Result(ResultArgs), // `jagt result`: check or summarize AGENT_RESULT packets
+    #[command(about = "Check AGENT_TASK_DRAFT v1 packets")]
+    Draft(DraftArgs), // `jagt draft`: check AGENT_TASK_DRAFT packets
 }
 
 /// The arguments of `jagt render`.
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct RenderArgs {
+    #[arg(help = "The Just target")]
     target: String, // the Just target
-    #[arg(long = "arg")]
+    #[arg(
+        long = "arg",
+        allow_negative_numbers = true,
+        help = "An argument of the target; repeat for more"
+    )]
     args: Vec<String>, // an argument of the target; repeat the flag for more
-    #[arg(long = "input")]
+    #[arg(
+        long = "input",
+        allow_negative_numbers = true,
+        help = "An input file; repeat for more"
+    )]
     inputs: Vec<String>, // an input file; repeat the flag for more
-    #[arg(long = "prompt")]
+    #[arg(
+        long = "prompt",
+        help = "A prompt file, with optional YAML frontmatter"
+    )]
     prompt: Option<String>, // the path of a prompt file, with optional YAML frontmatter
-    #[arg(long = "prompt-text")]
+    #[arg(
+        long = "prompt-text",
+        help = "The prompt itself; it wins over any prompt file"
+    )]
     prompt_text: Option<String>, // the prompt itself; it wins over any prompt file
-    #[arg(long = "required-output")]
+    #[arg(
+        long = "required-output",
+        help = "An output the subagent must return; repeat for more"
+    )]
     required_outputs: Vec<String>, // an output the subagent must return; repeat the flag for more
-    #[arg(long = "allowed-action")]
+    #[arg(
+        long = "allowed-action",
+        help = "An action the subagent may take; repeat for more"
+    )]
     allowed_actions: Vec<String>, // an action the subagent may take; repeat the flag for more
-    #[arg(long = "verification")]
+    #[arg(
+        long = "verification",
+        help = "A check the subagent must run; repeat for more"
+    )]
     verification: Vec<String>, // a check the subagent must run; repeat the flag for more
-    #[arg(long = "config")]
+    #[arg(
+        long = "config",
+        help = "The project config, in place of .jagt/config.toml"
+    )]
     config_path: Option<PathBuf>, // the project config, in place of `.jagt/config.toml`
-    #[arg(long = "no-config")]
+    #[arg(long = "no-config", help = "Read no project config")]
     no_config: bool, // read no project config
     /// Render the text only: no nonce, and no packet file.
     #[arg(long = "no-save")]
@@ -2922,11 +3639,11 @@ struct RenderArgs {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct LintArgs {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to check; - for standard input")]
     path: String, // the file to check; `-` for standard input
-    #[arg(long)]
+    #[arg(long, help = "The number of packets the file must hold")]
     expect_count: Option<usize>, // the number of packets the file must hold
-    #[arg(long)]
+    #[arg(long, help = "Expect no packet")]
     expect_none: bool, // expect no packet
 }
 
@@ -2941,6 +3658,7 @@ struct ExplainArgs {
 /// The subcommands of `jagt explain`.
 #[derive(Debug, Subcommand)]
 enum ExplainCommand {
+    #[command(about = "Summarize an AGENT_TASK v1 packet")]
     Task(InputPath), // `jagt explain task`: summarize an AGENT_TASK packet
 }
 
@@ -2955,8 +3673,10 @@ struct ResultArgs {
 /// The subcommands of `jagt result`.
 #[derive(Debug, Subcommand)]
 enum ResultCommand {
+    #[command(about = "Check AGENT_RESULT v1 packets")]
     Lint(ResultLintArgs), // `jagt result lint`: check AGENT_RESULT packets
-    Explain(InputPath),   // `jagt result explain`: summarize an AGENT_RESULT packet
+    #[command(about = "Summarize an AGENT_RESULT v1 packet")]
+    Explain(InputPath), // `jagt result explain`: summarize an AGENT_RESULT packet
 }
 
 /// The arguments of `jagt draft`.
@@ -2970,6 +3690,7 @@ struct DraftArgs {
 /// The subcommands of `jagt draft`.
 #[derive(Debug, Subcommand)]
 enum DraftCommand {
+    #[command(about = "Check AGENT_TASK_DRAFT v1 packets")]
     Lint(LintArgs), // `jagt draft lint`: check AGENT_TASK_DRAFT packets
 }
 
@@ -2977,22 +3698,26 @@ enum DraftCommand {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct ResultLintArgs {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to check; - for standard input")]
     path: String, // the file to check; `-` for standard input
-    #[arg(long)]
+    #[arg(long, help = "The number of packets the file must hold")]
     expect_count: Option<usize>, // the number of packets the file must hold
-    #[arg(long)]
+    #[arg(long, help = "Expect no packet")]
     expect_none: bool, // expect no packet
-    #[arg(long)]
+    #[arg(long, help = "The target each result must name")]
     expect_target: Option<String>, // the target each packet must name
-    #[arg(long)]
+    #[arg(long, help = "The status each result must have")]
     expect_status: Option<String>, // the status each packet must have
     /// The nonce of the packet; a result with another nonce fails.
     #[arg(long)]
     expect_nonce: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Check that each required output file exists")]
     check_files: bool, // check that each required output file exists
-    #[arg(long, default_value = ".")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "The folder that output file paths are relative to"
+    )]
     base_dir: PathBuf, // the folder that output file paths are relative to
 }
 
@@ -3000,7 +3725,7 @@ struct ResultLintArgs {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct InputPath {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to read; - for standard input")]
     path: String, // the file to read; `-` for standard input
 }
 
@@ -3261,6 +3986,175 @@ Create the report.
             Some(vec!["inspect dataset".to_string()])
         );
         assert_eq!(parsed.body, "Create the report.\n");
+    }
+
+    #[test]
+    fn affirms_skips_a_phrase_that_its_clause_denies() {
+        assert!(affirms("run inline now.", "run inline"));
+        assert!(!affirms("never run inline.", "run inline"));
+        assert!(!affirms("do not bypass approval.", "bypass"));
+        assert!(affirms("do not wait. bypass approval.", "bypass"));
+        assert!(affirms("you can't stop: bypass it", "bypass"));
+        assert!(!affirms("nothing here", "bypass"));
+    }
+
+    #[test]
+    fn broad_draft_actions_are_caught_and_narrow_ones_pass() {
+        for action in [
+            "run arbitrary commands",
+            "write any file in the repo",
+            "fetch URLs from the internet",
+            "network access",
+            "write anywhere in the repository",
+            "read all files",
+            "use sudo",
+            "download the dataset",
+            "do everything needed",
+        ] {
+            assert!(is_overbroad_draft_action(action), "{action}");
+        }
+        for action in [
+            "read the inline user_message",
+            "compute the requested scalar result",
+            "work with no network access",
+            "create listed outputs",
+            "run command: wc -w",
+        ] {
+            assert!(!is_overbroad_draft_action(action), "{action}");
+        }
+    }
+
+    #[test]
+    fn secret_values_of_common_kinds_are_caught() {
+        for value in [
+            "postgres://user:fakepw@h/db",
+            "see https://bob:hunter2@example.com/path",
+            "AKIAABCDEFGHIJKLMNOP",
+            "key=ASIAABCDEFGHIJKLMNOP",
+            "xoxb-123-456-abc",
+            "xapp-1-abc",
+            "glpat-abcdefghij",
+            "ghs_abcdefghijklmnopqrstuvwxyz0123456789",
+            "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+            "https://host/db?password=hunter2",
+            "https://host/x?a=1&token=abc",
+            "sk_live_abc",
+            "sk-ant-api03-AbCdEfGhIjKlMnOpQrSt",
+            "sk-proj-Ab3dEfGhIjKlMnOpQrStUv",
+            "npm_abcdefghijklmnopqrstuvwxyz0123456789",
+            "hf_abcdefghijklmnopqrstuvwxyz01234567",
+            "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=abc==",
+            "https://a.blob.core.windows.net/c?sv=2020&sig=abc%3D",
+            "{\"type\": \"service_account\", \"private_key_id\": \"x\"}",
+            "Authorization: Basic dXNlcjpwYXNz",
+            "Bearer abcDEF123ghiJKL",
+            "sk_test_abc",
+            "whsec_abc",
+            concat!(
+                "SG.",
+                "abcdefghijklmnopqrstuv",
+                ".abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+            ),
+            "ya29.abc",
+            "dop_v1_abc",
+            "AGE-SECRET-KEY-1ABC",
+            "https://hooks.slack.com/services/T0/B0/x",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "https://user:pw\u{2003}@host",
+            "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+            "eyJhbGciOi.eyJzdWIiOi.SflKxwRJSM",
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+        ] {
+            assert!(looks_secret_value(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn ordinary_values_are_not_secrets() {
+        for value in [
+            "data",
+            "reports/eda/index.html",
+            "https://example.com/path",
+            "https://user@example.com/path",
+            "postgres://user:@h/db",
+            "ssh://git@github.com/org/repo",
+            "sk-learn",
+            "ask-me",
+            "hf_model",
+            "npm_config",
+            "AKIA",
+            "AKIAabcdefghijklmnop",
+            "AKIA1234567890123456",
+            "eyJ",
+            "eyJustSome.random.text",
+            "a-b.c_d",
+            "hf_hub_cache_directory_long_name_ok",
+            "npm_config_cache_directory_long_name",
+            "sk-learn-is-a-very-long-model-name-x",
+            "/Users/me/AIzaSomethingThatIsLongerThanThirtyNineCharacters",
+            "0123456789abcdef0123456789abcdef01234567",
+            "basic usage",
+            "Run basic diagnostics",
+            "/home/ghs_build/x",
+            "/Users/me/Project2025/src/main/lib.rsXYZ",
+            "https://host/search?q=token",
+            "https://host/x?password=",
+            "v1.2.3",
+        ] {
+            assert!(!looks_secret_value(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn secret_names_include_key_suffixes_and_passwords() {
+        for name in [
+            "API_TOKEN",
+            "GITHUBTOKEN",
+            "DB_PW",
+            "MYSQL_PWD",
+            "API_KEY_2",
+            "OPENAI_API_KEY_PROD",
+            "STRIPE_KEY_LIVE",
+            "API_KEYS",
+            "API_TOKENS",
+            "COSMOS_PRIMARY_KEY",
+            "PAGERDUTY_ROUTING_KEY",
+            "MASTER_KEY_B64",
+            "DB_PASSWD",
+            "DB_PASS",
+            "PGPASS",
+            "SSH_KEY",
+            "KEY",
+            "GPG_PASSPHRASE",
+            "SESSION_COOKIE",
+            "SENTRY_DSN",
+            "WEBHOOK_URL",
+            "OAUTH",
+            "AZURE_STORAGE_CONNECTION_STRING",
+        ] {
+            assert!(looks_secret_name(name), "{name}");
+        }
+        for name in [
+            "DATA_ROOT",
+            "KEYBOARD",
+            "MONKEY_PATH",
+            "DATABASE_URL",
+            "PUBLIC_KEY",
+            "AUTHOR",
+            "AUTHORS_FILE",
+            "PRIVATE_REPO_URL",
+            "COMPASS_DIR",
+            "TOKENIZERS_PARALLELISM",
+            "OPENAI_MAX_TOKENS",
+            "SSH_AUTH_SOCK",
+            "NEXTAUTH_URL",
+            "SSH_KEYS_DIR",
+            "CACHE_KEY",
+            "PWD",
+            "OLDPWD",
+        ] {
+            assert!(!looks_secret_name(name), "{name}");
+        }
     }
 
     #[test]

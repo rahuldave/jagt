@@ -127,6 +127,25 @@ fn main_checkout(worktree: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(first))
 }
 
+/// Find the folder that jagt reads the project config and the layers from: the top of the git
+/// worktree that holds `cwd`, or `cwd` itself outside a worktree or when git cannot start.
+///
+/// # Arguments
+///
+/// * `cwd` - the folder that jagt runs in
+///
+/// # Returns
+///
+/// The project root.
+pub fn project_root(cwd: &Path) -> PathBuf {
+    match run_git(cwd, &["rev-parse", "--show-toplevel"], &[]) {
+        Ok(run) if run.success && !run.stdout.trim().is_empty() => {
+            PathBuf::from(run.stdout.trim_end_matches('\n'))
+        }
+        _ => cwd.to_path_buf(),
+    }
+}
+
 /// Compute the worktree tree: HEAD with every change in the worktree, staged
 /// or not, plus the untracked files that are not ignored. A tracked file that
 /// matches `.gitignore` stays in the tree. Before the first commit, the tree
@@ -690,7 +709,7 @@ fn read_inside(root: &Path, relative: &str, allowed: &str) -> Result<Option<Stri
 ///
 /// # Arguments
 ///
-/// * `cwd` - the folder that jagt runs in, against which a relative path is read
+/// * `cwd` - the project root, from [`project_root`], against which a relative path is read
 /// * `path` - the prompt path from the config
 ///
 /// # Returns
@@ -709,7 +728,7 @@ pub fn check_config_prompt_path(cwd: &Path, path: &str) -> Result<()> {
     };
     let real_cwd = fs::canonicalize(cwd)?;
     let Ok(inside) = real.strip_prefix(&real_cwd) else {
-        return Err(refuse("leads outside the current folder"));
+        return Err(refuse("leads outside the project folder"));
     };
     if inside.components().any(|part| part.as_os_str() == ".git") {
         return Err(refuse("is inside .git"));

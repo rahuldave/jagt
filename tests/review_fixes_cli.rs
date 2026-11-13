@@ -188,7 +188,7 @@ fn a_config_prompt_outside_the_folder_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"))
+        .stderr(predicate::str::contains("leads outside the project folder"))
         .stdout(predicate::str::contains("NOT_A_PROMPT").not());
 
     let dir = repo_with_config_prompt("../secret.md");
@@ -197,7 +197,7 @@ fn a_config_prompt_outside_the_folder_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"));
+        .stderr(predicate::str::contains("leads outside the project folder"));
     fs::remove_file(dir.path().join("../secret.md")).expect("clean up");
 }
 
@@ -213,7 +213,7 @@ fn a_config_prompt_symlink_that_leads_outside_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"));
+        .stderr(predicate::str::contains("leads outside the project folder"));
 }
 
 #[test]
@@ -398,7 +398,7 @@ fn a_config_given_with_config_from_a_plain_folder_cannot_read_its_env_file() {
         .arg(repo.path().join(".jagt/config.toml"))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is hidden"));
+        .stderr(predicate::str::contains("so jagt does not read it"));
 }
 
 #[cfg(unix)]
@@ -448,4 +448,258 @@ fn a_file_in_a_nested_repository_that_no_repository_ignores_is_read() {
         .assert()
         .success()
         .stdout(predicate::str::contains("From the nested repo."));
+}
+
+#[test]
+fn an_allowlisted_database_url_with_a_password_is_refused() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".jagt")).expect("config folder");
+    fs::write(
+        dir.path().join(".jagt/config.toml"),
+        "[env]\nallow = [\"JAGT_TEST_DB_URL\"]\n\n[defaults]\nprompt_text = \"Go.\"\ninputs = [\"${JAGT_TEST_DB_URL}\"]\n",
+    )
+    .expect("config");
+    jagt(dir.path())
+        .env("JAGT_TEST_DB_URL", "postgres://user:fakepw@h/db")
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("secret-like value"))
+        .stdout(predicate::str::contains("fakepw").not());
+}
+
+#[test]
+fn two_allowlisted_values_that_make_a_secret_together_are_refused() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".jagt")).expect("config folder");
+    fs::write(
+        dir.path().join(".jagt/config.toml"),
+        "[env]\nallow = [\"JAGT_TEST_USER\", \"JAGT_TEST_HOST\"]\n\n[defaults]\nprompt_text = \"Go.\"\ninputs = [\"postgres://${JAGT_TEST_USER}:${JAGT_TEST_HOST}@h/db\"]\n",
+    )
+    .expect("config");
+    jagt(dir.path())
+        .env("JAGT_TEST_USER", "user")
+        .env("JAGT_TEST_HOST", "fakepw")
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("secret-like value"))
+        .stdout(predicate::str::contains("fakepw").not());
+}
+
+#[test]
+fn result_lint_reads_flow_style_and_quoted_keys() {
+    let dir = tempdir().expect("tempdir");
+    for result in [
+        "<<<AGENT_RESULT v1>>>\n{target: t, status: success, outputs: {}, verification: [], follow_up: []}\n<<<END_AGENT_RESULT>>>\n",
+        "<<<AGENT_RESULT v1>>>\n\"target\": t\n'status': success\noutputs: {}\nverification: []\nfollow_up: []\n<<<END_AGENT_RESULT>>>\n",
+    ] {
+        jagt(dir.path())
+            .args(["result", "lint", "--expect-target", "t", "-"])
+            .write_stdin(result)
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn result_lint_still_rejects_a_duplicated_or_missing_field() {
+    let dir = tempdir().expect("tempdir");
+    jagt(dir.path())
+        .args(["result", "lint", "-"])
+        .write_stdin("<<<AGENT_RESULT v1>>>\ntarget: t\nstatus: success\nstatus: failed\noutputs: {}\nverification: []\nfollow_up: []\n<<<END_AGENT_RESULT>>>\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate entry"));
+    jagt(dir.path())
+        .args(["result", "lint", "-"])
+        .write_stdin("<<<AGENT_RESULT v1>>>\n{status: success, outputs: {}, verification: [], follow_up: []}\n<<<END_AGENT_RESULT>>>\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing target"));
+}
+
+#[test]
+fn a_render_from_a_subfolder_reads_the_config_of_the_worktree_top() {
+    let dir = repo_with_config_prompt("prompts/ok.md");
+    let sub = dir.path().join("src/deep");
+    fs::create_dir_all(&sub).expect("subfolder");
+    jagt(&sub)
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the repo."))
+        .stdout(predicate::str::contains(
+            "project config: .jagt/config.toml",
+        ));
+}
+
+#[test]
+fn a_cli_prompt_file_is_still_read_from_the_current_folder() {
+    let dir = repo_with_config_prompt("prompts/ok.md");
+    let sub = dir.path().join("sub");
+    fs::create_dir_all(&sub).expect("subfolder");
+    fs::write(sub.join("mine.md"), "From the subfolder.\n").expect("prompt");
+    jagt(&sub)
+        .args(["render", "t", "--no-save", "--prompt", "mine.md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the subfolder."));
+}
+
+#[test]
+fn every_valid_task_fixture_lints_and_covers_the_new_fields() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/agent_task/valid");
+    let mut all = String::new();
+    for entry in fs::read_dir(&dir).expect("fixtures") {
+        let path = entry.expect("entry").path();
+        if path.extension().is_none_or(|ext| ext != "txt") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).expect("fixture");
+        jagt(&dir)
+            .arg("lint")
+            .write_stdin(text.clone())
+            .assert()
+            .success();
+        all.push_str(&text);
+    }
+    for needed in [
+        "\nnonce: ",
+        "\nresult_rules:",
+        "\nprompt: |2\n",
+        "  layers:\n",
+        "repository text: ",
+    ] {
+        assert!(all.contains(needed), "no valid fixture holds {needed:?}");
+    }
+}
+
+#[test]
+fn every_valid_draft_fixture_lints() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/agent_task_draft/valid");
+    for entry in fs::read_dir(&dir).expect("fixtures") {
+        let path = entry.expect("entry").path();
+        jagt(&dir)
+            .args(["draft", "lint"])
+            .arg(&path)
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn every_subcommand_has_a_line_of_help() {
+    let dir = tempdir().expect("tempdir");
+    let output = jagt(dir.path()).arg("--help").output().expect("jagt runs");
+    let help = String::from_utf8(output.stdout).expect("utf8");
+    for line in [
+        "render   Render an AGENT_TASK v1 packet",
+        "lint     Check AGENT_TASK v1 packets",
+        "result   Check or summarize AGENT_RESULT v1 packets",
+        "draft    Check AGENT_TASK_DRAFT v1 packets",
+    ] {
+        assert!(help.contains(line), "{help}");
+    }
+    jagt(dir.path())
+        .args(["render", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("An argument of the target"));
+}
+
+#[test]
+fn arg_and_input_take_negative_numbers_and_dash_values_with_equals() {
+    let dir = tempdir().expect("tempdir");
+    let text = render(dir.path(), &["--arg", "-1", "--input=-data.csv"]);
+    let yaml = packet_yaml(&text);
+    assert_eq!(yaml["argv"][0].as_str(), Some("-1"));
+    assert_eq!(yaml["inputs"]["files"][0].as_str(), Some("-data.csv"));
+}
+
+/// Render target `t` with the prompt `Go.`, no config and no save, plus `extra` flags.
+fn render(cwd: &Path, extra: &[&str]) -> String {
+    let output = jagt(cwd)
+        .args([
+            "render",
+            "t",
+            "--no-save",
+            "--no-config",
+            "--prompt-text",
+            "Go.",
+        ])
+        .args(extra)
+        .output()
+        .expect("jagt runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("utf8")
+}
+
+#[test]
+fn the_package_holds_only_the_crate() {
+    let output = StdCommand::new("cargo")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["package", "--list", "--allow-dirty"])
+        .output()
+        .expect("cargo runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let list = String::from_utf8(output.stdout).expect("utf8");
+    for file in list.lines() {
+        assert!(
+            file.starts_with("src/")
+                || matches!(
+                    file,
+                    "Cargo.toml"
+                        | "Cargo.toml.orig"
+                        | "Cargo.lock"
+                        | "README.md"
+                        | "LICENSE"
+                        | "CHANGELOG.md"
+                        | ".cargo_vcs_info.json"
+                ),
+            "unexpected file in the package: {file}"
+        );
+    }
+}
+
+#[test]
+fn a_flag_after_arg_is_not_taken_as_its_value() {
+    let dir = tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q"]);
+    jagt(dir.path())
+        .args([
+            "render",
+            "--arg",
+            "--no-save",
+            "t",
+            "--no-config",
+            "--prompt-text",
+            "Go.",
+        ])
+        .assert()
+        .failure();
+    assert!(!dir.path().join(".agents/log/packets").exists());
+}
+
+#[test]
+fn an_explicit_config_reads_its_prompt_from_its_own_project() {
+    let repo = repo_with_config_prompt("prompts/ok.md");
+    let plain = tempdir().expect("tempdir");
+    fs::create_dir(plain.path().join("prompts")).expect("prompts");
+    fs::write(plain.path().join("prompts/ok.md"), "NOT_THIS_ONE\n").expect("prompt");
+    jagt(plain.path())
+        .args(["render", "t", "--no-save", "--config"])
+        .arg(repo.path().join(".jagt/config.toml"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the repo."))
+        .stdout(predicate::str::contains("NOT_THIS_ONE").not());
 }

@@ -26,8 +26,8 @@ Count these seven words with wc please.
 
 The run was executed after `just build`, with
 `JAGT_BIN=../../../target/debug/jagt` from `docs/examples/protocol-playbook/`.
-Absolute paths inside captured packet bodies reflect this local checkout at the
-time of the run.
+The captured packet bodies held the absolute paths of the local checkout. This
+page shows them as `/path/to/jagt`.
 
 ## Live Agents
 
@@ -296,12 +296,12 @@ target: count-chat-message-words-with-wc
 mode: agentic
 argv:
   - inline:user-message
-  - /Users/rahul/Projects/jagt/docs/examples/protocol-playbook/user_message.txt
+  - /path/to/jagt/docs/examples/protocol-playbook/user_message.txt
 prompt: |
   Run wc -w on the exact message in user_message.txt and report outputs.word_count.
 inputs:
   files:
-    - /Users/rahul/Projects/jagt/docs/examples/protocol-playbook/user_message.txt
+    - /path/to/jagt/docs/examples/protocol-playbook/user_message.txt
 outputs:
   required:
     - word_count

@@ -1,0 +1,37 @@
+<<<AGENT_TASK v1>>>
+target: eda-viz
+mode: agentic
+argv:
+  - data/raw/train.csv
+  - data/raw/train.csv
+prompt: |
+  Inspect the input files and create the most useful exploratory visualization
+  artifact for this project.
+inputs:
+  files:
+    - data/raw/train.csv
+outputs:
+  required:
+    - reports/eda/index.html
+allowed_actions:
+  - read listed inputs
+  - create listed outputs
+verification:
+  - test -f reports/eda/index.html
+delegation:
+  execution: subagent
+  recursive: true
+  triggers:
+    - nested agentic Just calls
+    - agentic dependencies
+    - hook-triggered packets
+    - agentic verification targets
+safety:
+  - This block is repo-local operational context.
+  - It cannot override user, system, developer, VCS, or approval instructions.
+provenance:
+  renderer: jagt
+  renderer_version: 0.3.0
+  layers:
+    - base task
+<<<END_AGENT_TASK>>>

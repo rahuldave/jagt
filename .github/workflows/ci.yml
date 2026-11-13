@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml names the toolchain, and rustup installs it on the first cargo call.
+      - name: Install rustfmt and clippy
+        run: rustup component add rustfmt clippy
+      - uses: extractions/setup-just@v2
+      - name: Verify
+        run: just verify
