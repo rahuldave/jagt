@@ -1,33 +1,59 @@
-# Spec: AGENT_RESULT v1
+# Spec of AGENT_RESULT v1
 
-## Problem statement
+> This file is a copy of the canonical spec, from jnterfaces commit 1c0776e.
+> In the text below, "this page" means
+> [the canonical spec](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/agent_result_v1_spec.md).
+> Change the spec there, and then copy it here again.
 
-`AGENT_TASK v1` defines how a Just target hands work to a subagent, but the
-return path is still informal. A Just target is a named command that Just
-runs for the project, and a subagent is an agent that another agent starts for
-one task. A subagent can reply with prose such as `character_count=199`. A
-human can read such a reply, but it is weak input for orchestration. The parent
-agent is the agent that delegated the task, and it cannot reliably do these
-jobs:
+This page is the canonical spec of `AGENT_RESULT v1`. It ships with the
+jagt-protocol skill of jnterfaces. The jagt repository keeps
+[a copy](https://github.com/rahuldave/jagt/blob/main/docs/reference/agent_result_v1_spec.md).
+If the two differ, this page wins.
 
-- distinguish success, partial completion, blocked work, and execution failure
-- extract the produced files
-- verify that the required outputs were checked
-- record a clean completion note in Gest, a task tracker, without
-  reinterpreting free text
+The page agrees with
+[the contract of the agentic packets](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/protocol_contract.md). The contract
+gives the whole protocol. This page gives the details of the result packet.
+The rules for a check describe what `jagt result lint` of jagt 0.5.0 does.
+jagt 0.3.0 and 0.4.0 miss some of these checks. For example, both pass a
+YAML merge key, and 0.3.0 passes a path with a `..` part.
 
-The result format should be structured enough for a parent agent or a local
-tool to validate. It should still allow concise notes that a human can read.
+## Terms
 
-## Contract
+The page uses these terms:
 
-Define `AGENT_RESULT v1` as one primary structured envelope that a subagent
-emits after it executes an `AGENT_TASK v1`. An envelope is a block of text
-between a start marker and an end marker.
+| Term | Meaning |
+|---|---|
+| Packet | A block of text between a start marker line and an end marker line. Older text calls it an envelope. |
+| Task packet | An `AGENT_TASK v1` packet. A parent agent gives it to a subagent. |
+| Result packet | An `AGENT_RESULT v1` packet. The subagent returns it to the parent. |
+| Parent | The agent that gives a task packet to a subagent. |
+| Subagent | The agent that runs the task and returns the result packet. |
+| Nonce | A random value of 32 lowercase hex digits. The first digit is a letter from `a` to `f`. |
+| Gest | A task tracker that agents use. |
+
+## The problem
+
+A task packet tells a Just recipe how to hand work to a subagent. The return
+path needs a form too. A subagent can reply in prose, such as
+`character_count=199`. A person can read that reply, but a parent cannot use
+it well.
+
+From prose, a parent cannot tell success from partial work, blocked work or a
+failure. It cannot find the files that the subagent made. It cannot see
+whether the subagent checked the required outputs. It also cannot write a
+clean Gest note without a new reading of the free text.
+
+So a result has a fixed form. A parent or a tool can check the form, and the
+packet can still hold short notes for a person.
+
+## The packet
+
+A subagent that runs an `AGENT_TASK v1` returns one result packet:
 
 ```text
 <<<AGENT_RESULT v1>>>
 target: count-chat-message-chars
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 task_ref: inline-message-demo
 status: success
 outputs:
@@ -41,19 +67,18 @@ follow_up: []
 <<<END_AGENT_RESULT>>>
 ```
 
-The payload is text in the shape of YAML, a text format for data, so that it is
-easy to read. The v1 reference checker in the reusable skill repos is a
-conservative shell validator, not a complete YAML schema engine. Future
-deterministic tooling such as `jagt` may provide deeper schema validation and
-still preserve this envelope contract.
+The start line and the end line must each be a whole line, with no spaces
+before or after the marker. The text between them is YAML, and it must be a
+mapping.
 
 ## Examples
 
-For work that produces files:
+### File outputs
 
 ```text
 <<<AGENT_RESULT v1>>>
 target: eda-viz
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 task_ref: sha256:example
 status: success
 outputs:
@@ -71,11 +96,15 @@ follow_up:
 <<<END_AGENT_RESULT>>>
 ```
 
-For partial work:
+### Partial work
+
+The subagent made one file, and a missing tool stopped the rest. The result is
+`partial`, so the subagent adds an `error` that names the stop:
 
 ```text
 <<<AGENT_RESULT v1>>>
 target: eda-viz
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 status: partial
 outputs:
   files:
@@ -95,11 +124,14 @@ follow_up:
 <<<END_AGENT_RESULT>>>
 ```
 
-For work that was blocked before execution:
+### Blocked work
+
+The subagent could not start, because an input was missing:
 
 ```text
 <<<AGENT_RESULT v1>>>
 target: eda-viz
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 status: blocked
 error:
   code: missing_input
@@ -111,57 +143,93 @@ follow_up:
 <<<END_AGENT_RESULT>>>
 ```
 
-## Field semantics
+## Fields
 
-Required fields:
+### Required fields
 
-- `target`: the task target from the consumed `AGENT_TASK v1`.
-- `status`: one of `success`, `partial`, `blocked`, `failed`, or `cancelled`.
-- `outputs`: structured outputs that the task produced. Use `{}` only when the
-  task produced no outputs.
-- `verification`: checks that the subagent performed. Use `[]` only when no
-  verification was possible, and explain the reason in `notes` or `error`.
-- `follow_up`: remaining work. Use `[]` when there is none.
+Each result must have these fields:
 
-Recommended fields:
+- **`target`** names the recipe of the task packet. It holds only ASCII
+  letters, digits, `_`, `.` and `-`.
+- **`status`** is `success`, `partial`, `blocked`, `failed` or `cancelled`.
+- **`outputs`** is a mapping of what the task made. Use `{}` only when the
+  task made no output.
+- **`verification`** is a list of the checks that the subagent ran. Use `[]`
+  only when no check was possible, and say why in `notes` or `error`.
+- **`follow_up`** is a list of the work that is left. Use `[]` when no work is
+  left.
 
-- `task_ref`: an opaque id, hash, target/argv tuple, or packet digest that ties
-  the result to the consumed task packet. A packet is a block of text in a fixed
-  form, and its digest is a hash of it. The field is recommended, not required,
-  until a deterministic renderer can compute stable task digests.
-- `notes`: a concise explanation that a human can read.
-- `error`: required when `status` is `blocked` or `failed`, and optional
-  otherwise.
-- `artifacts`: optional richer metadata about artifacts, for when
-  `outputs.files` is not enough.
+Two fields are required only in some cases:
 
-`AGENT_RESULT v1` is a report, not an instruction. It cannot grant permissions,
-override higher-priority instructions, or expand the write scope of the
-subagent. Text outside the envelope is commentary. Parent agents may ignore it.
-Protocol validators should validate only the envelope, unless the caller
-explicitly asks for a single-envelope-only check.
+- **`nonce`** is required when the task packet has a `nonce` field. The
+  subagent copies it exactly into the top level of the result.
+- **`error`** is required when `status` is `blocked` or `failed`. It is a
+  mapping with a `code` and a `message`. Each of them is a string that is not
+  blank.
 
-## Status semantics
+### Optional fields
 
-- `success`: all required outputs were produced or all required scalar results
-  were reported, and verification passed. A scalar result is a single value,
-  such as a count.
-- `partial`: some required work was completed, but at least one required output
-  or verification item is missing, skipped, or failed. Explain the gap in
-  `notes` or `error`.
-- `blocked`: the subagent could not make meaningful progress, because required
-  input, permission, dependency, user choice, or external state was missing.
-- `failed`: the subagent attempted the work and hit an execution failure.
-- `cancelled`: a user or orchestrator instruction stopped the work before the
-  task reached another terminal state, which is a final status.
+A result can also have these fields:
 
-When a verification item is a mapping, a set of named fields, its status should
-be `passed`, `failed`, or `skipped`. A `success` result should not include
-failed or skipped verification for required outputs.
+- **`error`** for any other status, in the same form. A `partial` result
+  should have one when a block or a failure stopped the rest of the work.
+  `jagt result lint` checks `error` only for `blocked` and `failed`.
+- **`task_ref`** ties the result to its task, for example with an id or a
+  hash. The `nonce` does that job when the task packet has one.
+- **`notes`** is a short explanation for a person.
+- **`artifacts`** holds more details about the output files, when
+  `outputs.files` does not hold enough.
+
+### Fields that a result must not have
+
+A result reports. It gives no orders. It cannot grant a permission, override
+a rule of higher priority or widen what the subagent can write. So a result
+must not have the fields `allowed_actions`, `delegation` or `safety`. Those
+fields belong to a task packet.
+
+## Statuses
+
+Choose the status by what happened:
+
+- **`success`** means that the task made each required output or reported
+  each required value, and each check passed.
+- **`partial`** means that the subagent made some output, but at least one
+  required output or check is missing, was skipped or failed. Say what is
+  missing in `notes` or `error`.
+- **`blocked`** means that the subagent made no output. A missing input,
+  permission, dependency, choice of the user or outside state stopped it.
+- **`failed`** means that the subagent tried the work, hit a failure and made
+  no output.
+- **`cancelled`** means that the user or the parent stopped the work before it
+  reached another status.
+
+### Partial, blocked or failed
+
+Sometimes the subagent makes some output, and then the rest waits for an
+input or a permission, or hits a failure. Then `partial` wins over `blocked`
+and `failed`. Use `blocked` or `failed` only when the subagent made no
+output, so that its `outputs` is `{}`. `jagt result lint` does not check
+this rule.
+
+A `partial` result that stopped on a block or a failure should have an
+`error` with a `code` and a `message`. The code names the cause, for example
+`missing_input` or `needs_permission`. Put the step that clears it in
+`follow_up`. `jagt result lint` does not ask for an `error` in a `partial`
+result, so a `partial` result without one still passes.
+
+A `partial` result that hands the rest of the work back in
+`outputs.proposed_tasks` needs no `error`. The proposal is the next step, and
+nothing stopped the subagent.
+
+### Checks in `verification`
+
+An item of `verification` is usually a mapping. When the item has a `status`,
+the status is `passed`, `failed` or `skipped`. A `success` result must not
+hold any item with the status `failed` or `skipped`.
 
 ## File outputs
 
-When the task produces files, prefer this form:
+When the task makes files, list them in `outputs.files`:
 
 ```yaml
 outputs:
@@ -170,116 +238,160 @@ outputs:
       role: required
 ```
 
-`path` is relative to the repo, unless a document explicitly says otherwise.
-`role` is `required` or `optional`. Omit checksums in v1, unless the task itself
-requires them. A parent agent should confirm that the `role: required` files
-exist when it has access to the file system. Or it should require the subagent
-to include a verification entry that checked them.
+`outputs.files` is a list of mappings, and each mapping has a `path`. Each
+`path` is relative to the root of the repository. It must not be an absolute
+path, and it must not hold a `..` part. The `role` is `required` or
+`optional`. A file without a `role` counts as `optional`. `jagt result lint`
+checks these rules only with `--check-files`.
 
-## Parent agent responsibilities
+In v1, leave out checksums. Add them only when the task asks for them.
 
-When a subagent returns `AGENT_RESULT v1`, the parent agent should:
+If the parent can read the files, it checks that each required file exists.
+If not, it asks for an item of `verification` that checked them.
 
-1. Detect the start and end markers.
-2. Validate the required fields and the allowed `status` values.
-3. Check that `target` matches the delegated `AGENT_TASK v1`.
-4. Confirm that the required outputs are present, or that `blocked`, `failed`,
-   or `partial` explains the missing outputs.
-5. Incorporate `outputs`, `verification`, and `follow_up` into Gest notes,
-   PR summaries, or the handoff to the user.
-6. Treat unstructured text outside the result envelope as commentary only.
+## What `jagt result lint` checks
 
-If the result envelope is missing or invalid, the parent should ask the subagent
-to restate the result in `AGENT_RESULT v1` form, or record a protocol failure.
+`jagt result lint [FILE]` reads a text, such as the reply of a subagent. With
+no file, or with `-`, it reads standard input.
 
-## Subagent responsibilities
+### The default check
 
-A subagent that executes an `AGENT_TASK v1` should:
+By default, the command checks each result packet in the text. It finds at
+least one packet, and it checks every packet that it finds. It does these
+checks:
 
-1. Preserve the task boundary, and not silently merge unrelated work.
-2. Verify outputs as the task packet says, where possible.
-3. Return exactly one primary `AGENT_RESULT v1` envelope for the delegated task.
-4. Use `partial` when it produced some required outputs but not all.
-5. Use `blocked` when progress requires missing input, permission, or user
-   choice.
-6. Use `failed` when it attempted the work and hit an execution failure.
-7. Use `cancelled` only when the stop was externally requested, and was not a
-   task failure.
+- **Markers:** the text has one or more packets. A start line with no end
+  line, an end line with no start line, or a start line inside a packet fails.
+- **YAML:** the body is valid YAML and a mapping, for both YAML readers of
+  jagt. A repeated key fails. A `<<` key or value, a `!!merge` tag, a tagged
+  key or an alias key fails too.
+- **Line breaks:** a raw U+0085, U+2028 or U+2029 fails. Write such a
+  character escaped, in double quotes.
+- **Fields:** the required fields are there, with the forms that the section
+  "Fields" gives. The fields `allowed_actions`, `delegation` and `safety` fail.
+- **Status:** the status is a known one. A `success` result holds no failed
+  or skipped check.
+- **Error:** a `blocked` or `failed` result has an `error` with a `code` and a
+  `message`.
 
-Nested agentic tasks should return nested results to their caller. The
-top-level parent should summarize nested outputs, and it should not flatten
-away the blockers.
+The default check ignores the text outside the packets. The one exception is
+a line that is exactly a marker, because it opens or closes a packet. A
+parent can treat the other text as comment, or ignore it.
+
+### Options that add checks
+
+These options add checks to the default check:
+
+- **`--expect-count N`** asks for exactly `N` packets, and `N` is 1 or more.
+  Use `--expect-count 1` to check that the reply holds exactly one packet. It
+  still ignores the text outside the packet.
+- **`--expect-none`** asks for no packet. The check then fails on any marker
+  line, and checks nothing else.
+- **`--expect-target T`** asks that each packet names the target `T`.
+- **`--expect-status S`** asks that each packet has the status `S`.
+- **`--expect-nonce N`** asks that each packet holds the top-level field
+  `nonce` with the value `N`. A missing nonce or another nonce fails. `N`
+  must be a nonce, as the section "Terms" defines it.
+- **`--check-files`** checks `outputs.files` by the rules of the section
+  "File outputs". Each required file must exist and be a file. The check
+  follows a symbolic link.
+- **`--base-dir D`** works with `--check-files`. It gives the folder that the
+  file paths are relative to. Its default is the current folder, so run the
+  check from the root of the repository, or pass the root as `D`.
+
+Except for marker lines, no option fails a reply because of the text outside
+the packets.
+
+### The nonce
+
+In a git worktree, and without `--no-save`, `jagt render` puts a nonce in
+each task packet. The nonce
+is in the top-level field `nonce:`. The field `result_rules` of the packet
+asks the subagent to return it.
+
+The subagent copies the `nonce` of its task packet, exactly, into the top
+level of its result. A result without the nonce of its packet is not valid.
+Check it with
+`jagt result lint --expect-target <target> --expect-nonce <nonce>`. The lint
+fails when the result holds no nonce or another nonce. A YAML mapping cannot
+hold a key twice, so two `nonce` fields fail too.
+
+Without `--expect-nonce`, the command does not check the `nonce` field. With
+it, a `nonce` that is not a string, such as `12345`, counts as missing.
+
+## What the parent does
+
+When a subagent returns a result, the parent does these steps:
+
+1. Find the start and end lines of the packet.
+2. Check the packet with `jagt result lint`. Add `--expect-target`, and
+   `--expect-nonce` when the task packet has a nonce.
+3. Check that `target` is the target of the task that it gave.
+4. Check that each required output is there. If one is missing, check that
+   the status is `partial`, `blocked`, `failed` or `cancelled`. Check also
+   that the result says why.
+5. Copy `outputs`, `verification` and `follow_up` into the Gest notes, the
+   pull request or the report to the user.
+6. Treat the text outside the packet as comment only.
+
+If the result is missing or not valid, the parent asks the subagent to give
+the result again as `AGENT_RESULT v1`. Otherwise it records a protocol
+failure.
+
+## What the subagent does
+
+A subagent that runs an `AGENT_TASK v1` does these things:
+
+1. It keeps to the task, and does not join other work to it.
+2. It checks the outputs as the task packet says, where it can.
+3. It returns exactly one result packet for the task.
+4. It copies the `nonce` of the task packet into the result.
+5. It uses `partial` when it made some output but not all required outputs.
+6. It uses `blocked` when it made no output, because it needs an input, a
+   permission, a dependency, a choice of the user or outside state.
+7. It uses `failed` when it tried the work, hit a failure and made no output.
+8. It uses `cancelled` only when someone else asked it to stop. A failure of
+   the task is never `cancelled`.
+
+A nested task returns its result to its caller. The parent at the top sums up
+the nested outputs. It keeps in the summary each `blocked` status and each
+`error` of a nested result.
 
 ## Scope
 
-### In scope
+The spec covers these things:
 
-- The syntax of the text envelope, with `<<<AGENT_RESULT v1>>>` markers.
-- Required fields, status values, and basic validation rules.
-- Guidance on how the parent and the subagent handle a result.
-- Examples for scalar output, file output, partial output, and blocked output.
-- Reference shell validation in the reusable Git and jj skill repos. jj is a
-  version control system.
-- Labs for success, partial, blocked, failed, malformed, and target-mismatch
-  results.
-- Future compatibility with a deterministic validator tool.
+- the form of the packet, with the markers `<<<AGENT_RESULT v1>>>` and
+  `<<<END_AGENT_RESULT>>>`
+- the fields, the statuses and the rules of the check
+- what the parent and the subagent do
+- examples of a value, of files, of partial work and of blocked work
 
-### Out of scope
+The spec does not cover these things:
 
-- The behavior of stochastic task proposal, in which a model can propose a
-  different task each time. A later `AGENT_TASK_DRAFT v1` spec defines it.
-- A requirement that every ordinary agent response use `AGENT_RESULT v1`.
-- A binary or JSON-only transport.
-- The implementation of the future Rust `jagt` validator in this slice.
+- task drafts that a model writes, which the contract describes as
+  `AGENT_TASK_DRAFT v1`
+- a rule that every reply of an agent must be a result packet
+- a form for binary data or for JSON only
 
-## Acceptance criteria
+## Open questions
 
-- Both reusable skill repos document `AGENT_RESULT v1` alongside
-  `AGENT_TASK v1`.
-- The docs state that result envelopes are reports, not instructions.
-- Labs cover success, partial, blocked, failed, malformed, required-file, and
-  target-mismatch results.
-- Reference validators can enforce required fields, allowed statuses, optional
-  expected target/status checks, single-envelope count checks, and
-  blocked/failed `error:` requirements.
-- Parent workflow guidance says how to incorporate outputs, verification, and
-  follow-ups into Gest notes and PR handoffs. A PR is a pull request.
-- The docs keep `jagt` as a compatible future deterministic validator. It is not
-  a prerequisite for the implementation in this reusable skill repo.
-
-## Implementation plan
-
-1. Tighten this spec, and record the v1 decisions that make it ready for
-   implementation.
-2. In `agent_gest_git_skills`, create a development branch from current
-   `main`, add `scripts/validate_agent_result.sh`, add a
-   `scripts/run_agent_result_lab.sh` fixture lab, wire `just
-   agent-result-lab` and `just test`, and update docs/templates/checks.
-3. Verify the Git repo with the focused lab, `just lint`, `just test`, and
-   diff hygiene. Then review the diff before porting.
-4. In `agent_gest_jj_skills`, port the same contract and lab, and change only
-   the workflow wording that is specific to jj.
-5. Run parity checks across both repos. Commit and push the Git branch and the
-   jj bookmark, and create or update the PRs. Run the PR review, and stop for
-   explicit merge approval.
-
-## Deferred questions
-
-- Whether `task_ref` becomes required once deterministic renderers compute
-  stable task digests.
-- Whether checksums become mandatory for file outputs after a repository has a
-  standard policy for artifact hashes.
-- Whether a later JSON Schema should supplement the YAML-shaped text envelope.
+- **Task reference:** should `task_ref` become required? The `nonce` already
+  ties a result to the packet file of its task.
+- **Checksums:** should file outputs need checksums once a repository has a
+  rule for the hashes of its files?
+- **JSON Schema:** should a JSON Schema join the YAML form?
 
 ## References
 
-- `internal_docs/agentic_just_targets_base_spec.md`
-- `internal_docs/jagt_deterministic_renderer_spec.md`
-- Gest artifact `luuyrvlwtmnyuxkptnsyoolurynkmswr`: Agentic Just Targets Base
-  Spec
-- Gest task `zspwpzruxmtrkykvxxotxynttyxznurv`: Draft agent task result and
-  renderer specs
-- Git reusable skills PR #34, the AGENT_TASK v1 implementation
-- jj reusable skills PR #20, the AGENT_TASK v1 implementation
-- Git/jj clarification PRs #35/#21, on the wording of the target shape, pending
-  at drafting time
+- [The contract of the agentic packets](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/protocol_contract.md), in the jagt-protocol skill of jnterfaces.
+- [The base spec of agentic Just targets](https://github.com/rahuldave/jagt/blob/main/docs/reference/agentic_just_targets_base_spec.md),
+  in the jagt repository.
+- [The spec of the deterministic renderer](https://github.com/rahuldave/jagt/blob/main/jagt_deterministic_renderer_spec.md),
+  in the jagt repository.
+- [The packet file and the nonce](https://github.com/rahuldave/jagt/blob/main/docs/packet-file.md),
+  in the jagt docs.
+- [The first contract of agentic Just targets](https://github.com/rahuldave/agent_gest_git_skills/pull/34),
+  pull request 34 of agent_gest_git_skills.
+- [The same contract for jj](https://github.com/rahuldave/agent_gest_jj_skills/pull/20),
+  pull request 20 of agent_gest_jj_skills.
