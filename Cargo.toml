@@ -5,6 +5,11 @@ edition = "2024"
 license = "MIT"
 description = "Deterministic renderer and validator for agentic Just task envelopes"
 readme = "README.md"
+repository = "https://github.com/rahuldave/jagt"
+keywords = ["just", "agents", "cli", "yaml"]
+categories = ["command-line-utilities", "development-tools"]
+# Ship the crate only. The skills, hooks, fixtures and docs of this repository are not part of it.
+include = ["/src", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [dependencies]
 clap = { version = "4.5.40", features = ["derive"] }

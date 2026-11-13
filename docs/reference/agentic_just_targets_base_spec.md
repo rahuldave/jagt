@@ -283,7 +283,7 @@ The lab should prove:
 ## References
 
 - `https://just.systems/man/en/recipe-parameters.html`
-- `/Users/rahul/Projects/agent_gest_git_skills/templates/just/agent-contract.just`
-- `/Users/rahul/Projects/agent_gest_jj_skills/templates/just/agent-contract.just`
-- `/Users/rahul/Projects/agent_gest_git_skills/docs/just_command_contract.md`
-- `/Users/rahul/Projects/agent_gest_jj_skills/docs/just_command_contract.md`
+- `templates/just/agent-contract.just` of agent_gest_git_skills
+- `templates/just/agent-contract.just` of agent_gest_jj_skills
+- `docs/just_command_contract.md` of agent_gest_git_skills
+- `docs/just_command_contract.md` of agent_gest_jj_skills

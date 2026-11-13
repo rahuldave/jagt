@@ -28,6 +28,23 @@ Then read
 for a concrete parent-LLM transcript generated from a runnable example
 Justfile.
 
+## Install
+
+jagt is a Rust program. Install it with Cargo, from GitHub:
+
+```bash
+cargo install --git https://github.com/rahuldave/jagt jagt
+```
+
+Or install it from a clone of this repository:
+
+```bash
+cargo install --path .
+```
+
+Check the install with `jagt --version`. The commit gates need jagt 0.3.0 or
+later, for the nonce of a packet.
+
 ## The Actors
 
 | Actor | Responsibility |
@@ -227,7 +244,7 @@ help output, the standalone protocol demo, and whitespace hygiene.
 For a new Codex project session:
 
 ```bash
-cd /Users/rahul/Projects/jagt
+cd path/to/jagt
 ```
 
 Then start with `gtw` for implementation, docs, debugging, verification, or
@@ -240,9 +257,9 @@ The accepted MVP design lives in
 [jagt_deterministic_renderer_spec.md](jagt_deterministic_renderer_spec.md), with
 the staged implementation plan in
 [docs/jagt-mvp-implementation-plan.md](docs/jagt-mvp-implementation-plan.md).
-All MVP slices are done. The final review found bugs that are open as follow-up
-work. The release work is still to do. It covers CI, the package file list, an
-install section and a release tag.
+All MVP slices are done, and so are the fixes of the final review. CI runs
+`just verify` on each pull request. The changes of each version are in
+[CHANGELOG.md](CHANGELOG.md).
 
 jagt has no formal schema. The protocol contract of the `jagt-protocol` skill,
 from jnterfaces, defines each packet, and the lint commands check it.

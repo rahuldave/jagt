@@ -587,3 +587,85 @@ fn every_valid_draft_fixture_lints() {
             .success();
     }
 }
+
+#[test]
+fn every_subcommand_has_a_line_of_help() {
+    let dir = tempdir().expect("tempdir");
+    let output = jagt(dir.path()).arg("--help").output().expect("jagt runs");
+    let help = String::from_utf8(output.stdout).expect("utf8");
+    for line in [
+        "render   Render an AGENT_TASK v1 packet",
+        "lint     Check AGENT_TASK v1 packets",
+        "result   Check or summarize AGENT_RESULT v1 packets",
+        "draft    Check AGENT_TASK_DRAFT v1 packets",
+    ] {
+        assert!(help.contains(line), "{help}");
+    }
+    jagt(dir.path())
+        .args(["render", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("An argument of the target"));
+}
+
+#[test]
+fn arg_and_input_take_values_that_start_with_a_dash() {
+    let dir = tempdir().expect("tempdir");
+    let text = render(dir.path(), &["--arg", "-1", "--input", "-data.csv"]);
+    let yaml = packet_yaml(&text);
+    assert_eq!(yaml["argv"][0].as_str(), Some("-1"));
+    assert_eq!(yaml["inputs"]["files"][0].as_str(), Some("-data.csv"));
+}
+
+/// Render target `t` with the prompt `Go.`, no config and no save, plus `extra` flags.
+fn render(cwd: &Path, extra: &[&str]) -> String {
+    let output = jagt(cwd)
+        .args([
+            "render",
+            "t",
+            "--no-save",
+            "--no-config",
+            "--prompt-text",
+            "Go.",
+        ])
+        .args(extra)
+        .output()
+        .expect("jagt runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("utf8")
+}
+
+#[test]
+fn the_package_holds_only_the_crate() {
+    let output = StdCommand::new("cargo")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["package", "--list", "--allow-dirty"])
+        .output()
+        .expect("cargo runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let list = String::from_utf8(output.stdout).expect("utf8");
+    for file in list.lines() {
+        assert!(
+            file.starts_with("src/")
+                || matches!(
+                    file,
+                    "Cargo.toml"
+                        | "Cargo.toml.orig"
+                        | "Cargo.lock"
+                        | "README.md"
+                        | "LICENSE"
+                        | "CHANGELOG.md"
+                        | ".cargo_vcs_info.json"
+                ),
+            "unexpected file in the package: {file}"
+        );
+    }
+}

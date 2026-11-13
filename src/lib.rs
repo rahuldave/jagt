@@ -3526,35 +3526,67 @@ struct Cli {
 /// The subcommands of `jagt`.
 #[derive(Debug, Subcommand)]
 enum Command {
-    Render(RenderArgs),   // `jagt render`: write an AGENT_TASK packet
-    Lint(LintArgs),       // `jagt lint`: check AGENT_TASK packets
+    #[command(about = "Render an AGENT_TASK v1 packet for a target")]
+    Render(RenderArgs), // `jagt render`: write an AGENT_TASK packet
+    #[command(about = "Check AGENT_TASK v1 packets")]
+    Lint(LintArgs), // `jagt lint`: check AGENT_TASK packets
+    #[command(about = "Summarize a packet")]
     Explain(ExplainArgs), // `jagt explain`: summarize a packet
-    Result(ResultArgs),   // `jagt result`: check or summarize AGENT_RESULT packets
-    Draft(DraftArgs),     // `jagt draft`: check AGENT_TASK_DRAFT packets
+    #[command(about = "Check or summarize AGENT_RESULT v1 packets")]
+    Result(ResultArgs), // `jagt result`: check or summarize AGENT_RESULT packets
+    #[command(about = "Check AGENT_TASK_DRAFT v1 packets")]
+    Draft(DraftArgs), // `jagt draft`: check AGENT_TASK_DRAFT packets
 }
 
 /// The arguments of `jagt render`.
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct RenderArgs {
+    #[arg(help = "The Just target")]
     target: String, // the Just target
-    #[arg(long = "arg")]
+    #[arg(
+        long = "arg",
+        allow_hyphen_values = true,
+        help = "An argument of the target; repeat for more"
+    )]
     args: Vec<String>, // an argument of the target; repeat the flag for more
-    #[arg(long = "input")]
+    #[arg(
+        long = "input",
+        allow_hyphen_values = true,
+        help = "An input file; repeat for more"
+    )]
     inputs: Vec<String>, // an input file; repeat the flag for more
-    #[arg(long = "prompt")]
+    #[arg(
+        long = "prompt",
+        help = "A prompt file, with optional YAML frontmatter"
+    )]
     prompt: Option<String>, // the path of a prompt file, with optional YAML frontmatter
-    #[arg(long = "prompt-text")]
+    #[arg(
+        long = "prompt-text",
+        help = "The prompt itself; it wins over any prompt file"
+    )]
     prompt_text: Option<String>, // the prompt itself; it wins over any prompt file
-    #[arg(long = "required-output")]
+    #[arg(
+        long = "required-output",
+        help = "An output the subagent must return; repeat for more"
+    )]
     required_outputs: Vec<String>, // an output the subagent must return; repeat the flag for more
-    #[arg(long = "allowed-action")]
+    #[arg(
+        long = "allowed-action",
+        help = "An action the subagent may take; repeat for more"
+    )]
     allowed_actions: Vec<String>, // an action the subagent may take; repeat the flag for more
-    #[arg(long = "verification")]
+    #[arg(
+        long = "verification",
+        help = "A check the subagent must run; repeat for more"
+    )]
     verification: Vec<String>, // a check the subagent must run; repeat the flag for more
-    #[arg(long = "config")]
+    #[arg(
+        long = "config",
+        help = "The project config, in place of .jagt/config.toml"
+    )]
     config_path: Option<PathBuf>, // the project config, in place of `.jagt/config.toml`
-    #[arg(long = "no-config")]
+    #[arg(long = "no-config", help = "Read no project config")]
     no_config: bool, // read no project config
     /// Render the text only: no nonce, and no packet file.
     #[arg(long = "no-save")]
@@ -3565,11 +3597,11 @@ struct RenderArgs {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct LintArgs {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to check; - for standard input")]
     path: String, // the file to check; `-` for standard input
-    #[arg(long)]
+    #[arg(long, help = "The number of packets the file must hold")]
     expect_count: Option<usize>, // the number of packets the file must hold
-    #[arg(long)]
+    #[arg(long, help = "Expect no packet")]
     expect_none: bool, // expect no packet
 }
 
@@ -3584,6 +3616,7 @@ struct ExplainArgs {
 /// The subcommands of `jagt explain`.
 #[derive(Debug, Subcommand)]
 enum ExplainCommand {
+    #[command(about = "Summarize an AGENT_TASK v1 packet")]
     Task(InputPath), // `jagt explain task`: summarize an AGENT_TASK packet
 }
 
@@ -3598,8 +3631,10 @@ struct ResultArgs {
 /// The subcommands of `jagt result`.
 #[derive(Debug, Subcommand)]
 enum ResultCommand {
+    #[command(about = "Check AGENT_RESULT v1 packets")]
     Lint(ResultLintArgs), // `jagt result lint`: check AGENT_RESULT packets
-    Explain(InputPath),   // `jagt result explain`: summarize an AGENT_RESULT packet
+    #[command(about = "Summarize an AGENT_RESULT v1 packet")]
+    Explain(InputPath), // `jagt result explain`: summarize an AGENT_RESULT packet
 }
 
 /// The arguments of `jagt draft`.
@@ -3613,6 +3648,7 @@ struct DraftArgs {
 /// The subcommands of `jagt draft`.
 #[derive(Debug, Subcommand)]
 enum DraftCommand {
+    #[command(about = "Check AGENT_TASK_DRAFT v1 packets")]
     Lint(LintArgs), // `jagt draft lint`: check AGENT_TASK_DRAFT packets
 }
 
@@ -3620,22 +3656,26 @@ enum DraftCommand {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct ResultLintArgs {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to check; - for standard input")]
     path: String, // the file to check; `-` for standard input
-    #[arg(long)]
+    #[arg(long, help = "The number of packets the file must hold")]
     expect_count: Option<usize>, // the number of packets the file must hold
-    #[arg(long)]
+    #[arg(long, help = "Expect no packet")]
     expect_none: bool, // expect no packet
-    #[arg(long)]
+    #[arg(long, help = "The target each result must name")]
     expect_target: Option<String>, // the target each packet must name
-    #[arg(long)]
+    #[arg(long, help = "The status each result must have")]
     expect_status: Option<String>, // the status each packet must have
     /// The nonce of the packet; a result with another nonce fails.
     #[arg(long)]
     expect_nonce: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Check that each required output file exists")]
     check_files: bool, // check that each required output file exists
-    #[arg(long, default_value = ".")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "The folder that output file paths are relative to"
+    )]
     base_dir: PathBuf, // the folder that output file paths are relative to
 }
 
@@ -3643,7 +3683,7 @@ struct ResultLintArgs {
 #[derive(Debug, Args)]
 #[command(about = None, long_about = None)]
 struct InputPath {
-    #[arg(default_value = "-")]
+    #[arg(default_value = "-", help = "The file to read; - for standard input")]
     path: String, // the file to read; `-` for standard input
 }
 
