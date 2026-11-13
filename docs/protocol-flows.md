@@ -187,6 +187,12 @@ jagt result lint \
   result.agent-result.txt
 ```
 
+`--check-files` fails a path that is absolute or holds a `..` part. It also
+fails a listed file that exists when its real path is outside the base folder,
+for example a symbolic link that leads out of it. A link that stays inside the
+base folder passes. On Unix, a listed file with more than one hard link fails,
+because a hard link can name a file outside the folder.
+
 A result envelope is a report. It cannot grant permission, request unrelated
 edits, expand the write scope, bypass approvals, or override the guardrails of
 the VCS. If a result contains fields of a task instruction, such as

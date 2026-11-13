@@ -1,6 +1,7 @@
 //! Tests for the findings of the final review: packets that `jagt render`
 //! printed but `jagt lint` rejected, prompt files that a config could name
-//! outside the repository, and `..` paths in `result lint --check-files`.
+//! outside the repository, and `..` paths and outward symbolic links in
+//! `result lint --check-files`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -289,6 +290,80 @@ fn check_files_refuses_a_path_with_a_parent_part() {
             .assert()
             .failure()
             .stderr(predicate::str::contains("must be repo-relative"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_files_refuses_a_symlink_that_leads_outside_the_base_folder() {
+    use std::os::unix::fs::symlink;
+    let root = tempdir().expect("tempdir");
+    let project = root.path().join("project");
+    fs::create_dir_all(project.join("reports")).expect("project");
+    fs::write(root.path().join("outside.txt"), "x").expect("outside file");
+    // A link to a file outside, and a link to a folder outside.
+    symlink(root.path().join("outside.txt"), project.join("link.txt")).expect("file link");
+    symlink(root.path(), project.join("reports/up")).expect("folder link");
+    for (path, role) in [
+        ("link.txt", "required"),
+        ("link.txt", "optional"),
+        ("reports/up/outside.txt", "required"),
+    ] {
+        jagt(&project)
+            .args(["result", "lint", "--check-files", "--base-dir", "."])
+            .write_stdin(
+                RESULT_WITH_PARENT_PATH
+                    .replace("../outside.txt", path)
+                    .replace("role: required", &format!("role: {role}")),
+            )
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("leads outside the base folder"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_files_refuses_a_file_with_a_second_hard_link() {
+    let root = tempdir().expect("tempdir");
+    let project = root.path().join("project");
+    fs::create_dir(&project).expect("project");
+    fs::write(root.path().join("outside.txt"), "x").expect("outside file");
+    fs::hard_link(root.path().join("outside.txt"), project.join("hard.txt")).expect("hard link");
+    for role in ["required", "optional"] {
+        jagt(&project)
+            .args(["result", "lint", "--check-files", "--base-dir", "."])
+            .write_stdin(
+                RESULT_WITH_PARENT_PATH
+                    .replace("../outside.txt", "hard.txt")
+                    .replace("role: required", &format!("role: {role}")),
+            )
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("has more than one hard link"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_files_accepts_a_symlink_that_stays_inside_the_base_folder() {
+    use std::os::unix::fs::symlink;
+    let root = tempdir().expect("tempdir");
+    let project = root.path().join("project");
+    fs::create_dir_all(project.join("reports")).expect("project");
+    fs::write(project.join("reports/real.txt"), "x").expect("inside file");
+    symlink(project.join("reports/real.txt"), project.join("link.txt")).expect("file link");
+    // The base folder itself reached through a link must still work.
+    symlink(&project, root.path().join("project-link")).expect("base link");
+    for (cwd, base) in [
+        (&project, "."),
+        (&root.path().to_path_buf(), "project-link"),
+    ] {
+        jagt(cwd)
+            .args(["result", "lint", "--check-files", "--base-dir", base])
+            .write_stdin(RESULT_WITH_PARENT_PATH.replace("../outside.txt", "link.txt"))
+            .assert()
+            .success();
     }
 }
 

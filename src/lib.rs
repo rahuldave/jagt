@@ -3230,7 +3230,9 @@ fn validate_result_error(map: &Mapping, index: usize, status: &str) -> Result<()
 /// Check each entry of a result's `outputs.files`.
 ///
 /// Its `path` must be relative, its `role` must be `required` or `optional`, and a required file
-/// must exist.
+/// must exist. A listed file that exists must have its real path inside the real base folder, so a
+/// symbolic link that leads out of the base folder fails. On Unix, a listed file with more than one
+/// hard link fails too.
 ///
 /// # Arguments
 ///
@@ -3251,6 +3253,8 @@ fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result
     let files = files_value.as_sequence().ok_or_else(|| {
         JagtError::InvalidAgentResult(format!("block {index} outputs.files must be a sequence"))
     })?;
+    // The real base folder, resolved once at the first listed file that exists.
+    let mut real_base: Option<PathBuf> = None;
 
     for file in files {
         let file = file.as_mapping().ok_or_else(|| {
@@ -3279,7 +3283,39 @@ fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result
                 "block {index} output file {path} role must be required or optional"
             )));
         }
-        if role == "required" && !base_dir.join(path_ref).is_file() {
+        let full = base_dir.join(path_ref);
+        // A symbolic link inside the base folder can lead out of it, so a file
+        // that exists must have its real path inside the real base folder.
+        if let Ok(real) = fs::canonicalize(&full) {
+            if real_base.is_none() {
+                real_base = Some(fs::canonicalize(base_dir).map_err(|error| {
+                    JagtError::InvalidAgentResult(format!(
+                        "block {index} cannot resolve the base folder {}: {error}",
+                        base_dir.display()
+                    ))
+                })?);
+            }
+            if real_base
+                .as_ref()
+                .is_some_and(|base| !real.starts_with(base))
+            {
+                return Err(JagtError::InvalidAgentResult(format!(
+                    "block {index} output file {path} leads outside the base folder"
+                )));
+            }
+            // A hard link has no real path of its own, so a second link can name
+            // a file outside the base folder. As for a config prompt, refuse it.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if real.is_file() && fs::metadata(&real).is_ok_and(|meta| meta.nlink() > 1) {
+                    return Err(JagtError::InvalidAgentResult(format!(
+                        "block {index} output file {path} has more than one hard link"
+                    )));
+                }
+            }
+        }
+        if role == "required" && !full.is_file() {
             return Err(JagtError::InvalidAgentResult(format!(
                 "block {index} required output file missing: {path}"
             )));
@@ -4062,8 +4098,12 @@ struct ResultLintArgs {
     /// The nonce of the packet; a result with another nonce fails.
     #[arg(long)]
     expect_nonce: Option<String>,
-    #[arg(long, help = "Check that each required output file exists")]
-    check_files: bool, // check that each required output file exists
+    #[arg(
+        long,
+        help = "Check output files: relative paths with no .. part, each required file exists, \
+                and no listed file leads outside the base folder or has a second hard link"
+    )]
+    check_files: bool, // check the paths and the existence of output files
     #[arg(
         long,
         default_value = ".",

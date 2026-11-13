@@ -15,6 +15,17 @@ A nonce, in the entries below, is a random value of 32 lowercase hex digits
 that `jagt render` puts in a packet when it saves the packet file. The agent
 must return the same nonce in its result.
 
+## Unreleased
+
+### Breaking
+
+- `jagt result lint --check-files` fails a listed file whose real path is
+  outside the base folder, for example through a symbolic link. Before, such a
+  file passed. The rule covers required and optional files that exist. A link
+  that stays inside the base folder still passes.
+- On Unix, `jagt result lint --check-files` fails a listed file with more than
+  one hard link, because a hard link can name a file outside the base folder.
+
 ## 0.5.0
 
 ### Breaking
