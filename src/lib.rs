@@ -4050,7 +4050,11 @@ Create the report.
             "Bearer abcDEF123ghiJKL",
             "sk_test_abc",
             "whsec_abc",
-            concat!("SG.", "abcdefghijklmnopqrstuv", ".abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"),
+            concat!(
+                "SG.",
+                "abcdefghijklmnopqrstuv",
+                ".abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+            ),
             "ya29.abc",
             "dop_v1_abc",
             "AGE-SECRET-KEY-1ABC",
