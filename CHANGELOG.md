@@ -6,20 +6,25 @@ first.
 jagt follows semantic versioning, as Cargo reads it. Before 1.0, a change that
 can break a user raises the minor version, such as 0.4.0 to 0.5.0. A fix that
 breaks nothing raises the patch version, such as 0.5.0 to 0.5.1. A break is a
-packet that lint rejected and now passes, or passed and now fails, a change in
-the text that render writes, or a change in a flag or a message that a script
-reads. Each version that breaks something lists it under "Breaking".
+packet that lint rejected and now passes, or that lint passed and now fails. A
+change in the text that render writes is also a break, and so is a change in a
+flag or in a message that a script reads. Each version that breaks something
+lists it under "Breaking".
+
+A nonce, in the entries below, is a random value of 32 lowercase hex digits
+that `jagt render` puts in a packet when it saves the packet file. The agent
+must return the same nonce in its result.
 
 ## 0.5.0
 
 ### Breaking
 
 - Lint rejects some packets that 0.4.0 passed. They hold:
-  - a stray line at column 0, or a top-level field away from column 0;
-  - a top-level key that is not a plain or quoted scalar;
-  - YAML that yaml-rust2 cannot read, or reads with other top-level fields;
-  - a YAML merge, a tagged key or an alias key;
-  - a raw U+0085, U+2028 or U+2029;
+  - a stray line at column 0, or a top-level field away from column 0
+  - a top-level key that is not a plain or quoted scalar
+  - YAML that yaml-rust2 cannot read, or reads with other top-level fields
+  - a YAML merge, a tagged key or an alias key
+  - a raw U+0085, U+2028 or U+2029
   - `result_rules` that is not a list of strings, names another nonce or
     comes with no nonce.
 - Render writes a prompt line of only spaces or tabs with its whitespace,
@@ -37,9 +42,9 @@ reads. Each version that breaks something lists it under "Breaking".
 
 - `jagt lint` and `jagt draft lint` reject a stray line at column 0. The YAML
   1.2 spec needs such a line indented. It can be:
-  - a `]` that closes a flow list;
-  - a line inside a quoted value that looks like a field;
-  - a line that starts with a tab;
+  - a `]` that closes a flow list
+  - a line inside a quoted value that looks like a field
+  - a line that starts with a tab
   - a list item under a key with a value.
 - A field, a quoted key, a comment and a list item under an empty key still
   pass.
@@ -84,8 +89,8 @@ reads. Each version that breaks something lists it under "Breaking".
   path outside the project, a path in `.git`, a file with a second hard link,
   and a file that git ignores. A `--prompt` file is not checked.
 - The secret check of allowlisted variables catches many more kinds of
-  secrets, such as URLs with a password, AWS, Azure, Slack and Stripe keys,
-  and two variables that make a secret together.
+  secrets. Examples are URLs with a password, AWS, Azure, Slack and Stripe
+  keys, and two variables that make a secret together.
 - `--arg` and `--input` take a negative number, such as `--arg -1`. Another
   value that starts with `-` needs the `=` form, such as `--input=-data.csv`.
 - Each subcommand and flag has a line of help.

@@ -1,20 +1,39 @@
-# jagt Protocol Flows
+# jagt protocol flows
 
-This guide explains how the packet formats fit together as an agent workflow.
-It is intentionally written as a conversation between Just output, the parent
-LLM, subagents, and `jagt`.
+This guide shows how the three packet formats of jagt fit together in an agent
+workflow. A packet is a block of text in a fixed form that one agent hands to
+another. The guide is written on purpose as a conversation between these
+parties:
 
-`jagt` is deterministic. It renders and validates packet text. It does not call
-an LLM, choose whether work is safe, approve stochastic proposals, or launch
-subagents. Those choices belong to the parent agent under the active user,
-system, developer, approval, VCS, and repository instructions.
+- **The output of a Just target.** A Just target is a named recipe that the
+  tool Just runs.
+- **The parent LLM.** An LLM is a large language model. The parent LLM, also
+  called the parent agent, is the agent that runs the Just target and hands
+  work to other agents.
+- **The subagents.** A subagent is an agent that the parent agent starts for
+  one task.
+- **`jagt`**, the tool that this guide describes.
 
-The flow map here is aligned with Gest Git (`agent_gest_git_skills`) and Gest
-jj (`agent_gest_jj_skills`), including their agentic target, result, recursive
-result, and task-draft labs. The jagt repository keeps its own standalone demos
-under `.agents/skills/jagt-protocol/` and `integration_tests/`.
+`jagt` gives an LLM a deterministic interface into a Just workflow. Each packet
+that goes to an agent, or comes back from one, has a fixed form that a program
+can check.
 
-## Packet Vocabulary
+`jagt` itself is deterministic, which means that it follows fixed rules in
+code. It renders and validates packet text. It does not call an LLM, choose
+whether work is safe, approve stochastic proposals, or start subagents. The
+parent agent makes those choices. It follows the active user, system, developer, approval,
+VCS and repository instructions, where VCS is the version control system, such
+as Git. A stochastic proposal is a task that an LLM designs, so it can differ
+from run to run.
+
+The flow map here follows Gest Git (`agent_gest_git_skills`) and Gest jj
+(`agent_gest_jj_skills`). Gest is a task tracker, and these two are its sets of
+agent skills for Git and for jj repositories. The map includes their labs for
+agentic targets, results, recursive results and task drafts. The jagt
+repository keeps its own standalone demos under `.agents/skills/jagt-protocol/`
+and `integration_tests/`.
+
+## Packet vocabulary
 
 | Packet | Produced by | Consumed by | Meaning |
 | --- | --- | --- | --- |
@@ -22,21 +41,22 @@ under `.agents/skills/jagt-protocol/` and `integration_tests/`.
 | `AGENT_RESULT v1` | A subagent | Parent agent | Report-only return value for one delegated task. Validate before trusting it. |
 | `AGENT_TASK_DRAFT v1` | A proposal subagent | Parent agent | Non-executable stochastic task proposal. Validate, review, approve, and promote before execution. |
 
-The key distinction is authority:
+The packets differ most in their authority:
 
 - `AGENT_TASK v1` describes bounded work to delegate.
 - `AGENT_RESULT v1` reports what happened.
-- `AGENT_TASK_DRAFT v1` proposes a future task shape.
-- None of them can override higher-priority instructions or repo policy.
+- `AGENT_TASK_DRAFT v1` proposes the shape of a future task.
+- None of them can override instructions of higher priority or the policy of
+  the repository.
 
-For the concrete parent-LLM play-by-play, including the actual command outputs
-from a local run, see
+For a step-by-step account of a parent LLM at work, with the actual command
+outputs from a local run, see
 [protocol-playbook-transcript.md](protocol-playbook-transcript.md).
 
-## Flow 1: Deterministic Task Handoff
+## Flow 1: Deterministic task handoff
 
-Use this flow when the task is already known well enough to render directly:
-the target name, prompt, inputs, required outputs, allowed actions, and
+Use this flow when the task is already known well enough to render directly.
+Then the target name, prompt, inputs, required outputs, allowed actions and
 verification are all concrete.
 
 ```text
@@ -68,21 +88,22 @@ jagt render count-chat-message-words \
   --verification "recount the message before returning AGENT_RESULT"
 ```
 
-The parent should validate:
+The parent should validate the packet:
 
 ```bash
 jagt lint --expect-count 1 packet.agent-task.txt
 ```
 
-Then it delegates. It must not execute the requested work inline just because
-the packet appeared in a terminal output stream.
+Then the parent delegates the task. It must not do the requested work inline,
+in its own session, only because the packet appeared in the output of a
+terminal.
 
-### Just Target Shapes
+### Just target shapes
 
-Gest Git and Gest jj use three equivalent target shapes, and `jagt` supports all
-of them because it only cares about the emitted packet. In a real target, prefer
-a small renderer wrapper so arguments are escaped and repeated flags are
-constructed safely:
+Gest Git and Gest jj use three equivalent shapes of target. `jagt` supports all
+of them, because it reads only the packet that the target prints. In a real
+target, prefer a small renderer wrapper, so that the wrapper escapes the
+arguments and builds repeated flags safely:
 
 ```just
 # Direct agentic target.
@@ -101,14 +122,19 @@ agentic TARGET +ARGS:
   @scripts/render_agent_task.sh --target {{TARGET}} --args {{ARGS}}
 ```
 
-Use direct targets when the command is agentic by default, companion targets
-when concrete and exploratory paths coexist, and a dispatcher when many targets
-share one packet surface.
+Choose the shape by how the targets are used:
 
-## Flow 2: Result Return
+- Use a direct target when the command is agentic by default.
+- Use a companion target when a concrete path and an exploratory path exist
+  side by side.
+- Use a dispatcher when many targets share one packet surface.
 
-Every delegated task needs a structured return path. The subagent returns one
-primary `AGENT_RESULT v1` envelope for the task it consumed.
+## Flow 2: Result return
+
+Every delegated task needs a structured path back to the parent. The subagent
+returns one primary `AGENT_RESULT v1` envelope for the task that it received.
+An envelope is one packet, from its opening line, such as
+`<<<AGENT_RESULT v1>>>`, to its closing line.
 
 ```text
 Subagent
@@ -139,7 +165,7 @@ follow_up: []
 <<<END_AGENT_RESULT>>>
 ```
 
-The parent validates with expected target and status when it knows them:
+When the parent knows the expected target and status, it validates with them:
 
 ```bash
 jagt result lint \
@@ -149,7 +175,8 @@ jagt result lint \
   result.agent-result.txt
 ```
 
-For file-producing results, the parent can also check required files:
+For a result that produces files, the parent can also check the required
+files:
 
 ```bash
 jagt result lint \
@@ -160,21 +187,25 @@ jagt result lint \
   result.agent-result.txt
 ```
 
-Result envelopes are reports. They cannot grant permission, request unrelated
-edits, expand write scope, bypass approvals, or override VCS guardrails. If a
-result contains task-like instruction fields such as `allowed_actions`, jagt
-rejects it.
+A result envelope is a report. It cannot grant permission, request unrelated
+edits, expand the write scope, bypass approvals, or override the guardrails of
+the VCS. If a result contains fields of a task instruction, such as
+`allowed_actions`, jagt rejects it.
 
-## Flow 3: Recursive Deterministic Work
+## Flow 3: Recursive deterministic work
 
-Recursive work is parent-orchestrated. A subagent can propose a child task, but
-the parent decides whether to render and delegate that child.
+The parent orchestrates recursive work. A subagent can propose a child task,
+but the parent decides whether to render and delegate that child.
 
-This is not the stochastic draft path. In the recursive path, the child-task
-payload is carried inside a valid `AGENT_RESULT v1` as `outputs.proposed_tasks`.
-That payload is data until the parent validates the result, accepts the proposal
-under normal policy, renders a fresh child `AGENT_TASK v1`, and validates the
-child packet.
+The recursive path is a different path from the stochastic draft path. In the
+recursive path, the payload of the child task travels inside a valid
+`AGENT_RESULT v1` as `outputs.proposed_tasks`. Such a payload is a recursive
+proposal. It stays data until the parent does four things:
+
+1. It validates the result.
+2. It accepts the proposal under the normal policy.
+3. It renders a fresh child `AGENT_TASK v1`.
+4. It validates the child packet.
 
 ```text
 Parent agent
@@ -223,33 +254,35 @@ follow_up:
 <<<END_AGENT_RESULT>>>
 ```
 
-Important boundaries:
+The recursive path has these limits:
 
-- `outputs.proposed_tasks` is data, not a live nested task packet.
-- `jagt result lint` validates the result; it does not spawn the child.
+- `outputs.proposed_tasks` is data, and it is not a live nested task packet.
+- `jagt result lint` validates the result. It does not spawn the child.
 - The parent must reject unsafe or unapproved proposals.
 - The child task becomes executable only after the parent renders a fresh
   `AGENT_TASK v1` packet and validates it.
-- The worker result is validated separately.
-- The final parent result should include a recursion trace so the handoff chain
-  is visible.
+- The parent validates the worker result separately.
+- The final parent result should include a recursion trace, so that the chain
+  of handoffs is visible.
 
-The local recursive transcript lab is
+The local lab for the recursive transcript is
 [integration_tests/live_agent_result_recursive/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_result_recursive).
-It follows the same pattern as the reusable Git and jj
-`live_agent_result_recursive_lab.md` docs: planner subagent, parent-rendered
-child task, worker subagent, final parent result, and unsafe-proposal refusal.
+It follows the same pattern as the `live_agent_result_recursive_lab.md` docs of
+the reusable Git and jj skills. The lab has a planner subagent, a child task
+that the parent renders, a worker subagent and a final parent result. It also
+shows the parent refusing an unsafe proposal.
 
-## Flow 4: Stochastic Task Draft
+## Flow 4: Stochastic task draft
 
-Use stochastic drafts when the task shape itself needs LLM judgment. The
-proposal subagent designs a bounded future task, but it does not execute that
-future task.
+Use a stochastic draft when the shape of the task itself needs the judgment of
+an LLM. A stochastic draft is an `AGENT_TASK_DRAFT v1` that an LLM proposes and
+that a parent or the user must approve before promotion. The proposal subagent designs a bounded future
+task, but it does not execute that future task.
 
-This flow does not start with a deterministic Just target emitting
-`AGENT_TASK v1`. It starts when the parent LLM decides the task shape is
-unknown and asks a proposal subagent for `AGENT_RESULT v1` plus
-`AGENT_TASK_DRAFT v1`.
+The flow does not start with a deterministic Just target that prints
+`AGENT_TASK v1`. It starts when the parent LLM decides that the shape of the
+task is unknown. The parent then asks a proposal subagent for
+`AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1`.
 
 ```text
 Parent agent
@@ -276,7 +309,8 @@ Draft validation:
 jagt draft lint --expect-count 1 proposed.agent-task-draft.txt
 ```
 
-Promotion is deterministic:
+Promotion turns an approved draft into an `AGENT_TASK v1`, and it is
+deterministic:
 
 ```bash
 jagt render count-chat-message-chars \
@@ -292,27 +326,32 @@ jagt render count-chat-message-chars \
 jagt lint --expect-count 1 promoted.agent-task.txt
 ```
 
-Drafts must include approval and promotion requirements. They are invalid if
-they claim to be preapproved, use `mode: agentic`, bypass approval or VCS rules,
-request broad authority, or instruct the proposal subagent to execute the
-proposed work inline.
+A draft must include its requirements for approval and promotion. A draft is
+invalid if it does any of these things:
 
-`jagt draft lint` checks the structure of a draft strictly, and it searches the
-text for common ways to word these things. The search is a first filter, not a
-judgment of meaning, because a model can word a bypass in a way that no list
-of phrases holds. So the parent still reads each draft, and records
+- It claims to be preapproved.
+- It uses `mode: agentic`.
+- It bypasses the rules for approval or VCS.
+- It requests broad authority.
+- It tells the proposal subagent to execute the proposed work inline.
+
+`jagt draft lint` checks the structure of a draft strictly. It also searches
+the text for common ways to word these things. The search is a first filter
+and does not judge meaning, because a model can word a bypass in a way that no
+list of phrases holds. So the parent still reads each draft, and records
 `policy_review_passed`, before it promotes the draft.
 
 - **Fields:** a draft may hold only the known fields. `approval` may hold only
   `required`, `approver` and `reason`. `approver` must be `parent`, `user` or
   `parent-or-user`. `execute_inline`, when present, must be `false`.
-- **Text:** a phrase does not count when a negation comes just before it, as in
+- **Text:** a phrase does not count when a negation comes right before it, or
+  one word earlier after a small word such as "to", "be" or "the", as in
   "never run it inline".
 - **Lookalike letters:** before the search, jagt drops zero-width characters.
   It turns fullwidth letters, and Cyrillic or Greek letters that look like
   ASCII ones, into ASCII. So a Cyrillic `а` cannot hide a phrase.
 
-## Deterministic Versus Stochastic
+## Deterministic versus stochastic
 
 | Situation | Use | Why |
 | --- | --- | --- |
@@ -321,7 +360,7 @@ of phrases holds. So the parent still reads each draft, and records
 | The task shape requires LLM judgment | `AGENT_TASK_DRAFT v1` | The proposal must be reviewed, approved, and promoted before execution. |
 | A completed delegated task reports outputs | `AGENT_RESULT v1` | Results are report-only and should be validated before use. |
 
-## Lab Map
+## Lab map
 
 Run the local deterministic demo:
 
@@ -330,48 +369,50 @@ just build
 just protocol-demo
 ```
 
-It proves:
+The demo proves that jagt can do these steps:
 
-- send/render one `AGENT_TASK v1` packet;
-- receive/validate one `AGENT_RESULT v1` packet;
-- receive/validate recursive proposed-task and local-recursion result shapes;
-- receive/validate one `AGENT_TASK_DRAFT v1` packet;
-- promote the approved draft through deterministic `jagt render`.
+- Send, or render, one `AGENT_TASK v1` packet.
+- Receive and validate one `AGENT_RESULT v1` packet.
+- Receive and validate the shapes of a recursive proposed task and of a
+  local-recursion result.
+- Receive and validate one `AGENT_TASK_DRAFT v1` packet.
+- Promote the approved draft through deterministic `jagt render`.
 
-Local jagt transcript labs:
+Local jagt labs that record a transcript:
 
 - [integration_tests/live_agent_reaction/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_reaction):
-  a fresh agent context runs a Just target, sees `AGENT_TASK v1`, and delegates
-  instead of executing inline.
+  a fresh agent context runs a Just target and sees `AGENT_TASK v1`. It
+  delegates the task and does not execute it inline.
 - [integration_tests/live_agent_result_recursive/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_result_recursive):
-  planner result, parent-rendered child task, worker result, final recursion
-  trace, and unsafe proposal refusal.
+  the planner result, the child task that the parent renders, the worker
+  result, the final recursion trace, and the refusal of an unsafe proposal.
 
-Gest Git and Gest jj lab names checked for parity:
+Names of the Gest Git and Gest jj labs, checked for parity:
 
-- `run_agentic_target_lab.sh`: direct, companion, dispatcher, dependency,
-  hook, verification, malformed delimiter, and malformed body cases.
-- `run_agent_result_lab.sh`: success, partial, blocked, failed,
-  target-mismatch, missing file, report-only rejection, recursive proposal, and
+- `run_agentic_target_lab.sh`: the direct, companion, dispatcher, dependency,
+  hook, verification, malformed delimiter and malformed body cases.
+- `run_agent_result_lab.sh`: the success, partial, blocked, failed,
+  target-mismatch, missing file, report-only rejection, recursive proposal and
   local recursion trace cases.
-- `run_agent_result_recursive_live_lab.sh`: transcript validator for two
-  successive subagents and unsafe proposal refusal.
-- `run_agent_task_draft_lab.sh`: result-plus-draft pairing, malformed/unsafe
-  draft rejection, fresh context contract injection, deterministic promotion,
-  and promoted task linting.
+- `run_agent_result_recursive_live_lab.sh`: a transcript validator for two
+  successive subagents and for the refusal of an unsafe proposal.
+- `run_agent_task_draft_lab.sh`: the pairing of a result with a draft, the
+  rejection of a malformed or unsafe draft, the injection of the contract into
+  a fresh context, deterministic promotion, and the lint of the promoted task.
 
-## Reading Order
+## Reading order
 
-Use this order when trying to understand the repository:
+Read the repository in this order:
 
-1. [../README.md](https://github.com/rahuldave/jagt/blob/main/README.md) for the short actor model and current command
-   surface.
-2. This file for the full flow map.
-3. [reference/agentic_just_targets_base_spec.md](reference/agentic_just_targets_base_spec.md)
-   for the `AGENT_TASK v1` source context.
-4. [reference/agent_result_v1_spec.md](reference/agent_result_v1_spec.md) for
-   result semantics.
-5. [reference/agent_task_draft_v1_spec.md](reference/agent_task_draft_v1_spec.md)
-   for stochastic draft semantics.
-6. [jagt-testing-strategy.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-testing-strategy.md) for deterministic tests
-   and opt-in live transcript labs.
+1. [../README.md](https://github.com/rahuldave/jagt/blob/main/README.md), for
+   the short model of the actors and the current commands.
+2. This file, for the full flow map.
+3. [reference/agentic_just_targets_base_spec.md](reference/agentic_just_targets_base_spec.md),
+   for the source context of `AGENT_TASK v1`.
+4. [reference/agent_result_v1_spec.md](reference/agent_result_v1_spec.md), for
+   the meaning of a result.
+5. [reference/agent_task_draft_v1_spec.md](reference/agent_task_draft_v1_spec.md),
+   for the meaning of a stochastic draft.
+6. [jagt-testing-strategy.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-testing-strategy.md),
+   for the deterministic tests and the opt-in labs that record a live
+   transcript.

@@ -1,5 +1,5 @@
 # The user documentation of jagt, built with smalldocs (https://pypi.org/project/smalldocs/).
-# Build:   uvx smalldocs==0.5.9 render docs/smalldocs --strict
+# Build:   uvx smalldocs==0.5.10 render docs/smalldocs --strict
 # Each page here includes its text from the README, the CHANGELOG or a file in
 # docs/, so edit the text there. The folders here mirror the repository, so the
 # links between those files work on the site too.
@@ -53,9 +53,9 @@ website:
         contents:
           - auto: "api/**"
 
-theme:
-  light: cerulean
-  dark: darkly
+# Folio, from https://github.com/rahuldave/smalldocs-folio, in _extensions/folio.
+# Update it with: uvx smalldocs==0.5.10 add rahuldave/smalldocs-folio --force
+theme: folio
 css: styles.css
 toc: true
 search: true
@@ -63,7 +63,7 @@ search: true
 api:
   language: rust
   manifest: ../../Cargo.toml
-  # smalldocs 0.5.9 reads rustdoc JSON formats 57 and 61 only; keep in step with docs-site.yml.
+  # smalldocs 0.5.10 reads rustdoc JSON formats 57 and 61 only; keep in step with docs-site.yml.
   toolchain: nightly-2026-11-12
   root: ../..
   source: https://github.com/rahuldave/jagt/blob/main
