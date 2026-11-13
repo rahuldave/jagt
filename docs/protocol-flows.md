@@ -235,7 +235,7 @@ Important boundaries:
   is visible.
 
 The local recursive transcript lab is
-[integration_tests/live_agent_result_recursive/](../integration_tests/live_agent_result_recursive/).
+[integration_tests/live_agent_result_recursive/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_result_recursive).
 It follows the same pattern as the reusable Git and jj
 `live_agent_result_recursive_lab.md` docs: planner subagent, parent-rendered
 child task, worker subagent, final parent result, and unsafe-proposal refusal.
@@ -340,10 +340,10 @@ It proves:
 
 Local jagt transcript labs:
 
-- [integration_tests/live_agent_reaction/](../integration_tests/live_agent_reaction/):
+- [integration_tests/live_agent_reaction/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_reaction):
   a fresh agent context runs a Just target, sees `AGENT_TASK v1`, and delegates
   instead of executing inline.
-- [integration_tests/live_agent_result_recursive/](../integration_tests/live_agent_result_recursive/):
+- [integration_tests/live_agent_result_recursive/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_result_recursive):
   planner result, parent-rendered child task, worker result, final recursion
   trace, and unsafe proposal refusal.
 
@@ -364,7 +364,7 @@ Gest Git and Gest jj lab names checked for parity:
 
 Use this order when trying to understand the repository:
 
-1. [../README.md](../README.md) for the short actor model and current command
+1. [../README.md](https://github.com/rahuldave/jagt/blob/main/README.md) for the short actor model and current command
    surface.
 2. This file for the full flow map.
 3. [reference/agentic_just_targets_base_spec.md](reference/agentic_just_targets_base_spec.md)
@@ -373,5 +373,5 @@ Use this order when trying to understand the repository:
    result semantics.
 5. [reference/agent_task_draft_v1_spec.md](reference/agent_task_draft_v1_spec.md)
    for stochastic draft semantics.
-6. [jagt-testing-strategy.md](jagt-testing-strategy.md) for deterministic tests
+6. [jagt-testing-strategy.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-testing-strategy.md) for deterministic tests
    and opt-in live transcript labs.

@@ -1,7 +1,7 @@
 # Live LLM Protocol Playbook Transcript
 
 This transcript is from an actual parent-LLM run of the three protocol cases
-using [examples/protocol-playbook/Justfile](examples/protocol-playbook/Justfile).
+using [examples/protocol-playbook/Justfile](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/Justfile).
 The parent LLM is this Codex session. `jagt` renders and validates packets; it
 does not call an LLM or launch agents. The subagents below were spawned through
 the host agent runtime, and their returned envelopes were saved and linted.
@@ -18,7 +18,7 @@ Those labs use the same split: deterministic task/result, recursive
 promotion.
 
 The shared input file is
-[examples/protocol-playbook/user_message.txt](examples/protocol-playbook/user_message.txt):
+[examples/protocol-playbook/user_message.txt](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/user_message.txt):
 
 ```text
 Count these seven words with wc please.

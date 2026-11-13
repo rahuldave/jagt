@@ -207,11 +207,11 @@ ignores project and explicit config files.
   `AGENT_RESULT v1` source context.
 - [docs/reference/agent_task_draft_v1_spec.md](docs/reference/agent_task_draft_v1_spec.md):
   `AGENT_TASK_DRAFT v1` proposal context.
-- [docs/jagt-testing-strategy.md](docs/jagt-testing-strategy.md): deterministic
+- [docs/jagt-testing-strategy.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-testing-strategy.md): deterministic
   tests and opt-in live transcript labs.
-- [integration_tests/live_agent_reaction/](integration_tests/live_agent_reaction/):
+- [integration_tests/live_agent_reaction/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_reaction):
   single-hop live agent reaction lab.
-- [integration_tests/live_agent_result_recursive/](integration_tests/live_agent_result_recursive/):
+- [integration_tests/live_agent_result_recursive/](https://github.com/rahuldave/jagt/tree/main/integration_tests/live_agent_result_recursive):
   recursive planner/worker transcript lab.
 
 This README and the flow guide were checked against the labs of Gest Git
@@ -254,9 +254,9 @@ editing so the next slice continues from the current MVP state.
 ## Current Design Status
 
 The accepted MVP design lives in
-[jagt_deterministic_renderer_spec.md](jagt_deterministic_renderer_spec.md), with
+[jagt_deterministic_renderer_spec.md](https://github.com/rahuldave/jagt/blob/main/jagt_deterministic_renderer_spec.md), with
 the staged implementation plan in
-[docs/jagt-mvp-implementation-plan.md](docs/jagt-mvp-implementation-plan.md).
+[docs/jagt-mvp-implementation-plan.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-mvp-implementation-plan.md).
 All MVP slices are done, and so are the fixes of the final review. CI runs
 `just verify` on each pull request. The changes of each version are in
 [CHANGELOG.md](CHANGELOG.md).
@@ -266,4 +266,4 @@ from jnterfaces, defines each packet, and the lint commands check it.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/rahuldave/jagt/blob/main/LICENSE).

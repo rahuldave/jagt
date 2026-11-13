@@ -1,0 +1,4 @@
+# What a build writes. They are not in git.
+/_site/
+/api/
+/_symbols.json
