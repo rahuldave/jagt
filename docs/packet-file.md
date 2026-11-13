@@ -169,7 +169,7 @@ The `provenance` of the packet lists the layers that it holds:
 ```yaml
 provenance:
   renderer: jagt
-  renderer_version: 0.3.0
+  renderer_version: 0.4.0
   layers:
     - base task
     - 'language layer: .agents/targets/python/docs.md'

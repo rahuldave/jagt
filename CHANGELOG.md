@@ -3,7 +3,7 @@
 This file lists the changes of each version of jagt. The newest version comes
 first.
 
-## Unreleased
+## 0.4.0
 
 ### Render
 
