@@ -1442,8 +1442,10 @@ fn push_nested_string_list(output: &mut String, key: &str, values: &[String], in
 
 /// Add a YAML literal block, `key: |`, with each line of the value indented by two spaces.
 ///
-/// When the first line that is not blank starts with whitespace, the block starts with `key: |2`,
-/// so that YAML keeps that indent. A line of only whitespace is written empty.
+/// When the first line that is not blank starts with whitespace, or a line holds only spaces or
+/// tabs, the block starts with `key: |2`, so that YAML keeps that whitespace and does not read it
+/// as the indent. An empty line is written empty. A YAML reader reads the block back with one
+/// newline at its end, so a value without a final newline gains one.
 ///
 /// A literal block cannot hold some characters. A YAML reader reads a lone `\r`, U+0085, U+2028
 /// and U+2029 as line breaks, and refuses a control character such as U+0001. A value with one of
@@ -1467,15 +1469,19 @@ fn push_literal_block(output: &mut String, key: &str, value: &str) {
         .lines()
         .find(|line| !line.trim().is_empty())
         .is_some_and(|line| line.starts_with(char::is_whitespace));
-    if first_starts_indented {
+    let has_whitespace_line = value
+        .lines()
+        .any(|line| !line.is_empty() && line.trim().is_empty());
+    if first_starts_indented || has_whitespace_line {
         push_line(output, &format!("{key}: |2"));
     } else {
         push_line(output, &format!("{key}: |"));
     }
     for line in value.lines() {
-        // A line of only spaces is written empty, so the packet has no
-        // trailing spaces and the line cannot set a wrong indent.
-        if line.trim().is_empty() {
+        // An empty line stays empty. A line of only spaces or tabs keeps
+        // them, after the indent; the `|2` header keeps YAML from reading
+        // them as the indent.
+        if line.is_empty() {
             push_line(output, "");
         } else {
             push_line(output, &format!("  {line}"));
@@ -1972,9 +1978,17 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentTask(format!("block {index} contains invalid YAML: {error}"))
     })?;
+    if has_merge_key(&value) {
+        return Err(JagtError::InvalidAgentTask(format!(
+            "block {index} has a YAML merge key `<<` or a tagged key; a YAML 1.1 reader could merge fields that lint does not check"
+        )));
+    }
     let map = value.as_mapping().ok_or_else(|| {
         JagtError::InvalidAgentTask(format!("block {index} body must be a mapping"))
     })?;
+    if let Some(problem) = yaml_event_problem(body, index, Some(map)) {
+        return Err(JagtError::InvalidAgentTask(problem));
+    }
 
     for field in [
         "target",
@@ -2015,8 +2029,57 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
         }
     }
 
+    validate_result_rules(map, index)?;
     validate_delegation(map, index)?;
     validate_safety(map, index)?;
+    Ok(())
+}
+
+/// Check the `result_rules` of a task packet against its nonce.
+///
+/// `result_rules` is optional. When it is there, it must be a list of strings, the packet must
+/// have a `nonce`, and each run of 32 or more hex digits in a rule must be that nonce. The runs
+/// are also looked for after fullwidth digits and lookalike letters become ASCII and hyphens are
+/// dropped, so a nonce in UUID form counts. A nonce split by spaces is not found. So a rule
+/// cannot ask the subagent to echo another packet's nonce, which would tie its result to the
+/// wrong record.
+///
+/// # Arguments
+///
+/// * `map` - the parsed body of the packet
+/// * `index` - the packet's number, for messages
+///
+/// # Returns
+///
+/// `Ok(())`, or the first problem found.
+fn validate_result_rules(map: &Mapping, index: usize) -> Result<()> {
+    if mapping_get(map, "result_rules").is_none() {
+        return Ok(());
+    }
+    let rules = string_sequence(map, "result_rules").ok_or_else(|| {
+        JagtError::InvalidAgentTask(format!(
+            "block {index} result_rules must be a list of strings"
+        ))
+    })?;
+    let Some(nonce) = scalar_string(map, "nonce") else {
+        return Err(JagtError::InvalidAgentTask(format!(
+            "block {index} has result_rules but no nonce"
+        )));
+    };
+    for rule in &rules {
+        // Also scan the rule with fullwidth digits and lookalikes as ASCII and
+        // with no hyphens, so that a nonce in UUID form counts too.
+        let folded = normalize_draft_text(rule).replace('-', "");
+        let names_another = [rule.as_str(), folded.as_str()].iter().any(|text| {
+            text.split(|c: char| !c.is_ascii_hexdigit())
+                .any(|run| run.len() >= 32 && run != nonce)
+        });
+        if names_another {
+            return Err(JagtError::InvalidAgentTask(format!(
+                "block {index} result_rules name a nonce that is not the packet nonce"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -2036,9 +2099,17 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentTaskDraft(format!("block {index} contains invalid YAML: {error}"))
     })?;
+    if has_merge_key(&value) {
+        return Err(JagtError::InvalidAgentTaskDraft(format!(
+            "block {index} has a YAML merge key `<<` or a tagged key; a YAML 1.1 reader could merge fields that lint does not check"
+        )));
+    }
     let map = value.as_mapping().ok_or_else(|| {
         JagtError::InvalidAgentTaskDraft(format!("block {index} body must be a mapping"))
     })?;
+    if let Some(problem) = yaml_event_problem(body, index, Some(map)) {
+        return Err(JagtError::InvalidAgentTaskDraft(problem));
+    }
 
     for field in [
         "target",
@@ -2934,6 +3005,14 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentResult(format!("block {index} contains invalid YAML: {error}"))
     })?;
+    if has_merge_key(&value) {
+        return Err(JagtError::InvalidAgentResult(format!(
+            "block {index} has a YAML merge key `<<` or a tagged key; a YAML 1.1 reader could merge fields that lint does not check"
+        )));
+    }
+    if let Some(problem) = yaml_event_problem(body, index, None) {
+        return Err(JagtError::InvalidAgentResult(problem));
+    }
     let map = value.as_mapping().ok_or_else(|| {
         JagtError::InvalidAgentResult(format!("block {index} body must be a mapping"))
     })?;
@@ -3259,7 +3338,12 @@ fn string_sequence(map: &Mapping, key: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Reject an unindented line that looks like a field with no colon, such as `target count-words`.
+/// Reject an unindented line that looks like a field with no colon, such as `target count-words`,
+/// and any other unindented line that is not a field, a quoted key, a comment or a `- ` list item.
+///
+/// YAML 1.2 needs each line inside a value under a top-level key to be indented, so a line such
+/// as `]` or `}` that closes a flow list at column 0 is not valid. libyaml, which serde_yaml and
+/// PyYAML use, still reads it, but a strict reader refuses the packet.
 ///
 /// # Arguments
 ///
@@ -3270,24 +3354,80 @@ fn string_sequence(map: &Mapping, key: &str) -> Option<Vec<String>> {
 ///
 /// `Ok(())`, or an `InvalidAgentTask` error.
 fn check_malformed_top_level_fields(body: &str, index: usize) -> Result<()> {
-    for line in body.lines() {
-        if line.is_empty() || line.starts_with(char::is_whitespace) {
+    let column_0_error = |number: usize, what: &str| {
+        Err(JagtError::InvalidAgentTask(format!(
+            "block {index} line {} {what}; YAML needs it indented",
+            number + 1
+        )))
+    };
+    // Whether a `- ` list item may start at column 0: only after a key with
+    // no value on its line.
+    let mut sequence_open = false;
+    for (number, line) in body.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.starts_with('\t') {
+            return column_0_error(number, "starts with a tab");
+        }
+        if line.starts_with(char::is_whitespace) {
             continue;
         }
         let Some((first, rest)) = split_first_char(line) else {
             continue;
         };
-        if !is_field_start(first) {
+        if first == '#' {
             continue;
         }
-        let token = line.split_whitespace().next().unwrap_or_default();
-        if rest.contains(' ') && !token.contains(':') && token.chars().all(is_field_char) {
-            return Err(JagtError::InvalidAgentTask(format!(
-                "block {index} contains malformed top-level YAML-like field"
-            )));
+        if line == "-" || line.starts_with("- ") {
+            if !sequence_open {
+                return column_0_error(
+                    number,
+                    "is a list item at column 0 that follows no key with an empty value",
+                );
+            }
+            continue;
         }
+        if matches!(first, '"' | '\'') {
+            sequence_open = line.trim_end().ends_with(':');
+            continue;
+        }
+        if is_field_start(first) {
+            let token = line.split_whitespace().next().unwrap_or_default();
+            if rest.contains(' ') && !token.contains(':') && token.chars().all(is_field_char) {
+                return Err(JagtError::InvalidAgentTask(format!(
+                    "block {index} contains malformed top-level YAML-like field"
+                )));
+            }
+            if is_top_level_key_line(line) {
+                let value = line.split_once(':').map_or("", |(_, value)| value).trim();
+                sequence_open = value.is_empty() || value.starts_with('#');
+                continue;
+            }
+        }
+        return column_0_error(
+            number,
+            "starts at column 0 but is not a field, a comment or a list item",
+        );
     }
     Ok(())
+}
+
+/// Say whether an unindented line starts with a plain key, such as `target:` or `prompt: |`.
+///
+/// # Arguments
+///
+/// * `line` - the line, with no indent
+///
+/// # Returns
+///
+/// True when the line is a field name, then `:`, then the end of the line, a space or a tab.
+fn is_top_level_key_line(line: &str) -> bool {
+    let key_end = line.find(|c: char| !is_field_char(c)).unwrap_or(line.len());
+    let after = &line[key_end..];
+    key_end > 0
+        && after.starts_with(':')
+        && matches!(after[1..].chars().next(), None | Some(' ' | '\t'))
 }
 
 /// Reject a malformed top-level field in a draft, as [`check_malformed_top_level_fields`] does,
@@ -3306,6 +3446,217 @@ fn check_malformed_draft_top_level_fields(body: &str, index: usize) -> Result<()
         JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
         other => other,
     })
+}
+
+/// Check the YAML events of a packet body for merges, and for a layout that a strict reader or a
+/// person could read another way.
+///
+/// serde_yaml does not merge, and drops the standard `!!` tags, so the parsed value cannot show a
+/// merge. A YAML 1.1 reader such as PyYAML merges a `<<` key, a key with the tag `!!merge`, and an
+/// alias key that points at such a node. So this walk of the parser events, with the tag and
+/// position of each node, rejects:
+///
+/// - a plain `<<` scalar anywhere, a `<<` key of any style, and a node with the merge tag anywhere;
+/// - a tagged key, and an alias as a key.
+///
+/// With `top_level`, the parsed mapping of a task or a draft, it also checks the layout:
+///
+/// - each top-level key starts at column 0, and is a plain or quoted scalar;
+/// - each other line at column 0 is blank, a comment, or an item of a top-level list that starts
+///   at column 0;
+/// - the top-level keys are the keys that serde_yaml read.
+///
+/// # Arguments
+///
+/// * `body` - the YAML text of the packet
+/// * `index` - the packet's number, for messages
+/// * `top_level` - the mapping that serde_yaml read, to check the layout, or `None`
+///
+/// # Returns
+///
+/// `None`, or the first problem as a message.
+fn yaml_event_problem(body: &str, index: usize, top_level: Option<&Mapping>) -> Option<String> {
+    use yaml_rust2::parser::{Event, Parser, Tag};
+    use yaml_rust2::scanner::TScalarStyle;
+
+    // libyaml and PyYAML read U+0085, U+2028 and U+2029 as line breaks, as
+    // YAML 1.1 does, and yaml-rust2 does not, as YAML 1.2 does not. So the
+    // two parsers could split a comment at different places. jagt render
+    // writes them escaped, in double quotes.
+    if body.contains(['\u{85}', '\u{2028}', '\u{2029}']) {
+        return Some(format!(
+            "block {index} holds a raw U+0085, U+2028 or U+2029; YAML readers differ on whether it breaks a line, so write it escaped in double quotes"
+        ));
+    }
+
+    fn is_merge_tag(tag: &Tag) -> bool {
+        percent_decode(&format!("{}{}", tag.handle, tag.suffix))
+            .eq_ignore_ascii_case("tag:yaml.org,2002:merge")
+    }
+    let merge = || {
+        Some(format!(
+            "block {index} has a YAML merge key `<<`, a merge tag, a tagged key or an alias key; a YAML 1.1 reader could merge fields that lint does not check"
+        ))
+    };
+
+    // One entry per open collection: whether it is a mapping, and whether
+    // its next node is a key.
+    let mut stack: Vec<(bool, bool)> = Vec::new();
+    // Each top-level key: its text, line (from 0) and column (from 0).
+    let mut top_keys: Vec<(String, usize, usize)> = Vec::new();
+    // The lines of the top-level keys whose value is a block list at column 0.
+    let mut list_keys: Vec<usize> = Vec::new();
+    let mut parser = Parser::new_from_str(body);
+    loop {
+        let (event, mark) = match parser.next_token() {
+            Ok(next) => next,
+            Err(error) => return Some(format!("block {index} contains invalid YAML: {error}")),
+        };
+        let is_key = matches!(stack.last(), Some((true, true)));
+        let at_top = stack.len() == 1 && stack[0].0;
+        let (line, col) = (mark.line().saturating_sub(1), mark.col());
+        let mut node_done = false;
+        match &event {
+            Event::StreamEnd => break,
+            Event::Scalar(value, style, _, tag) => {
+                // Only a plain `<<` resolves to the merge tag, but a quoted
+                // `"<<"` key is refused too.
+                let merge_text = value == "<<" && (is_key || *style == TScalarStyle::Plain);
+                if merge_text || tag.as_ref().is_some_and(is_merge_tag) || (is_key && tag.is_some())
+                {
+                    return merge();
+                }
+                if is_key && at_top {
+                    top_keys.push((value.clone(), line, col));
+                }
+                node_done = true;
+            }
+            Event::Alias(_) => {
+                if is_key {
+                    return merge();
+                }
+                node_done = true;
+            }
+            Event::MappingStart(_, tag) | Event::SequenceStart(_, tag) => {
+                if tag.as_ref().is_some_and(is_merge_tag) || (is_key && tag.is_some()) {
+                    return merge();
+                }
+                if is_key && at_top && top_level.is_some() {
+                    return Some(format!(
+                        "block {index} line {} has a top-level key that is not a scalar",
+                        line + 1
+                    ));
+                }
+                if !is_key
+                    && at_top
+                    && matches!(event, Event::SequenceStart(..))
+                    // An indentless list starts after its `- `, so look at
+                    // the line itself.
+                    && body.lines().nth(line).is_some_and(|text| text.starts_with('-'))
+                    && let Some((_, key_line, _)) = top_keys.last()
+                {
+                    list_keys.push(*key_line);
+                }
+                stack.push((matches!(event, Event::MappingStart(..)), true));
+            }
+            Event::MappingEnd | Event::SequenceEnd => {
+                stack.pop();
+                node_done = true;
+            }
+            _ => {}
+        }
+        if node_done && let Some((true, next_is_key)) = stack.last_mut() {
+            *next_is_key = !*next_is_key;
+        }
+    }
+
+    let map = top_level?;
+    if let Some((key, line, _)) = top_keys.iter().find(|(_, _, col)| *col != 0) {
+        return Some(format!(
+            "block {index} line {} has the top-level field {key} away from column 0",
+            line + 1
+        ));
+    }
+    let key_lines: Vec<usize> = top_keys.iter().map(|(_, line, _)| *line).collect();
+    let mut list_open = false;
+    for (number, text) in body.lines().enumerate() {
+        if text.trim().is_empty() || text.starts_with(char::is_whitespace) || text.starts_with('#')
+        {
+            continue;
+        }
+        if key_lines.contains(&number) {
+            list_open = list_keys.contains(&number);
+            continue;
+        }
+        if text.starts_with('-') && list_open {
+            continue;
+        }
+        return Some(format!(
+            "block {index} line {} starts at column 0 but YAML reads it inside another value; indent it",
+            number + 1
+        ));
+    }
+    let same_keys = top_keys.len() == map.len()
+        && top_keys
+            .iter()
+            .all(|(key, _, _)| mapping_get(map, key).is_some());
+    (!same_keys)
+        .then(|| format!("block {index} has top-level fields that YAML readers read differently"))
+}
+
+/// Say whether a value that serde_yaml read holds a `<<` key at any depth.
+///
+/// [`yaml_event_problem`] checks the events of yaml-rust2. This walk checks the value of
+/// serde_yaml too, so a merge key that only one of the two parsers sees is still caught.
+///
+/// # Arguments
+///
+/// * `value` - the parsed body of a packet
+///
+/// # Returns
+///
+/// True when some mapping has a `<<` key, or a tagged key.
+fn has_merge_key(value: &Value) -> bool {
+    match value {
+        Value::Mapping(map) => map.iter().any(|(key, value)| {
+            matches!(key, Value::Tagged(_))
+                || key.as_str() == Some("<<")
+                || has_merge_key(key)
+                || has_merge_key(value)
+        }),
+        Value::Sequence(items) => items.iter().any(has_merge_key),
+        Value::Tagged(tagged) => has_merge_key(&tagged.value),
+        _ => false,
+    }
+}
+
+/// Decode the `%XX` escapes of a text, as a YAML reader does in a tag.
+///
+/// # Arguments
+///
+/// * `text` - the text, such as the handle and suffix of a tag
+///
+/// # Returns
+///
+/// The text with each valid escape replaced by its byte.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = (bytes[i] == b'%')
+            .then(|| text.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(byte) = escape {
+            decoded.push(byte);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// Split a string into its first character and the rest.

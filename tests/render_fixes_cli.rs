@@ -359,3 +359,32 @@ fn a_file_of_only_an_opening_delimiter_is_an_error() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("closing delimiter"));
 }
+
+#[test]
+fn spaces_at_line_ends_and_lines_of_only_whitespace_read_back_unchanged() {
+    // Each prompt reads back as written, with one newline at its end.
+    let prompts = [
+        ("x \n", "x \n"),
+        ("a  \nb\n", "a  \nb\n"),
+        ("a\n   \nb\n", "a\n   \nb\n"),
+        ("a\n\t\nb\n", "a\n\t\nb\n"),
+        ("   \nx\n", "   \nx\n"),
+        ("\t\n  y\n", "\t\n  y\n"),
+        ("x\t\n  \n\n", "x\t\n"),
+        ("a  ", "a  \n"),
+    ];
+    for (written, expected) in prompts {
+        let output = render_prompt_file(written);
+        assert!(
+            output.status.success(),
+            "{written:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).expect("utf8");
+        assert_eq!(
+            packet_yaml(&text)["prompt"].as_str(),
+            Some(expected),
+            "{written:?}: {text}"
+        );
+    }
+}

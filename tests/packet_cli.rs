@@ -978,7 +978,11 @@ fn leading_lines_of_spaces_still_give_a_valid_packet() {
             String::from_utf8_lossy(&output.stderr)
         );
         let text = String::from_utf8(output.stdout).expect("utf8");
-        assert!(text.contains("prompt: |\n\n  x\n    y\n"), "{text}");
+        // The line of spaces keeps them, after the indent of the `|2` block.
+        assert!(
+            text.contains("prompt: |2\n          \n  x\n    y\n"),
+            "{text}"
+        );
         jagt(cwd).arg("lint").write_stdin(text).assert().success();
     }
 }

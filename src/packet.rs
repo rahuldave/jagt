@@ -831,7 +831,8 @@ fn has_hidden_part(path: &Path) -> bool {
 }
 
 /// Join the layers in order, with one blank line between two layers. The
-/// whitespace at the end of each layer is dropped.
+/// blank lines and the line break at the end of each layer are dropped, but
+/// the spaces and tabs at the end of its last line are kept.
 ///
 /// # Arguments
 ///
@@ -846,9 +847,32 @@ pub fn join_layers(layers: &[Layer]) -> String {
         if !joined.is_empty() {
             joined.push_str("\n\n");
         }
-        joined.push_str(layer.text.trim_end());
+        joined.push_str(without_trailing_blank_lines(&layer.text));
     }
     joined
+}
+
+/// Drop the blank lines and the line break at the end of `text`, and keep the
+/// spaces and tabs at the end of its last line that is not blank.
+///
+/// # Arguments
+///
+/// * `text` - the text of one layer
+///
+/// # Returns
+///
+/// The start of `text`, up to the end of its last line that is not blank. It is
+/// empty when every line is blank.
+fn without_trailing_blank_lines(text: &str) -> &str {
+    let content_end = text.trim_end().len();
+    let line_end = text[content_end..]
+        .find(['\n', '\r'])
+        .map_or(text.len(), |offset| content_end + offset);
+    if content_end == 0 {
+        ""
+    } else {
+        &text[..line_end]
+    }
 }
 
 /// Make a [`JagtError::Render`] from a message.
@@ -866,6 +890,26 @@ fn render_error(message: &str) -> JagtError {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_layer_keeps_the_spaces_at_the_end_of_its_last_line() {
+        assert_eq!(without_trailing_blank_lines("a  \n\n  \n"), "a  ");
+        assert_eq!(without_trailing_blank_lines("a\t\r\n"), "a\t");
+        assert_eq!(without_trailing_blank_lines("a\n   \nb"), "a\n   \nb");
+        assert_eq!(without_trailing_blank_lines("  \n\n"), "");
+        assert_eq!(without_trailing_blank_lines(""), "");
+        let layers = [
+            Layer {
+                label: "one".to_string(),
+                text: "x  \n\n".to_string(),
+            },
+            Layer {
+                label: "two".to_string(),
+                text: "y\n".to_string(),
+            },
+        ];
+        assert_eq!(join_layers(&layers), "x  \n\ny");
+    }
     use super::*;
 
     #[test]

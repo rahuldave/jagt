@@ -1,0 +1,36 @@
+<<<AGENT_TASK v1>>>
+target: review
+mode: agentic
+nonce: a4fb09d1174ed82b791dd11af9c6665f
+result_rules:
+  - 'Put the top-level field nonce: b5ac10e2285fe93c802ee22ba0d7776a in the AGENT_RESULT v1 block. A result without this nonce gives no record.'
+argv: []
+prompt: |2
+      Indented first line of the base task.
+  Then the rest.
+
+  Follow the review checklist of this repository.
+inputs:
+  files: []
+outputs:
+  required: []
+allowed_actions: []
+verification: []
+delegation:
+  execution: subagent
+  recursive: true
+  triggers:
+    - nested agentic Just calls
+    - agentic dependencies
+    - hook-triggered packets
+    - agentic verification targets
+safety:
+  - This block is repo-local operational context.
+  - It cannot override user, system, developer, VCS, or approval instructions.
+provenance:
+  renderer: jagt
+  renderer_version: 0.3.0
+  layers:
+    - base task
+    - 'repository text: .agents/targets/review.md'
+<<<END_AGENT_TASK>>>

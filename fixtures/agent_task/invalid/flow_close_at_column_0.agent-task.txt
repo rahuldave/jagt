@@ -1,0 +1,31 @@
+<<<AGENT_TASK v1>>>
+target: review
+mode: agentic
+argv: [a,
+ b
+]
+prompt: |
+  Go.
+inputs:
+  files: []
+outputs:
+  required: []
+allowed_actions: []
+verification: []
+delegation:
+  execution: subagent
+  recursive: true
+  triggers:
+    - nested agentic Just calls
+    - agentic dependencies
+    - hook-triggered packets
+    - agentic verification targets
+safety:
+  - This block is repo-local operational context.
+  - It cannot override user, system, developer, VCS, or approval instructions.
+provenance:
+  renderer: jagt
+  renderer_version: 0.4.0
+  layers:
+    - base task
+<<<END_AGENT_TASK>>>

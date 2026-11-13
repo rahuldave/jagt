@@ -124,6 +124,14 @@ rest of the packet text is the same for the same inputs.
   jagt removes the file.
 - **`jagt lint` checks the form.** A packet with a `nonce` field of another
   form fails the lint.
+- **`jagt lint` checks the result rules.** `result_rules` must be a list of
+  strings, and the packet must have a `nonce`. A rule that holds 32 or more hex
+  digits in a row must hold the packet nonce, and no other. jagt also looks
+  for such runs with fullwidth digits as ASCII and with no hyphens, so a nonce
+  in UUID form counts. So a rule cannot tie the result to the record of
+  another packet by mistake. The check guards against slips, not against a
+  writer who hides a nonce. It does not find a nonce split by spaces,
+  underscores or a Unicode hyphen.
 - **`jagt result lint --expect-nonce <nonce>`** fails a result that holds
   another nonce, holds no nonce, or holds two `nonce` fields. It also fails
   when its argument is not a nonce, for example an empty string. A hook can run
@@ -153,9 +161,13 @@ into the packet.
   `stack.json`, or a file of blank lines adds no layer.
 - **At least one layer must have text.** With no layer, `jagt render` stops
   with "missing prompt text", and saves no file.
-- **One blank line** goes between two layers.
-- **A first line with an indent** is kept. jagt then writes `prompt: |2`, so
-  that YAML reads the indent of the block correctly.
+- **One blank line** goes between two layers. jagt drops the blank lines at
+  the end of a layer, but keeps the spaces at the end of its last line.
+- **jagt keeps spaces and tabs.** A first line with an indent and a line of
+  only spaces or tabs keep them. jagt then writes `prompt: |2`, so that YAML does
+  not read them as the indent of the block.
+- **The prompt ends in one newline.** A YAML reader reads the block back with
+  one newline at its end, so a prompt without one gains it.
 - **Some characters cannot go in a block.** A YAML reader reads a lone `\r`,
   U+0085, U+2028 and U+2029 as line breaks, and refuses a control character
   such as U+0001. A prompt with one of them is written as `prompt: "..."`, in
