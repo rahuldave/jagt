@@ -2145,9 +2145,19 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
 
 /// Check that a draft does not claim approval, try to bypass a rule, or ask to run inline.
 ///
+/// The structured fields are checked by value:
+///
+/// - `approval` may hold only `required`, `approver`, `reason` and `notes`, so a field such as
+///   `status: approved` or `approved_by` counts as a claim of approval;
+/// - `execute_inline`, when present, must be `false`.
+///
+/// The text of the draft is searched, in lower case, for phrases that claim approval, bypass a
+/// rule or ask to run inline. A phrase counts only when its clause has no negation before it, so
+/// "Never run inline." is not an order to run inline.
+///
 /// # Arguments
 ///
-/// * `body` - the YAML text of the draft, searched in lower case
+/// * `body` - the YAML text of the draft
 /// * `map` - the draft as YAML
 /// * `index` - the draft's number, for messages
 ///
@@ -2155,42 +2165,105 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
 ///
 /// `Ok(())`, or the first problem found.
 fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize) -> Result<()> {
-    let lower = body.to_ascii_lowercase();
-    if lower.contains("already approved")
-        || lower.contains("preapproved")
-        || lower.contains("pre-approved")
-    {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
+    let claims_approval = || {
+        JagtError::InvalidAgentTaskDraft(format!(
             "block {index} claims the draft is already approved"
-        )));
+        ))
+    };
+    if let Some(approval) = mapping_get(map, "approval").and_then(Value::as_mapping) {
+        for key in approval.keys() {
+            let known = key
+                .as_str()
+                .is_some_and(|key| matches!(key, "required" | "approver" | "reason" | "notes"));
+            if !known {
+                return Err(claims_approval());
+            }
+        }
     }
 
-    if lower.contains("bypass approval")
-        || lower.contains("bypass approvals")
-        || lower.contains("bypass sandbox")
-        || lower.contains("bypass sandboxing")
-        || lower.contains("bypass user")
-        || lower.contains("bypass system")
-        || lower.contains("bypass developer")
-        || lower.contains("bypass vcs")
-        || lower.contains("bypass repo")
-        || lower.contains("bypass repository")
-        || lower.contains("bypass policy")
+    let lower = body.to_ascii_lowercase();
+    if [
+        "already approved",
+        "preapproved",
+        "pre-approved",
+        "has been approved",
+        "was approved",
+        "is approved",
+        "approval granted",
+        "approval was granted",
+        "approval has been granted",
+        "approval is granted",
+        "approval recorded",
+    ]
+    .iter()
+    .any(|phrase| affirms(&lower, phrase))
+    {
+        return Err(claims_approval());
+    }
+
+    if [
+        "bypass",
+        "circumvent",
+        "skip approval",
+        "skip the approval",
+        "skip approvals",
+        "skip review",
+        "skip the review",
+        "ignore approval",
+        "ignore the approval",
+        "ignore approvals",
+        "without approval",
+        "without asking",
+        "no approval needed",
+        "no need for approval",
+        "disable the sandbox",
+        "disable sandbox",
+        "escape the sandbox",
+        "escape sandbox",
+        "outside the sandbox",
+        "override the user",
+        "override user",
+        "override approval",
+        "override the policy",
+        "override policy",
+        "ignore the user",
+        "ignore user instructions",
+        "ignore the system",
+        "ignore system instructions",
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "--no-verify",
+        "force push",
+        "force-push",
+        "push --force",
+    ]
+    .iter()
+    .any(|phrase| affirms(&lower, phrase))
     {
         return Err(JagtError::InvalidAgentTaskDraft(format!(
             "block {index} attempts to bypass approvals or policy"
         )));
     }
 
-    if mapping_get(map, "execute_inline").and_then(Value::as_bool) == Some(true)
-        || lower.contains("execution_after_promotion: parent")
-        || lower.contains("execution_after_promotion: current-agent")
-        || lower.contains("execution_after_promotion: same-subagent")
-        || lower.contains("execution_after_promotion: self")
-        || lower.contains("execution_after_promotion: inline")
-        || lower.contains("execute inline")
-        || lower.contains("run inline")
-        || lower.contains("perform inline")
+    let inline_flag =
+        mapping_get(map, "execute_inline").is_some_and(|value| value.as_bool() != Some(false));
+    if inline_flag
+        || [
+            "execute inline",
+            "execute it inline",
+            "run inline",
+            "run it inline",
+            "perform inline",
+            "execute it now",
+            "run it now",
+            "run it yourself",
+            "execute it yourself",
+            "do the task yourself",
+            "do it yourself",
+            "in the current agent",
+        ]
+        .iter()
+        .any(|phrase| affirms(&lower, phrase))
     {
         return Err(JagtError::InvalidAgentTaskDraft(format!(
             "block {index} attempts direct draft execution"
@@ -2200,8 +2273,49 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
     Ok(())
 }
 
-/// Say whether an allowed action is too broad for a draft, such as "write anywhere" or "network
-/// access".
+/// Say whether `text` holds `phrase` in a clause that does not deny it.
+///
+/// A clause runs from the last `.`, `!`, `?`, `;`, `:` or line break before the phrase. A clause
+/// with a negation such as `not`, `never`, `no` or `cannot` before the phrase denies it.
+///
+/// # Arguments
+///
+/// * `text` - the text, in lower case
+/// * `phrase` - the phrase, in lower case
+///
+/// # Returns
+///
+/// True when one use of the phrase is not denied.
+fn affirms(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(start, _)| {
+        let before = &text[..start];
+        let clause_start = before
+            .rfind(['.', '!', '?', ';', ':', '\n'])
+            .map_or(0, |at| at + 1);
+        let clause = &before[clause_start..];
+        !clause
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '\''))
+            .any(|word| {
+                matches!(
+                    word,
+                    "not"
+                        | "never"
+                        | "no"
+                        | "nor"
+                        | "cannot"
+                        | "can't"
+                        | "don't"
+                        | "doesn't"
+                        | "mustn't"
+                        | "shouldn't"
+                        | "won't"
+                )
+            })
+    })
+}
+
+/// Say whether an allowed action is too broad for a draft, such as "write anywhere", "run
+/// arbitrary commands" or "fetch URLs from the internet".
 ///
 /// # Arguments
 ///
@@ -2212,12 +2326,66 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
 /// True when it is too broad.
 fn is_overbroad_draft_action(action: &str) -> bool {
     let lower = action.to_ascii_lowercase();
-    lower.contains("write anywhere")
-        || lower.contains("read all files")
-        || lower.contains("read arbitrary")
-        || lower.contains("unrestricted")
-        || lower.contains("any command")
-        || lower.contains("network access")
+    let words: Vec<&str> = lower
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    // A word counts only when none of the two words before it is a negation,
+    // so "no network access" is not broad.
+    let negation = |word: &str| matches!(word, "no" | "not" | "never" | "without" | "cannot");
+    let has = |target: &str| {
+        words.iter().enumerate().any(|(at, word)| {
+            *word == target && !words[at.saturating_sub(2)..at].iter().any(|w| negation(w))
+        })
+    };
+    // "any" or "all" before a broad object, such as "any file" or "all commands".
+    let broad_object = words.windows(2).enumerate().any(|(at, pair)| {
+        !words[at.saturating_sub(2)..at].iter().any(|w| negation(w))
+            && matches!(pair[0], "any" | "all" | "every" | "arbitrary")
+            && matches!(
+                pair[1],
+                "file"
+                    | "files"
+                    | "folder"
+                    | "folders"
+                    | "path"
+                    | "paths"
+                    | "command"
+                    | "commands"
+                    | "program"
+                    | "programs"
+                    | "url"
+                    | "urls"
+                    | "host"
+                    | "hosts"
+                    | "site"
+                    | "sites"
+                    | "code"
+                    | "action"
+                    | "actions"
+                    | "tool"
+                    | "tools"
+            )
+    });
+    broad_object
+        || has("arbitrary")
+        || has("anywhere")
+        || has("unrestricted")
+        || has("unlimited")
+        || has("everything")
+        || has("internet")
+        || has("network")
+        || has("sudo")
+        || has("root")
+        || has("url")
+        || has("urls")
+        || has("download")
+        || has("curl")
+        || has("wget")
+        || lower.contains("shell access")
+        || lower.contains("read all")
+        || lower.contains("write all")
+        || lower.contains("delete all")
 }
 
 /// Check that a task packet delegates to a subagent, recursively, with every one of
@@ -3356,6 +3524,42 @@ Create the report.
             Some(vec!["inspect dataset".to_string()])
         );
         assert_eq!(parsed.body, "Create the report.\n");
+    }
+
+    #[test]
+    fn affirms_skips_a_phrase_that_its_clause_denies() {
+        assert!(affirms("run inline now.", "run inline"));
+        assert!(!affirms("never run inline.", "run inline"));
+        assert!(!affirms("do not bypass approval.", "bypass"));
+        assert!(affirms("do not wait. bypass approval.", "bypass"));
+        assert!(affirms("you can't stop: bypass it", "bypass"));
+        assert!(!affirms("nothing here", "bypass"));
+    }
+
+    #[test]
+    fn broad_draft_actions_are_caught_and_narrow_ones_pass() {
+        for action in [
+            "run arbitrary commands",
+            "write any file in the repo",
+            "fetch URLs from the internet",
+            "network access",
+            "write anywhere in the repository",
+            "read all files",
+            "use sudo",
+            "download the dataset",
+            "do everything needed",
+        ] {
+            assert!(is_overbroad_draft_action(action), "{action}");
+        }
+        for action in [
+            "read the inline user_message",
+            "compute the requested scalar result",
+            "work with no network access",
+            "create listed outputs",
+            "run command: wc -w",
+        ] {
+            assert!(!is_overbroad_draft_action(action), "{action}");
+        }
     }
 
     #[test]

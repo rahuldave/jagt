@@ -68,6 +68,30 @@ fn draft_lint_rejects_invalid_draft_fixtures() {
             "fixtures/agent_task_draft/invalid/direct_execution.agent-task-draft.txt",
             "attempts direct draft execution",
         ),
+        (
+            "fixtures/agent_task_draft/invalid/execute_inline_string.agent-task-draft.txt",
+            "attempts direct draft execution",
+        ),
+        (
+            "fixtures/agent_task_draft/invalid/arbitrary_commands.agent-task-draft.txt",
+            "overbroad allowed actions",
+        ),
+        (
+            "fixtures/agent_task_draft/invalid/fetch_urls.agent-task-draft.txt",
+            "overbroad allowed actions",
+        ),
+        (
+            "fixtures/agent_task_draft/invalid/claims_approval_status.agent-task-draft.txt",
+            "claims the draft is already approved",
+        ),
+        (
+            "fixtures/agent_task_draft/invalid/claims_approval_text.agent-task-draft.txt",
+            "claims the draft is already approved",
+        ),
+        (
+            "fixtures/agent_task_draft/invalid/skip_approval.agent-task-draft.txt",
+            "attempts to bypass approvals or policy",
+        ),
     ] {
         Command::cargo_bin("jagt")
             .expect("binary exists")
@@ -76,4 +100,17 @@ fn draft_lint_rejects_invalid_draft_fixtures() {
             .failure()
             .stderr(predicate::str::contains(message));
     }
+}
+
+#[test]
+fn draft_lint_accepts_a_draft_that_denies_inline_runs_and_broad_actions() {
+    Command::cargo_bin("jagt")
+        .expect("binary exists")
+        .args([
+            "draft",
+            "lint",
+            "fixtures/agent_task_draft/valid/negations.agent-task-draft.txt",
+        ])
+        .assert()
+        .success();
 }
