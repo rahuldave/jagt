@@ -907,6 +907,13 @@ fn interpolate_env(value: &str, env_config: &EnvConfig) -> Result<String> {
     }
 
     output.push_str(rest);
+    // Two values can make a secret together, such as a user and a password
+    // in one URL, so the finished string is checked too.
+    if output != value && looks_secret_value(&output) {
+        return Err(JagtError::Render(
+            "environment interpolation gives a secret-like value".to_string(),
+        ));
+    }
     Ok(output)
 }
 
@@ -1011,8 +1018,13 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
     pattern_index == pattern_bytes.len()
 }
 
-/// Say whether a variable name looks like a secret's, such as one that contains `TOKEN` or
-/// `PASSWORD`, or ends in `_KEY`.
+/// Say whether a variable name looks like a secret's.
+///
+/// The name is split into parts at each character that is not a letter or a digit. A part such
+/// as `TOKEN`, `PASS`, `AUTH`, `DSN` or `KEY` counts, except `PUBLIC_KEY`. So do the words
+/// `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PASSPHRASE` and `CREDENTIAL` inside a part, a part
+/// that ends in `AUTH` or `TOKEN`, and known compounds such as `PGPASS` and `SSHKEY`. `AUTHOR`,
+/// `KEYBOARD` and `COMPASS` do not count.
 ///
 /// # Arguments
 ///
@@ -1023,20 +1035,67 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 /// True when the name looks like a secret's.
 fn looks_secret_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    upper.contains("TOKEN")
-        || upper.contains("SECRET")
-        || upper.contains("PASSWORD")
-        || upper.contains("PRIVATE_KEY")
-        || upper.contains("API_KEY")
-        || upper.contains("ACCESS_KEY")
-        || upper.contains("CREDENTIAL")
-        || upper.contains("AUTH")
-        || upper.contains("PASSWD")
-        || upper.contains("PASSPHRASE")
-        || upper.contains("PRIVATE")
-        || upper.contains("COOKIE")
-        || upper == "KEY"
-        || upper.ends_with("_KEY")
+    let parts: Vec<&str> = upper
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect();
+    let secret_part = parts.iter().enumerate().any(|(at, part)| {
+        let public_key = *part == "KEY" && at > 0 && parts[at - 1] == "PUBLIC";
+        let named = matches!(
+            *part,
+            "TOKEN"
+                | "TOKENS"
+                | "SECRET"
+                | "SECRETS"
+                | "PASS"
+                | "PASSWORD"
+                | "PASSWD"
+                | "PASSPHRASE"
+                | "CREDENTIAL"
+                | "CREDENTIALS"
+                | "CREDS"
+                | "AUTH"
+                | "COOKIE"
+                | "COOKIES"
+                | "DSN"
+                | "SIG"
+                | "SIGNATURE"
+                | "KEY"
+                | "KEYS"
+                | "APIKEY"
+                | "WEBHOOK"
+        );
+        let inside = [
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "PASSPHRASE",
+            "CREDENTIAL",
+        ]
+        .iter()
+        .any(|word| part.contains(word));
+        let ends = ["AUTH", "TOKEN"]
+            .iter()
+            .any(|end| part.len() > end.len() && part.ends_with(end));
+        // Many words end in KEY or PASS, such as KEYBOARD's kin MONKEY or COMPASS,
+        // so only known compounds count.
+        let compound = matches!(
+            *part,
+            "PGPASS"
+                | "DBPASS"
+                | "SSHKEY"
+                | "ACCESSKEY"
+                | "SECRETKEY"
+                | "PRIVATEKEY"
+                | "MASTERKEY"
+                | "SIGNINGKEY"
+                | "ENCRYPTIONKEY"
+                | "ACCOUNTKEY"
+        );
+        (named && !public_key) || inside || ends || compound
+    });
+    secret_part || upper.contains("CONNECTION_STRING")
 }
 
 /// Say whether a value looks like a secret.
@@ -1044,12 +1103,14 @@ fn looks_secret_name(name: &str) -> bool {
 /// This is a guard against common mistakes, not a proof that a value holds no secret. It looks
 /// for:
 ///
-/// - a private key, by the text `private key` or `-----BEGIN`;
+/// - a private key: `-----BEGIN`, `private key`, `private_key` or `privatekey`;
 /// - a URL with a password, such as `postgres://user:pw@host/db`;
-/// - a word that starts like a known token: GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
-///   `github_pat_`), GitLab (`glpat-`), Slack (`xoxb-` and the like, `xapp-`), Stripe
-///   (`sk_live_`, `rk_live_`), OpenAI or Anthropic (`sk-`), npm (`npm_`), Hugging Face (`hf_`),
-///   Google (`AIza`), an AWS access key id (`AKIA` or `ASIA` and 16 more), or a JSON web token.
+/// - an Azure account key or SAS signature (`AccountKey=`, `SharedAccessKey=`, `sig=`);
+/// - an `Authorization` value: `Basic` or `Bearer` and a long token;
+/// - a Slack or Discord webhook URL;
+/// - a word that starts like a known token, see [`looks_secret_word`];
+/// - a value of 40 base64 characters with upper case, lower case and digits, the form of an AWS
+///   secret access key.
 ///
 /// # Arguments
 ///
@@ -1060,18 +1121,38 @@ fn looks_secret_name(name: &str) -> bool {
 /// True when the value looks like a secret.
 fn looks_secret_value(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    if lower.contains("private key") || value.contains("-----BEGIN") {
-        return true;
-    }
-    if has_url_password(value) {
-        return true;
-    }
-    value
-        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
-        .any(looks_secret_word)
+    let marker = [
+        "-----begin",
+        "private key",
+        "private_key",
+        "privatekey",
+        "accountkey=",
+        "sharedaccesskey=",
+        "?sig=",
+        "&sig=",
+        "hooks.slack.com/services/",
+        "discord.com/api/webhooks/",
+        "discordapp.com/api/webhooks/",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    marker
+        || has_url_password(value)
+        || has_auth_scheme_token(&lower)
+        || looks_aws_secret_key(value.trim())
+        || value
+            .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+            .any(looks_secret_word)
 }
 
-/// Say whether a word starts like a known token. See [`looks_secret_value`].
+/// Say whether a word starts like a known token.
+///
+/// The tokens are GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), GitLab
+/// (`glpat-`), Slack (`xoxb-` and the like, `xapp-`), Stripe (`sk_live_`, `sk_test_`, `rk_live_`,
+/// `rk_test_`, `whsec_`), DigitalOcean (`dop_v1_`), age (`AGE-SECRET-KEY-`), Google OAuth
+/// (`ya29.`), SendGrid (`SG.`), OpenAI or Anthropic (`sk-`), npm (`npm_`), Hugging Face (`hf_`),
+/// a Google API key (`AIza`), an AWS access key id (`AKIA` or `ASIA`), and a JSON web token. A
+/// prefix that ordinary text uses counts only with a tail of the token's form.
 ///
 /// # Arguments
 ///
@@ -1082,9 +1163,6 @@ fn looks_secret_value(value: &str) -> bool {
 /// True when the word looks like a token.
 fn looks_secret_word(word: &str) -> bool {
     let lower = word.to_ascii_lowercase();
-    // A prefix that is common in ordinary text counts only with a long tail.
-    let long_after =
-        |prefix: &str, min: usize| lower.starts_with(prefix) && word.len() >= prefix.len() + min;
     let any_prefix = [
         "ghp_",
         "gho_",
@@ -1100,29 +1178,105 @@ fn looks_secret_word(word: &str) -> bool {
         "xoxs-",
         "xapp-",
         "sk_live_",
+        "sk_test_",
         "rk_live_",
+        "rk_test_",
+        "whsec_",
+        "dop_v1_",
+        "age-secret-key-",
+        "ya29.",
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix));
+    // A tail of only letters and digits, at least `min` long, as in npm and Hugging Face tokens.
+    let alnum_tail = |prefix: &str, min: usize| {
+        lower.starts_with(prefix)
+            && word.len() >= prefix.len() + min
+            && word[prefix.len()..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric())
+    };
+    // An OpenAI or Anthropic key has a long tail with digits and upper case.
+    let sk_key = lower.starts_with("sk-") && word.len() >= 23 && {
+        let tail = &word[3..];
+        tail.bytes().any(|byte| byte.is_ascii_digit())
+            && tail.bytes().any(|byte| byte.is_ascii_uppercase())
+    };
+    let sendgrid = word.starts_with("SG.") && word.len() >= 60 && word.split('.').count() == 3;
+    // An AWS access key id is AKIA or ASIA and 16 characters of base32.
     let aws_key_id = (word.starts_with("AKIA") || word.starts_with("ASIA"))
         && word.len() == 20
+        && word[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || (b'2'..=b'7').contains(&byte));
+    let google_key = word.starts_with("AIza")
+        && word.len() == 39
         && word
             .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
-    let google_key = word.starts_with("AIza") && word.len() >= 39;
-    let json_web_token = word.starts_with("eyJ")
-        && word.split('.').count() == 3
-        && word.split('.').all(|part| part.len() >= 4);
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    // A JSON web token has three parts, and the first two are JSON, so start with `eyJ`.
+    let parts: Vec<&str> = word.split('.').collect();
+    let json_web_token = parts.len() == 3
+        && parts[0].starts_with("eyJ")
+        && parts[1].starts_with("eyJ")
+        && parts.iter().all(|part| part.len() >= 8);
     any_prefix
-        || long_after("sk-", 20)
-        || long_after("npm_", 20)
-        || long_after("hf_", 20)
+        || alnum_tail("npm_", 30)
+        || alnum_tail("hf_", 30)
+        || sk_key
+        || sendgrid
         || aws_key_id
         || google_key
         || json_web_token
 }
 
+/// Say whether a value holds `Basic` or `Bearer` and a token, as an `Authorization` header does.
+///
+/// # Arguments
+///
+/// * `lower` - the value, in lower case
+///
+/// # Returns
+///
+/// True when `basic ` or `bearer ` is followed by a token of 8 or more characters.
+fn has_auth_scheme_token(lower: &str) -> bool {
+    ["basic ", "bearer "].iter().any(|scheme| {
+        lower.match_indices(scheme).any(|(at, _)| {
+            let token: String = lower[at + scheme.len()..]
+                .chars()
+                .take_while(|c| {
+                    c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_' | '.')
+                })
+                .collect();
+            token.len() >= 8
+        })
+    })
+}
+
+/// Say whether a value has the form of an AWS secret access key: 40 base64 characters, with
+/// upper case, lower case and a digit. A git hash is lower case, so it does not count.
+///
+/// # Arguments
+///
+/// * `value` - the value, trimmed
+///
+/// # Returns
+///
+/// True when it has that form.
+fn looks_aws_secret_key(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        && value.bytes().any(|byte| byte.is_ascii_uppercase())
+        && value.bytes().any(|byte| byte.is_ascii_lowercase())
+        && value.bytes().any(|byte| byte.is_ascii_digit())
+}
+
 /// Say whether a value holds a URL with a password, such as `https://user:pw@host/`.
+///
+/// The part after `://` ends at `/`, `?`, `#` or an ASCII space, so a Unicode space cannot hide
+/// the `@`.
 ///
 /// # Arguments
 ///
@@ -1135,7 +1289,7 @@ fn has_url_password(value: &str) -> bool {
     value.match_indices("://").any(|(index, _)| {
         let rest = &value[index + 3..];
         let authority_end = rest
-            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_ascii_whitespace())
             .unwrap_or(rest.len());
         let authority = &rest[..authority_end];
         authority.rfind('@').is_some_and(|at| {
@@ -3575,9 +3729,24 @@ Create the report.
             "ghs_abc",
             "Bearer ghp_abc",
             "sk_live_abc",
-            "sk-ant-api03-abcdefghijklmnopqrst",
-            "npm_abcdefghijklmnopqrstuv",
-            "hf_abcdefghijklmnopqrstuv",
+            "sk-ant-api03-AbCdEfGhIjKlMnOpQrSt",
+            "sk-proj-Ab3dEfGhIjKlMnOpQrStUv",
+            "npm_abcdefghijklmnopqrstuvwxyz0123456789",
+            "hf_abcdefghijklmnopqrstuvwxyz01234567",
+            "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=abc==",
+            "https://a.blob.core.windows.net/c?sv=2020&sig=abc%3D",
+            "{\"type\": \"service_account\", \"private_key_id\": \"x\"}",
+            "Authorization: Basic dXNlcjpwYXNz",
+            "Bearer abcdefghijklmnop",
+            "sk_test_abc",
+            "whsec_abc",
+            concat!("SG.", "abcdefghijklmnopqrstuv", ".abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"),
+            "ya29.abc",
+            "dop_v1_abc",
+            "AGE-SECRET-KEY-1ABC",
+            "https://hooks.slack.com/services/T0/B0/x",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "https://user:pw\u{2003}@host",
             "AIzaSyA1234567890abcdefghijklmnopqrstuv",
             "eyJhbGciOi.eyJzdWIiOi.SflKxwRJSM",
             "-----BEGIN OPENSSH PRIVATE KEY-----",
@@ -3601,8 +3770,17 @@ Create the report.
             "npm_config",
             "AKIA",
             "AKIAabcdefghijklmnop",
+            "AKIA1234567890123456",
             "eyJ",
+            "eyJustSome.random.text",
             "a-b.c_d",
+            "hf_hub_cache_directory_long_name_ok",
+            "npm_config_cache_directory_long_name",
+            "sk-learn-is-a-very-long-model-name-x",
+            "/Users/me/AIzaSomethingThatIsLongerThanThirtyNineCharacters",
+            "0123456789abcdef0123456789abcdef01234567",
+            "basic usage",
+            "v1.2.3",
         ] {
             assert!(!looks_secret_value(value), "{value}");
         }
@@ -3612,16 +3790,32 @@ Create the report.
     fn secret_names_include_key_suffixes_and_passwords() {
         for name in [
             "API_TOKEN",
+            "GITHUBTOKEN",
             "DB_PASSWD",
+            "DB_PASS",
+            "PGPASS",
             "SSH_KEY",
             "KEY",
             "GPG_PASSPHRASE",
             "SESSION_COOKIE",
-            "PRIVATE_DATA",
+            "SENTRY_DSN",
+            "WEBHOOK_URL",
+            "OAUTH",
+            "AZURE_STORAGE_CONNECTION_STRING",
         ] {
             assert!(looks_secret_name(name), "{name}");
         }
-        for name in ["DATA_ROOT", "KEYBOARD", "MONKEY_PATH", "DATABASE_URL"] {
+        for name in [
+            "DATA_ROOT",
+            "KEYBOARD",
+            "MONKEY_PATH",
+            "DATABASE_URL",
+            "PUBLIC_KEY",
+            "AUTHOR",
+            "AUTHORS_FILE",
+            "PRIVATE_REPO_URL",
+            "COMPASS_DIR",
+        ] {
             assert!(!looks_secret_name(name), "{name}");
         }
     }

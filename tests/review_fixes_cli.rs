@@ -467,3 +467,22 @@ fn an_allowlisted_database_url_with_a_password_is_refused() {
         .stderr(predicate::str::contains("secret-like value"))
         .stdout(predicate::str::contains("fakepw").not());
 }
+
+#[test]
+fn two_allowlisted_values_that_make_a_secret_together_are_refused() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".jagt")).expect("config folder");
+    fs::write(
+        dir.path().join(".jagt/config.toml"),
+        "[env]\nallow = [\"JAGT_TEST_USER\", \"JAGT_TEST_HOST\"]\n\n[defaults]\nprompt_text = \"Go.\"\ninputs = [\"postgres://${JAGT_TEST_USER}:${JAGT_TEST_HOST}@h/db\"]\n",
+    )
+    .expect("config");
+    jagt(dir.path())
+        .env("JAGT_TEST_USER", "user")
+        .env("JAGT_TEST_HOST", "fakepw")
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("secret-like value"))
+        .stdout(predicate::str::contains("fakepw").not());
+}

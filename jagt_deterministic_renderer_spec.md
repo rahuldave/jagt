@@ -283,11 +283,17 @@ The MVP should reject secret-like variables used in render-critical fields
 instead of rendering a redacted placeholder that may produce unusable paths.
 
 The check of names and values is a guard against common mistakes, not a proof
-that a value holds no secret. jagt refuses a name with a word such as `TOKEN`,
-`SECRET`, `PASSWORD`, `PASSWD`, `AUTH` or `PRIVATE`, or a name that ends in
-`_KEY`. It refuses a value that holds a private key, a URL with a password, or
-a word that starts like a known token, such as `ghp_`, `xoxb-`, `glpat-`,
-`AKIA`, `AIza` or `sk-`. Allowlist only variables that hold no secret.
+that a value holds no secret. It cannot spot a random string, such as most
+passwords. Allowlist only variables that hold no secret.
+
+- **Names:** jagt refuses a name with a part such as `TOKEN`, `PASS`, `AUTH`,
+  `DSN`, `WEBHOOK` or `KEY`, except `PUBLIC_KEY`.
+- **Values:** jagt refuses a value that holds a private key, a URL with a
+  password, an Azure key or signature, or `Basic` or `Bearer` and a token. It
+  also refuses a word that starts like a known token, such as `ghp_`, `xoxb-`,
+  `glpat-`, `AKIA`, `AIza` or `sk-`.
+- **The whole string:** jagt checks the string after it fills in each
+  `${NAME}`, because two values can make a secret together.
 Future provenance features may record redacted environment facts, but raw env
 dumps are out of scope.
 
