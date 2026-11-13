@@ -281,6 +281,13 @@ Environment capture is useful for reproducibility, but dangerous if implicit.
 
 The MVP should reject secret-like variables used in render-critical fields
 instead of rendering a redacted placeholder that may produce unusable paths.
+
+The check of names and values is a guard against common mistakes, not a proof
+that a value holds no secret. jagt refuses a name with a word such as `TOKEN`,
+`SECRET`, `PASSWORD`, `PASSWD`, `AUTH` or `PRIVATE`, or a name that ends in
+`_KEY`. It refuses a value that holds a private key, a URL with a password, or
+a word that starts like a known token, such as `ghp_`, `xoxb-`, `glpat-`,
+`AKIA`, `AIza` or `sk-`. Allowlist only variables that hold no secret.
 Future provenance features may record redacted environment facts, but raw env
 dumps are out of scope.
 

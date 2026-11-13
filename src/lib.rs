@@ -1012,7 +1012,7 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 }
 
 /// Say whether a variable name looks like a secret's, such as one that contains `TOKEN` or
-/// `PASSWORD`.
+/// `PASSWORD`, or ends in `_KEY`.
 ///
 /// # Arguments
 ///
@@ -1031,9 +1031,25 @@ fn looks_secret_name(name: &str) -> bool {
         || upper.contains("ACCESS_KEY")
         || upper.contains("CREDENTIAL")
         || upper.contains("AUTH")
+        || upper.contains("PASSWD")
+        || upper.contains("PASSPHRASE")
+        || upper.contains("PRIVATE")
+        || upper.contains("COOKIE")
+        || upper == "KEY"
+        || upper.ends_with("_KEY")
 }
 
-/// Say whether a value looks like a secret, such as a GitHub token or a private key.
+/// Say whether a value looks like a secret.
+///
+/// This is a guard against common mistakes, not a proof that a value holds no secret. It looks
+/// for:
+///
+/// - a private key, by the text `private key` or `-----BEGIN`;
+/// - a URL with a password, such as `postgres://user:pw@host/db`;
+/// - a word that starts like a known token: GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+///   `github_pat_`), GitLab (`glpat-`), Slack (`xoxb-` and the like, `xapp-`), Stripe
+///   (`sk_live_`, `rk_live_`), OpenAI or Anthropic (`sk-`), npm (`npm_`), Hugging Face (`hf_`),
+///   Google (`AIza`), an AWS access key id (`AKIA` or `ASIA` and 16 more), or a JSON web token.
 ///
 /// # Arguments
 ///
@@ -1044,11 +1060,90 @@ fn looks_secret_name(name: &str) -> bool {
 /// True when the value looks like a secret.
 fn looks_secret_value(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    lower.starts_with("ghp_")
-        || lower.starts_with("gho_")
-        || lower.starts_with("github_pat_")
-        || lower.starts_with("sk-")
-        || lower.contains("private key")
+    if lower.contains("private key") || value.contains("-----BEGIN") {
+        return true;
+    }
+    if has_url_password(value) {
+        return true;
+    }
+    value
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        .any(looks_secret_word)
+}
+
+/// Say whether a word starts like a known token. See [`looks_secret_value`].
+///
+/// # Arguments
+///
+/// * `word` - a run of letters, digits, `_`, `-` and `.`
+///
+/// # Returns
+///
+/// True when the word looks like a token.
+fn looks_secret_word(word: &str) -> bool {
+    let lower = word.to_ascii_lowercase();
+    // A prefix that is common in ordinary text counts only with a long tail.
+    let long_after =
+        |prefix: &str, min: usize| lower.starts_with(prefix) && word.len() >= prefix.len() + min;
+    let any_prefix = [
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "github_pat_",
+        "glpat-",
+        "xoxa-",
+        "xoxb-",
+        "xoxp-",
+        "xoxr-",
+        "xoxs-",
+        "xapp-",
+        "sk_live_",
+        "rk_live_",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix));
+    let aws_key_id = (word.starts_with("AKIA") || word.starts_with("ASIA"))
+        && word.len() == 20
+        && word
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
+    let google_key = word.starts_with("AIza") && word.len() >= 39;
+    let json_web_token = word.starts_with("eyJ")
+        && word.split('.').count() == 3
+        && word.split('.').all(|part| part.len() >= 4);
+    any_prefix
+        || long_after("sk-", 20)
+        || long_after("npm_", 20)
+        || long_after("hf_", 20)
+        || aws_key_id
+        || google_key
+        || json_web_token
+}
+
+/// Say whether a value holds a URL with a password, such as `https://user:pw@host/`.
+///
+/// # Arguments
+///
+/// * `value` - the text to search
+///
+/// # Returns
+///
+/// True when a `scheme://user:password@` part has a password that is not empty.
+fn has_url_password(value: &str) -> bool {
+    value.match_indices("://").any(|(index, _)| {
+        let rest = &value[index + 3..];
+        let authority_end = rest
+            .find(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let authority = &rest[..authority_end];
+        authority.rfind('@').is_some_and(|at| {
+            authority[..at]
+                .split_once(':')
+                .is_some_and(|(_, password)| !password.is_empty())
+        })
+    })
 }
 
 /// Add a line and a newline to the output.
@@ -3261,6 +3356,70 @@ Create the report.
             Some(vec!["inspect dataset".to_string()])
         );
         assert_eq!(parsed.body, "Create the report.\n");
+    }
+
+    #[test]
+    fn secret_values_of_common_kinds_are_caught() {
+        for value in [
+            "postgres://user:fakepw@h/db",
+            "see https://bob:hunter2@example.com/path",
+            "AKIAABCDEFGHIJKLMNOP",
+            "key=ASIAABCDEFGHIJKLMNOP",
+            "xoxb-123-456-abc",
+            "xapp-1-abc",
+            "glpat-abcdefghij",
+            "ghs_abc",
+            "Bearer ghp_abc",
+            "sk_live_abc",
+            "sk-ant-api03-abcdefghijklmnopqrst",
+            "npm_abcdefghijklmnopqrstuv",
+            "hf_abcdefghijklmnopqrstuv",
+            "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+            "eyJhbGciOi.eyJzdWIiOi.SflKxwRJSM",
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+        ] {
+            assert!(looks_secret_value(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn ordinary_values_are_not_secrets() {
+        for value in [
+            "data",
+            "reports/eda/index.html",
+            "https://example.com/path",
+            "https://user@example.com/path",
+            "postgres://user:@h/db",
+            "ssh://git@github.com/org/repo",
+            "sk-learn",
+            "ask-me",
+            "hf_model",
+            "npm_config",
+            "AKIA",
+            "AKIAabcdefghijklmnop",
+            "eyJ",
+            "a-b.c_d",
+        ] {
+            assert!(!looks_secret_value(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn secret_names_include_key_suffixes_and_passwords() {
+        for name in [
+            "API_TOKEN",
+            "DB_PASSWD",
+            "SSH_KEY",
+            "KEY",
+            "GPG_PASSPHRASE",
+            "SESSION_COOKIE",
+            "PRIVATE_DATA",
+        ] {
+            assert!(looks_secret_name(name), "{name}");
+        }
+        for name in ["DATA_ROOT", "KEYBOARD", "MONKEY_PATH", "DATABASE_URL"] {
+            assert!(!looks_secret_name(name), "{name}");
+        }
     }
 
     #[test]

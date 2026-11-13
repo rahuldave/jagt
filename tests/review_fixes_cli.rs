@@ -449,3 +449,21 @@ fn a_file_in_a_nested_repository_that_no_repository_ignores_is_read() {
         .success()
         .stdout(predicate::str::contains("From the nested repo."));
 }
+
+#[test]
+fn an_allowlisted_database_url_with_a_password_is_refused() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".jagt")).expect("config folder");
+    fs::write(
+        dir.path().join(".jagt/config.toml"),
+        "[env]\nallow = [\"JAGT_TEST_DB_URL\"]\n\n[defaults]\nprompt_text = \"Go.\"\ninputs = [\"${JAGT_TEST_DB_URL}\"]\n",
+    )
+    .expect("config");
+    jagt(dir.path())
+        .env("JAGT_TEST_DB_URL", "postgres://user:fakepw@h/db")
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("secret-like value"))
+        .stdout(predicate::str::contains("fakepw").not());
+}
