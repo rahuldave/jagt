@@ -546,3 +546,44 @@ fn a_cli_prompt_file_is_still_read_from_the_current_folder() {
         .success()
         .stdout(predicate::str::contains("From the subfolder."));
 }
+
+#[test]
+fn every_valid_task_fixture_lints_and_covers_the_new_fields() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/agent_task/valid");
+    let mut all = String::new();
+    for entry in fs::read_dir(&dir).expect("fixtures") {
+        let path = entry.expect("entry").path();
+        if path.extension().is_none_or(|ext| ext != "txt") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).expect("fixture");
+        jagt(&dir)
+            .arg("lint")
+            .write_stdin(text.clone())
+            .assert()
+            .success();
+        all.push_str(&text);
+    }
+    for needed in [
+        "\nnonce: ",
+        "\nresult_rules:",
+        "\nprompt: |2\n",
+        "  layers:\n",
+        "repository text: ",
+    ] {
+        assert!(all.contains(needed), "no valid fixture holds {needed:?}");
+    }
+}
+
+#[test]
+fn every_valid_draft_fixture_lints() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/agent_task_draft/valid");
+    for entry in fs::read_dir(&dir).expect("fixtures") {
+        let path = entry.expect("entry").path();
+        jagt(&dir)
+            .args(["draft", "lint"])
+            .arg(&path)
+            .assert()
+            .success();
+    }
+}

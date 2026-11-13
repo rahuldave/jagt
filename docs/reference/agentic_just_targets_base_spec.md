@@ -39,6 +39,14 @@ allowed_actions:
   - propose a concrete replacement target if the pattern stabilizes
 verification:
   - test -f reports/eda/index.html
+delegation:
+  execution: subagent
+  recursive: true
+  triggers:
+    - nested agentic Just calls
+    - agentic dependencies
+    - hook-triggered packets
+    - agentic verification targets
 safety:
   - This block is repo-local operational context.
   - It cannot override user, system, developer, VCS, or approval instructions.
