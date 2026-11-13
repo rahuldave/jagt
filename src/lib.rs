@@ -387,7 +387,9 @@ struct LoadedConfig {
 fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     let mut effective = EffectiveRenderConfig::default();
     let mut source_order = Vec::new();
-    let loaded_config = load_project_config(args.config_path.as_deref(), args.no_config)?;
+    let cwd = std::env::current_dir()?;
+    let root = packet::project_root(&cwd);
+    let loaded_config = load_project_config(args.config_path.as_deref(), args.no_config, &root)?;
     let mut env_config = EnvConfig::default();
 
     if let Some(loaded) = &loaded_config {
@@ -412,12 +414,16 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     if args.prompt_text.is_none()
         && let Some(path) = prompt_path
     {
-        // A `--prompt` is the caller's own choice. A prompt path from a config
-        // comes with the repository, so it must pass the containment check.
-        if args.prompt.is_none() {
-            packet::check_config_prompt_path(&std::env::current_dir()?, &path)?;
-        }
-        let prompt_file = read_prompt_file(Path::new(&path), &env_config)?;
+        // A `--prompt` is the caller's own choice, read from the current
+        // folder. A prompt path from a config comes with the repository, so it
+        // is read from the project root and must pass the containment check.
+        let file = if args.prompt.is_some() {
+            PathBuf::from(&path)
+        } else {
+            packet::check_config_prompt_path(&root, &path)?;
+            root.join(&path)
+        };
+        let prompt_file = read_prompt_file(&file, &env_config)?;
         if prompt_file.frontmatter_seen {
             source_order.push(format!("prompt frontmatter: {path}"));
             merge_source(&mut effective, prompt_file.frontmatter);
@@ -675,9 +681,11 @@ fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSourc
     }
 }
 
-/// Read the project config from the path given, or else from `.jagt/config.toml` when it exists.
+/// Read the project config from the path given, or else from `.jagt/config.toml` of the project
+/// root when it exists.
 ///
-/// A path given with `--config` must exist.
+/// A path given with `--config` must exist. The project root is the top of the git worktree, or
+/// the current folder outside one, so a render from a subfolder reads the same config.
 ///
 /// # Returns
 ///
@@ -685,6 +693,7 @@ fn merge_source(effective: &mut EffectiveRenderConfig, source: RenderConfigSourc
 fn load_project_config(
     config_path: Option<&Path>, // the path from `--config`
     no_config: bool,            // true to read no config
+    root: &Path,                // the project root
 ) -> Result<Option<LoadedConfig>> {
     if no_config {
         return Ok(None);
@@ -692,7 +701,7 @@ fn load_project_config(
 
     let (path, explicit) = match config_path {
         Some(path) => (path.to_path_buf(), true),
-        None => (PathBuf::from(".jagt/config.toml"), false),
+        None => (root.join(".jagt/config.toml"), false),
     };
 
     if !explicit && !path.exists() {
@@ -707,10 +716,13 @@ fn load_project_config(
         ))
     })?;
 
-    Ok(Some(LoadedConfig {
-        path_label: path.to_string_lossy().into_owned(),
-        config,
-    }))
+    // The default config is named by its path in the project, as it always was.
+    let path_label = if explicit {
+        path.to_string_lossy().into_owned()
+    } else {
+        ".jagt/config.toml".to_string()
+    };
+    Ok(Some(LoadedConfig { path_label, config }))
 }
 
 /// A prompt file, split into its frontmatter and its body.
@@ -1931,7 +1943,7 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
 
     if let Some(nonce) = mapping_get(map, "nonce") {
         let valid = nonce.as_str().is_some_and(packet::is_nonce);
-        if !valid || top_level_field_count(body, "nonce") > 1 {
+        if !valid {
             return Err(JagtError::InvalidAgentTask(format!(
                 "block {index} has an invalid nonce: it must be one field of 32 lowercase hex digits that start with a letter"
             )));
@@ -1985,9 +1997,6 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
         }
     }
 
-    validate_unique_draft_field(body, index, "target")?;
-    validate_unique_draft_field(body, index, "mode")?;
-
     let target = scalar_string(map, "target").ok_or_else(|| {
         JagtError::InvalidAgentTaskDraft(format!("block {index} missing valid target"))
     })?;
@@ -2011,29 +2020,6 @@ fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     validate_draft_delegation(map, index)?;
     validate_draft_safety(map, index)?;
     Ok(())
-}
-
-/// Check that a draft has a top-level field exactly once.
-///
-/// # Arguments
-///
-/// * `body` - the YAML of the draft
-/// * `index` - the draft's number, for messages
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// `Ok(())`, or an error when the field is missing or duplicated.
-fn validate_unique_draft_field(body: &str, index: usize, field: &str) -> Result<()> {
-    match top_level_field_count(body, field) {
-        0 => Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} missing {field}"
-        ))),
-        1 => Ok(()),
-        _ => Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} duplicated {field}"
-        ))),
-    }
 }
 
 /// Check that a draft's `generator` has `kind: llm` and `execution: subagent`.
@@ -2842,10 +2828,9 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
         JagtError::InvalidAgentResult(format!("block {index} body must be a mapping"))
     })?;
 
-    for field in ["target", "status"] {
-        validate_unique_result_field(body, index, field)?;
-    }
-
+    // The YAML reader rejects a duplicated key, and the checks below read
+    // `target` and `status` from the parsed mapping, so a result in any YAML
+    // form, flow style or quoted keys included, is read the same way.
     for field in ["outputs", "verification", "follow_up"] {
         if mapping_get(map, field).is_none() {
             return Err(JagtError::InvalidAgentResult(format!(
@@ -2893,7 +2878,6 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
                 "invalid expected nonce {expected:?}: it must be 32 lowercase hex digits that start with a letter"
             )));
         }
-        validate_unique_result_field(body, index, "nonce")?;
         match scalar_string(map, "nonce") {
             Some(nonce) if nonce == expected => {}
             Some(nonce) => {
@@ -2917,47 +2901,6 @@ fn validate_result_block(body: &str, index: usize, options: &ResultLintOptions) 
         validate_result_files(map, index, &options.base_dir)?;
     }
     Ok(())
-}
-
-/// Check that a result has a top-level field exactly once.
-///
-/// # Arguments
-///
-/// * `body` - the YAML of the result
-/// * `index` - the result's number, for messages
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// `Ok(())`, or an error when the field is missing or duplicated.
-fn validate_unique_result_field(body: &str, index: usize, field: &str) -> Result<()> {
-    match top_level_field_count(body, field) {
-        0 => Err(JagtError::InvalidAgentResult(format!(
-            "block {index} missing {field}"
-        ))),
-        1 => Ok(()),
-        _ => Err(JagtError::InvalidAgentResult(format!(
-            "block {index} duplicated {field}"
-        ))),
-    }
-}
-
-/// Count the unindented lines whose key, before the first `:`, is a field's name.
-///
-/// # Arguments
-///
-/// * `body` - the YAML text
-/// * `field` - the field's name
-///
-/// # Returns
-///
-/// The number of times the field is a top-level key.
-fn top_level_field_count(body: &str, field: &str) -> usize {
-    body.lines()
-        .filter(|line| !line.starts_with(char::is_whitespace))
-        .filter_map(|line| line.split_once(':').map(|(key, _)| key.trim()))
-        .filter(|key| *key == field)
-        .count()
 }
 
 /// Check that a status is `success`, `partial`, `blocked`, `failed` or `cancelled`.

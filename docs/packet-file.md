@@ -178,17 +178,22 @@ provenance:
 
 ## The prompt file of a config
 
+jagt reads the config `.jagt/config.toml` from the project root. The project
+root is the top of the git worktree, or the current folder outside a worktree.
+So a render from a subfolder reads the same config. A relative `prompt` path in
+a config is read from the project root too.
+
 A config file comes with the repository, like a layer. So jagt checks the
 `prompt` that a config names, in `[defaults]` or in a target, before it reads
 the file. Each of these stops the render:
 
-- **A path outside the current folder.** jagt compares real paths, so an
+- **A path outside the project root.** jagt compares real paths, so an
   absolute path, a `..` path or a symlink that leads elsewhere counts.
 - **A part of the path that is `.git`.**
 - **A file with more than one hard link**, on Unix. A hard link can name a file
   outside the folder.
 - **A file that a repository ignores**, such as an ignored `.env`. jagt asks
-  each repository from the folder of the file up to the current folder. So a
+  each repository from the folder of the file up to the project root. So a
   submodule and the repository around it both answer, and one "ignored" is
   enough.
 - **A file that the nearest repository cannot answer for.** When a folder

@@ -188,7 +188,7 @@ fn a_config_prompt_outside_the_folder_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"))
+        .stderr(predicate::str::contains("leads outside the project folder"))
         .stdout(predicate::str::contains("NOT_A_PROMPT").not());
 
     let dir = repo_with_config_prompt("../secret.md");
@@ -197,7 +197,7 @@ fn a_config_prompt_outside_the_folder_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"));
+        .stderr(predicate::str::contains("leads outside the project folder"));
     fs::remove_file(dir.path().join("../secret.md")).expect("clean up");
 }
 
@@ -213,7 +213,7 @@ fn a_config_prompt_symlink_that_leads_outside_is_refused() {
         .args(["render", "t", "--no-save"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("leads outside the current folder"));
+        .stderr(predicate::str::contains("leads outside the project folder"));
 }
 
 #[test]
@@ -485,4 +485,64 @@ fn two_allowlisted_values_that_make_a_secret_together_are_refused() {
         .failure()
         .stderr(predicate::str::contains("secret-like value"))
         .stdout(predicate::str::contains("fakepw").not());
+}
+
+#[test]
+fn result_lint_reads_flow_style_and_quoted_keys() {
+    let dir = tempdir().expect("tempdir");
+    for result in [
+        "<<<AGENT_RESULT v1>>>\n{target: t, status: success, outputs: {}, verification: [], follow_up: []}\n<<<END_AGENT_RESULT>>>\n",
+        "<<<AGENT_RESULT v1>>>\n\"target\": t\n'status': success\noutputs: {}\nverification: []\nfollow_up: []\n<<<END_AGENT_RESULT>>>\n",
+    ] {
+        jagt(dir.path())
+            .args(["result", "lint", "--expect-target", "t", "-"])
+            .write_stdin(result)
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn result_lint_still_rejects_a_duplicated_or_missing_field() {
+    let dir = tempdir().expect("tempdir");
+    jagt(dir.path())
+        .args(["result", "lint", "-"])
+        .write_stdin("<<<AGENT_RESULT v1>>>\ntarget: t\nstatus: success\nstatus: failed\noutputs: {}\nverification: []\nfollow_up: []\n<<<END_AGENT_RESULT>>>\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate entry"));
+    jagt(dir.path())
+        .args(["result", "lint", "-"])
+        .write_stdin("<<<AGENT_RESULT v1>>>\n{status: success, outputs: {}, verification: [], follow_up: []}\n<<<END_AGENT_RESULT>>>\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing target"));
+}
+
+#[test]
+fn a_render_from_a_subfolder_reads_the_config_of_the_worktree_top() {
+    let dir = repo_with_config_prompt("prompts/ok.md");
+    let sub = dir.path().join("src/deep");
+    fs::create_dir_all(&sub).expect("subfolder");
+    jagt(&sub)
+        .args(["render", "t", "--no-save"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the repo."))
+        .stdout(predicate::str::contains(
+            "project config: .jagt/config.toml",
+        ));
+}
+
+#[test]
+fn a_cli_prompt_file_is_still_read_from_the_current_folder() {
+    let dir = repo_with_config_prompt("prompts/ok.md");
+    let sub = dir.path().join("sub");
+    fs::create_dir_all(&sub).expect("subfolder");
+    fs::write(sub.join("mine.md"), "From the subfolder.\n").expect("prompt");
+    jagt(&sub)
+        .args(["render", "t", "--no-save", "--prompt", "mine.md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the subfolder."));
 }
