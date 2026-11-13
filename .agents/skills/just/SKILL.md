@@ -103,11 +103,11 @@ these files, all in `.agents/just`:
   starter Justfile of jnterfaces also gets combined recipes. `just lint` runs
   the recipe of each language. `just verify` runs every installed check, then
   `git diff --check`. A recipe of the same name in the
-  Justfile takes its place. Another project gets the modules only.
+  Justfile takes its place. Another project gets the modules and the recipes
+  of the roles, and the installer adds the import line to its Justfile.
 
 A role package can also ship a recipe file in `.agents/just/roles`, such as
-the `just prose` of the `prose` role. The index imports it in a project that
-jnterfaces started.
+the `just prose` of the `prose` role. The index imports it.
 
 Do not edit the files in `.agents/just`. Put the recipes of the project in
 the Justfile.

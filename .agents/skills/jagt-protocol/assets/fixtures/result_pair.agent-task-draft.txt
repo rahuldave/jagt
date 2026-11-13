@@ -1,5 +1,6 @@
 <<<AGENT_RESULT v1>>>
 target: draft-agent-task
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 status: success
 outputs:
   draft_envelope: inline-after-result

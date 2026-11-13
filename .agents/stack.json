@@ -12,6 +12,9 @@
   "variants": {
     "tasker": "git"
   },
+  "generated": {
+    ".agents/just/index.just": "af81d3c856367dab82e138a4565cc617a64ca46ff868ba0967d30f9ae28ca6dc"
+  },
   "parts": {
     ".gitignore": {
       ".agents/stack-log.jsonl": {
