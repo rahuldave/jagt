@@ -1,6 +1,7 @@
 ---
 name: gdo
 description: Gest Docs. Audit, create, update, and verify user-facing docs, developer-facing docs, and in-code documentation affected by a task.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GDO: Gest Docs

@@ -46,7 +46,7 @@ require_file "$lab_dir/Justfile"
 require_file "$lab_dir/01-rendered-task.agent-task.txt"
 require_file "$lab_dir/02-parent-decision.txt"
 
-require_grep 'AGENT_TASK v1.*subagent handoff packet|subagent handoff packet.*AGENT_TASK v1' \
+require_grep 'AGENT_TASK v1.*(subagent handoff packet|gives a task to a subagent)|subagent handoff packet.*AGENT_TASK v1' \
   "$lab_dir/AGENTS.md" \
   "copied AGENT_TASK handoff language"
 require_grep 'recursive' "$lab_dir/AGENTS.md" "recursive delegation language"

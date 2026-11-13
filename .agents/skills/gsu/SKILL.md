@@ -1,6 +1,7 @@
 ---
 name: gsu
 description: Gest Setup. Bootstrap or refresh a Gest-tracked repository workflow surface across tool checks, project command contracts, Justfile targets, AGENTS.md mappings, docs, tests, and setup follow-ups.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GSU: Gest Setup
@@ -13,6 +14,13 @@ skills.
 manager, or test runner into the reusable skills. Instead, it helps the user
 choose tools, records those choices in `AGENTS.md`, and creates or updates the
 executable command interface, preferably a `Justfile`.
+
+## Integration and delivery policy
+
+Read [the integration and delivery contract](references/integration_delivery_workflow.md)
+for explicit branch roles, selected PR bases, independent review evidence,
+CI gates, issue completion, installation provenance and safe cleanup. Apply it
+throughout this skill; the repository default is not an implicit PR target.
 
 ## Core Concepts
 
@@ -56,7 +64,12 @@ Identify which of these concepts apply to the project:
    installation. Treat `direnv` as recommended unless the project contract
    requires it. Check `cx` only when the project has or wants explicit
    file-producing incremental build/pipeline stages.
-4. Infer likely project profiles from files and user context. Examples:
+4. Read the saved profile first. `.agents/stack.json` names the profiles of
+   the project, such as `python` or `typescript`, and the tools that
+   `just install` added. Use them, and do not guess again. Infer a profile
+   only when that file has none, and then save it with
+   `just install --profile NAME`. Infer likely project profiles from files and
+   user context. Examples:
    - Python: `pyproject.toml`, `uv.lock`, `pixi.toml`, notebooks, FastAPI,
      Django, Flask, pytest, ruff, ty, pyright, mypy.
    - TypeScript/JavaScript: `package.json`, lockfiles, Vite, Next, ESLint,
@@ -91,7 +104,7 @@ Identify which of these concepts apply to the project:
 For a normal target repository, `gsu` runs after the package-specific installer
 has already handled package extras. Do not use `skill-package-maker` for this
 handoff. That skill is for authoring skill packages, not for setting up a repo
-that just installed the Git/GitButler Gest skills.
+that just installed the Git Gest skills.
 
 Before ordinary setup work, verify that the expected package handoff is present:
 
@@ -100,7 +113,6 @@ Before ordinary setup work, verify that the expected package handoff is present:
 - skill-local support material under `.agents/skills/*/references/`,
   `.agents/skills/*/scripts/`, and `.agents/skills/*/assets/` as needed
 - `.agents/skills/gsu/assets/templates/`
-- `.agents/skills/gsu/scripts/gest_mermaid_graph.py`
 - `.claude/settings.json` and `.claude/hooks/`
 - `.codex/hooks.json` and `.codex/hooks/`
 - `AGENTS.md`, or a clear note that an existing `AGENTS.md` was preserved and
@@ -127,11 +139,12 @@ uv run python ~/.agents/skills/skill-package-maker/scripts/render_package_plan.p
 ```
 
 If the skill was installed project-locally instead of globally, use the same
-script paths under `.agents/skills/skill-package-maker/`. If the standalone
-checkout is available, use:
+script paths under `.agents/skills/skill-package-maker/`. If the
+skill-package-maker skill is not installed but the standalone checkout is
+available, use:
 
 ```bash
-uv run python /Users/rahul/Projects/agent_skill_package_maker/skills/skill-package-maker/scripts/lint_skill_bundle.py .
+uv run python /path/to/agent_skill_package_maker/skills/skill-package-maker/scripts/lint_skill_bundle.py .
 ```
 
 Require skill repos to declare their package-specific installer skill, custom
@@ -145,7 +158,7 @@ executable without blocking the skill copy and mention optional executables
 that unlock extra flows.
 
 Required workflow executables are `git`, `gest`, `just`, and `uv`; optional
-executables include `rsync`, `gh`, `but`, `ast-grep`, `direnv`, and `cx`.
+executables include `rsync`, `gh`, `ast-grep`, `direnv`, and `cx`.
 Runtime commands should re-check tools they actually need.
 
 ## Snippet Templates
@@ -160,7 +173,9 @@ starting points, not as blind overwrites:
 - `assets/templates/env/envrc.local-bin`
 - `assets/templates/env/*profile*.envrc` and related profile env snippets
 - `assets/templates/env/env.example`
-- `assets/templates/just/*.just`
+- the Justfile templates of the `just` skill, in
+  `.agents/skills/just/assets/templates/`. If the just skill is not installed,
+  run `just install`, which always installs it.
 
 Every setup should include the base ignore concepts. Add profile snippets only
 when the project needs them. If existing project files already cover the same
@@ -191,9 +206,12 @@ or credentials.
 ## Command Contract
 
 Prefer `just` targets when present. `AGENTS.md` should say which command maps
-to each workflow concept and how arguments are passed. See
-`references/just_command_contract.md` for the reusable Just command-contract model. A
-typical contract might include:
+to each workflow concept and how arguments are passed. For the reusable Just
+command-contract model, the house style and Justfile templates, read
+the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
+contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
+is not installed, use the project's `AGENTS.md` and `just --list`; the source
+is https://github.com/rahuldave/jnterfaces. A typical contract might include:
 
 ```text
 Format: just fmt [path]
@@ -221,10 +239,16 @@ instead of hard-coding language tools.
 
 ## Tool Installation Policy
 
-Check the required toolchain before running setup commands. If a required tool
-is missing, ask the user before installing it and prefer the least surprising
-installer for their platform/project. Use the project package manager where
-possible. Examples:
+A project assumes two programs only, `just` and `uv`. Get every other tool
+through `just install TOOL`, which runs the command of the profile, such as
+`uv add --group lint ruff pre-commit`. For TypeScript, uv runs node and npm
+from the `nodejs-wheel` package. Do not install a tool on the machine
+when `just install` can add it to the project.
+
+Check the required toolchain before running setup commands. A required tool may
+be missing, and no profile may have it. Then ask the user before installing it,
+and prefer the least surprising installer for their platform/project. Use the project
+package manager where possible. Examples:
 
 - Python: prefer `uv`, `pixi`, or the tool already chosen by the project.
 - TypeScript/JavaScript: prefer the detected package manager (`pnpm`, `npm`,
@@ -252,9 +276,9 @@ cx --help
 
 Profile install prompts should be concrete:
 
-- Python/uv: ask before installing `uv`; then use `uv sync`.
-- TypeScript/npm: ask before installing Node/npm or an alternate package
-  manager; then use the chosen install command.
+- Python/uv: `just install lint test`, then `uv sync`.
+- TypeScript/npm: `just install lint typecheck`, then `just setup`. Ask before
+  installing an alternate package manager.
 - Go: ask before installing Go; then use `go mod tidy` or `go test ./...` to
   populate module state.
 - Rust: ask before installing Rust via `rustup`; then use Cargo commands.
@@ -338,8 +362,10 @@ When adding `cx`:
   `up-to-date`, then changing one input and confirming the expected downstream
   artifacts rerun.
 
-For reusable examples, read `references/cx_incremental_pipelines.md` and run
-`just cx-examples-lab` in this skill repository.
+For the full rules and worked examples, read the `cx` skill of jnterfaces,
+`.agents/skills/cx/SKILL.md`. If the cx skill is not installed, the rules above
+are enough to start; the source is https://github.com/rahuldave/jnterfaces.
+The recipe `just cx-examples-lab` of agent_gest_git_skills runs the examples.
 
 For npm projects, prefer a project-local cache when the user wants explicit
 per-project tooling or the global npm cache is unreliable:
@@ -512,3 +538,17 @@ Report:
 ## Setup For Dependency Impact
 
 When refreshing repository setup, check whether `ast-grep` is available or documented for dependency-impact checks. If setup changes shared tooling, hooks, generated code, or command contracts, use `ast-grep` or targeted structured searches to find dependent surfaces.
+
+## Branch, CI and installation setup
+
+Declare mainline and persistent integration branches in project instructions.
+Select the work's target before creating a topic. Map local verification to CI
+for all supported PR bases and relevant integration pushes; define stable
+required checks and explicit release triggers. Do not conflate experimental
+merges with publication. Test installation into an existing project, preserve
+its instructions/settings, and record source revision. Record ownership and
+cleanup for temporary servers, ports, children and directories. For parallel
+physical worktrees, set up an owner/path/topic-branch record and separately
+record the selected primary checkout path and branch. Use the worktree retirement procedure in
+`references/integration_delivery_workflow.md`; setup must not teach blanket
+worktree pruning or force removal.

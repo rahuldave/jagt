@@ -1,6 +1,7 @@
 ---
 name: gim
 description: Gest Implement. Implement one concrete Gest task end to end by reading, claiming, splitting if too broad, editing, verifying, reviewing, formatting as appropriate, and completing it.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GIM: Gest Implement
@@ -78,22 +79,24 @@ parents unless the full subtree is done.
 
 ## VCS Execution Guardrails
 
-If the task is running in a GitButler-managed workspace, use current `but` CLI
-write commands (`but branch new`, `but stage`, `but commit`, `but push`,
-`but pr`) and do not use raw `git commit`, `git switch`, `git checkout`, or
-branch-mutating git commands. Prefer `but status` and `but diff` when deciding
-which branch owns a change.
+Use plain git for every write, such as `git switch`, `git commit` and
+`git push`. No hook blocks plain git. In the `gitwt` variant, a commit in the
+main checkout gets a warning, so commit in the worktree of the task.
 
-Do not run parallel write work inside one GitButler workspace. If
-`vcs.tool=git-butler` and `vcs.execution=gitbutler-workspace`, the task is
-sequential. Parallel implementation requires separate physical worktrees with a
-distinct `vcs.workspace_path` recorded for each task.
+Do not run parallel write work in one checkout. If the task is one branch of a
+stack, it is sequential. Start the branch from the branch below it, and see
+"Tasker Variant And Worktrees" in gtw for the stack. Parallel implementation
+needs separate physical worktrees, with its own `vcs.workspace_path` recorded
+for each task.
 
 ## Checks
 
 Use the project command contract in `AGENTS.md`. Prefer `just` targets when the
 project maps workflow concepts to them. For the reusable Just contract shape,
-see `references/just_command_contract.md`. Typical concepts include:
+read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
+contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
+is not installed, use the project's `AGENTS.md` and `just --list`; the source
+is https://github.com/rahuldave/jnterfaces. Typical concepts include:
 
 ```bash
 just fmt [path]

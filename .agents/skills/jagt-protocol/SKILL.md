@@ -1,6 +1,7 @@
 ---
 name: jagt-protocol
 description: Use when a Just target emits an AGENT_TASK v1, AGENT_RESULT v1 or AGENT_TASK_DRAFT v1 packet, when you write or check such a packet, or when you run a send and receive demo or a recursive subagent handoff. It renders packets with jagt render and checks them with jagt lint, jagt result lint and jagt draft lint.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/jnterfaces
 ---
 
 # Jagt protocol

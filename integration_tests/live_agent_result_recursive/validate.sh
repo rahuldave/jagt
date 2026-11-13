@@ -60,7 +60,7 @@ if [ -f "$lab_dir/08-unsafe-worker-result.agent-result.txt" ]; then
   fail "unsafe proposal produced a worker result; it should have been refused"
 fi
 
-require_grep 'AGENT_TASK v1.*subagent handoff packet|subagent handoff packet.*AGENT_TASK v1' \
+require_grep 'AGENT_TASK v1.*(subagent handoff packet|gives a task to a subagent)|subagent handoff packet.*AGENT_TASK v1' \
   "$lab_dir/AGENTS.md" \
   "copied AGENT_TASK handoff language"
 require_grep 'recursive' "$lab_dir/AGENTS.md" "recursive delegation language"

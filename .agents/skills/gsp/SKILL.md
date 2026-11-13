@@ -1,6 +1,7 @@
 ---
 name: gsp
 description: Gest Spec. Draft or update a Gest spec artifact for substantial or unclear work, then ensure implementation happens through follow-on Gest tasks.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GSP: Gest Spec

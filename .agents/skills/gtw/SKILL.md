@@ -1,6 +1,7 @@
 ---
 name: gtw
 description: Gest Track Work. Use for substantial coding, debugging, implementation, refactoring, documentation, verification, GitHub issue planning, or project work. GTW is the router that classifies requests, chooses/creates Gest outline parents, creates session or development tasks, decides whether a spec or parallel work is needed, and routes to the g* stage skills.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GTW: Gest Track Work
@@ -10,6 +11,13 @@ GTW is the default entry point for Gest-tracked work in this repository.
 Read `references/gest_codex_workflow.md` when more detail is needed. Keep
 project-specific workflow notes in this repository or in user-level Codex
 configuration.
+
+## Integration and delivery policy
+
+Read [the integration and delivery contract](references/integration_delivery_workflow.md)
+for explicit branch roles, selected PR bases, independent review evidence,
+CI gates, issue completion, installation provenance and safe cleanup. Apply it
+throughout this skill; the repository default is not an implicit PR target.
 
 ## Core Job
 
@@ -147,12 +155,19 @@ github.issue=<number>
 github.url=<url>
 outline.root=<gest-task-id>
 parent_task=<gest-task-id>
-vcs.tool=git|git-butler|jj
+vcs.tool=git|jj
 vcs.branch_mode=session-branch|development-branch|stacked-session|stacked-development|parallel-worktrees
-vcs.execution=main-worktree|git-worktrees|gitbutler-workspace|jj-workspaces
+vcs.execution=main-worktree|git-worktrees|jj-workspaces
 vcs.parallel_allowed=true|false
 vcs.branch=<branch-name>
+vcs.integration_branch=<selected-persistent-target>
+vcs.base_branch=<immediate-PR-base>
+vcs.base_sha=<resolved-commit>
+vcs.branch_role=topic|stack-topic|integration
 vcs.workspace_path=<absolute-path>
+vcs.workspace_owner=<task-or-worker-id>
+vcs.primary_path=<absolute-path>
+vcs.primary_branch=<recorded-primary-branch>
 test.strategy=test-first|test-after|characterization-first|exploratory|no-test-needed
 test.scope=focused|regression|integration|browser|full
 review.depth=solo|adversarial|multi-agent
@@ -181,20 +196,72 @@ coherent durable slice, and `stacked-session` or `stacked-development` when a
 session contains multiple meaty dependent slices that should remain separately
 reviewable.
 
-Keep branch structure separate from agent execution. GitButler stacks are fine
-for sequential branch curation, but shared GitButler workspaces are not an
-agent-parallelism primitive. If `vcs.tool=git-butler` and
-`vcs.execution=gitbutler-workspace`, set `vcs.parallel_allowed=false` and run
-write tasks sequentially. If work must run in parallel, use physical
-`git-worktrees` first; each writable task needs its own `vcs.workspace_path`.
-Afterward, integrate the results into a normal branch or stack.
+Keep branch structure separate from agent execution. A stack of branches is
+sequential work in one checkout, so set `vcs.parallel_allowed=false` for it and
+run its write tasks one after another. If work must run in parallel, use physical
+`git-worktrees` first; each writable task needs its own `vcs.workspace_path`,
+recorded owner and topic branch. Afterward, integrate the results into the
+selected branch or stack and follow the owned-worktree retirement procedure in
+`references/integration_delivery_workflow.md`.
 
-In GitButler-managed mode, use current `but` CLI write commands such as
-`but branch new`, `but stage`, `but commit`, `but push`, and `but pr`. Do not
-use raw `git commit`, `git switch`, `git checkout`, or branch-mutating git
-commands while GitButler owns the workspace. Read-only git commands such as
-`git log` and `git diff` are acceptable when they clarify history, but prefer
-`but status` and `but diff` for branch ownership.
+### Tasker Variant And Worktrees
+
+Before the first write of a task, run `just tasker-mode`. It prints the variant
+of the tasker role that `just install` recorded:
+
+- `git`, the default: work on a topic branch in the main checkout. For
+  parallel write tasks, make one worktree for each task with
+  `just worktree-new NAME`.
+- `gitwt`: do each write task in its own worktree. Run `just worktree-new NAME`,
+  then work in the folder that it prints. Record `vcs.execution=git-worktrees`
+  and that folder as `vcs.workspace_path`. Keep the main checkout on its base
+  branch, and use it only to read, merge and prune. Parallel tasks need no
+  more steps, because each task has its own worktree already.
+
+The worktree commands:
+
+- `just worktree-new NAME [BASE]` makes the branch NAME from BASE (default
+  `main`) in `../<repo>.worktrees/NAME`. It sets the worktree up, then it runs
+  `just setup` there. `--no-setup` skips `just setup`.
+- Setup copies each file that `.worktreeinclude` names and that Git ignores,
+  such as `.env`. It makes a symbolic link for each path in `.worktreelink`,
+  such as a large `data` folder. So scripts with relative paths find their
+  inputs. Outputs stay in each worktree.
+- `just worktree-sync` sets up a worktree that another tool made, such as
+  Claude Code or Codex.
+- `just worktrees` lists the worktrees: clean or dirty, merged or not, and the
+  ignored files that a removal deletes.
+- `just worktrees-prune` removes each worktree that is clean, merged and idle
+  for 2 hours, with `git worktree remove` and no `--force`. Branches stay. A
+  worktree with ignored files that setup did not put there, such as outputs,
+  stays unless you pass `--with-ignored`. Ignored files that
+  `.worktreedisposable` names, such as `.venv/` and `__pycache__/`, can be
+  made again, so they do not keep a worktree. Run it only when the user asks. Show
+  `just worktrees-prune --dry-run` first.
+
+In a project that jnterfaces did not start, these recipes are missing. Run
+`uv run --no-project --quiet python .agents/skills/gtw/scripts/worktree.py`
+with `mode`, `new`, `sync`, `list` or `prune` instead.
+
+Use plain git for every write, such as `git switch`, `git commit` and
+`git push`. No hook blocks plain git, and no command needs a marker. In the
+`gitwt` variant, a commit in the main checkout gets a warning, and the commit
+still runs.
+
+For a stack of dependent PRs:
+
+1. Start each branch from the branch below it, for example
+   `git switch -c <child-branch> <parent-branch>`.
+2. Open the PR of each branch with `gh pr create --base <parent-branch>`, from
+   the bottom branch up.
+3. After a change to a lower branch, run
+   `git rebase --update-refs --onto <lower-branch> <old-lower-tip>` on the top
+   branch. `<old-lower-tip>` is the lower branch before the change, saved with
+   `git rev-parse <lower-branch>`. `<lower-branch>@{1}` is that commit only
+   after one change. The rebase moves every branch of the stack above it,
+   except a branch that another worktree has checked out. Git 2.38 and later
+   have `--update-refs`. Then push each moved branch with
+   `git push --force-with-lease`.
 
 ## Test And Review Policy
 
@@ -211,8 +278,9 @@ Session/development mode does not determine test style. Choose
 - `no-test-needed`: docs-only, planning-only, or prose-only work with a reason.
 
 Development work usually raises `test.scope` and `review.depth`; it does not
-force one strategy. For non-trivial code-facing work, prefer
-`review.depth=adversarial` and route the final local review through `grv`.
+force one strategy. Substantial code, executable setup, CI and reusable workflow
+changes require independent adversarial review through `grv`, with the reviewed
+base/head commits and finding dispositions recorded.
 
 ## Dynamic Command Context
 
@@ -277,8 +345,10 @@ gest task claim --as codex <leaf-id> --quiet
 - `gdo`: update and verify docs.
 - `gcm`: commit.
 
-For Just-based command contracts, use `references/just_command_contract.md` as the
-reusable reference and let project-specific details live in the target
+For Just-based command contracts, read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
+contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
+is not installed, use the project's `AGENTS.md` and `just --list`; the source
+is https://github.com/rahuldave/jnterfaces. Let project-specific details live in the target
 repository's `AGENTS.md` and `Justfile`.
 
 ## Commit Cadence
@@ -311,11 +381,10 @@ the normal repository command such as `git push -u origin <branch>`; "no
 upstream" is not a no-push reason. GitHub issue promotion and `git push` are
 different decisions.
 
-When Codex pushes changes to a branch other than the repository's mainline
-branch, do not stop at push. Create or update the PR for that branch, route the
+When Codex pushes a topic or stack branch, do not stop at push. Create or update the PR for that branch, route the
 PR through `gpa`, report the PR review findings/state to the user, and ask
-whether to merge. Only merge without another question when the user explicitly
-asked for the merge in the current turn.
+whether to merge. Only merge when the particular merge is already authorized; authorization
+persists across turns.
 
 After a PR is merged, check the repository's project instructions and command
 contract for deployment or release steps. If the repo defines a deploy command
@@ -334,10 +403,7 @@ commit.
 
 At every durable checkpoint, run the cleanup that future agents need:
 
-- regenerate the overall Gest graph and a focused graph for the latest relevant
-  iteration
-- treat graph generation as a Gest database operation and do not run it in
-  parallel with `gest`
+- let Gest maintain graphs automatically; inspect native graphs when useful
 - for every development depth-1 parent and development iteration, run the
   explicit `gpr` decision: create/sync the GitHub issue and record
   `github.issue`/`github.url`, or record why it was not promoted
@@ -345,18 +411,19 @@ At every durable checkpoint, run the cleanup that future agents need:
   with an unmentioned `ahead` branch
 - if a committed branch has no upstream, push with an upstream instead of
   treating that state as local-only
-- after pushing a non-mainline branch, create/update the PR, run `gpa`, report
+- after pushing a topic or stack branch, create/update the PR, run `gpa`, report
   the PR review, and ask before merge unless the user already explicitly asked
   for that merge
 - after merging a PR, run the repo's deploy/release contract when applicable,
   or report the exact reason deployment was skipped
 - run `grv` after every code change before task completion, even for quick
   development without a pull request
-- report graph paths, commit hashes, push status, review status, and GitHub
+- report selected PR base, commit hashes, push status, review status, and GitHub
   issue decision
 - report the final branch/execution mode for substantial write work, including
-  whether GitButler stack work was sequential or whether parallel work used
-  physical worktrees
+  whether the work was a sequential stack of branches or whether parallel work used
+  physical worktrees; reconcile every owned worktree before handoff and report
+  any retained worktree and its reason
 
 ## Template Sync
 

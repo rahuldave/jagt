@@ -1,12 +1,20 @@
 ---
 name: grv
 description: Gest Review. Review the current Git changeset for correctness, safety, regressions, style, and missing tests, with findings first.
+license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE file of https://github.com/rahuldave/agent_gest_git_skills
 ---
 
 # GRV: Gest Review
 
 Use for code-review stance. Run `grv` after every code change before completing
 the task, even during quick local development without a pull request.
+
+## Integration and delivery policy
+
+Read [the integration and delivery contract](references/integration_delivery_workflow.md)
+for explicit branch roles, selected PR bases, independent review evidence,
+CI gates, issue completion, installation provenance and safe cleanup. Apply it
+throughout this skill; the repository default is not an implicit PR target.
 
 ## Workflow
 
@@ -17,12 +25,11 @@ git diff
 git diff --staged
 ```
 
-If the checkout is GitButler-managed, also inspect branch ownership:
+If the branch is part of a stack, diff it against the branch below it:
 
 ```bash
-but status
-but diff
-but branch list --all
+git branch --list
+git diff <parent-branch>...HEAD
 ```
 
 If reviewing a commit, diff that commit directly.
@@ -49,7 +56,7 @@ review lenses:
 
 - correctness and regression risk
 - test adequacy and missing edge cases
-- Git/GitButler workflow safety
+- Git workflow safety
 - docs, setup, and command-contract drift
 - security, privacy, or data safety when relevant
 - browser/UI behavior when relevant
@@ -78,10 +85,11 @@ observations.
 Missing focused tests for changed callable code or APIs are review findings, not
 just nice-to-have follow-ups.
 
-For workflow changes, review VCS safety as behavior: flag any instruction that
-allows raw `git commit`/`git switch`/`git checkout` in GitButler mode, any plan
-that launches parallel write agents in one GitButler workspace, or any stacked
-branch flow that lacks bottom-up integration/review guidance.
+For workflow changes, review VCS safety as behavior. Flag each of these:
+
+- an instruction that launches parallel write agents in one checkout
+- a plan that blocks plain git, or needs a marker for it
+- a stacked branch flow without guidance for bottom-up integration and review
 
 For `cx` workflow changes, review the lines as incremental build/pipeline
 declarations. Flag use of `cx` for tests, lint, format, typecheck, ordinary
@@ -90,12 +98,22 @@ all real file inputs are declared with `--in`, all durable outputs are declared
 with `--out`, Just recipe dependencies still order producers before consumers,
 and `.cx` runtime state is ignored without hiding future config.
 
-For reusable Git/GitButler/JJ workflow changes, also verify adapter boundaries:
-plain Git branches, GitButler-managed branches/stacks, physical git worktrees,
-and JJ bookmarks/workspaces must not be collapsed into one generic model. In
-this Git/GitButler skill family, preserve `but` write commands in GitButler
-mode and preserve physical git worktrees as the parallel write primitive.
+For reusable Git or JJ workflow changes, also verify adapter boundaries.
+Plain Git branches, stacks of Git branches, physical git worktrees, and JJ
+bookmarks and workspaces must stay separate models. In this Git skill family,
+keep physical git worktrees as the way to run parallel writes. Keep stacks on
+plain git, with `gh pr create --base <parent-branch>` and
+`git rebase --update-refs --onto <lower-branch> <old-lower-tip>`.
 
 ## Tag And Dependency Findings
 
 Review the current changes against `references/tag_dependency_workflow.md`. If code contracts changed, inspect the `ast-grep` patterns that were run and the dependers they found. Treat missing `ast-grep` dependency-impact checks, unhandled dependent surfaces, or missing focused tests for found dependers as review findings.
+
+## Review evidence
+
+For substantial code, executable setup, CI or reusable workflow changes, obtain
+independent adversarial review. Record reviewer, scope, actual base/head SHAs,
+findings and their dispositions. Re-review changed portions after fixes. Label
+self-review honestly and report an unavailable independent reviewer as a gap;
+do not manufacture approval. Inspect integration-target drift as well as head
+changes before carrying evidence into GPA.

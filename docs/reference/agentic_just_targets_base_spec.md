@@ -6,7 +6,7 @@ Some project commands should run a fixed concrete process. Other commands should
 ask the agent to decide what to do from local context, input files, and a
 project-provided prompt. The old "agent-readable Just re-entry" draft mixed
 this generic mechanism with one downstream domain. The base mechanism belongs
-in the existing Gest git/GitButler and Gest jj skill repositories.
+in the existing Gest git and Gest jj skill repositories.
 
 The core question is not "which special `agent-*` targets do we need?" The core
 question is: how can any Just target become agentic while still being safe,
@@ -190,7 +190,7 @@ replacement:
 ```
 
 The replacement is a normal code/docs change and must go through the active
-Gest git/GitButler or Gest jj workflow.
+Gest git or Gest jj workflow.
 
 ## Safety Rules
 
@@ -222,7 +222,7 @@ Each repo should add:
 - fixture projects with agentic and concrete targets;
 - labs proving malformed blocks fail validation.
 
-The git/GitButler repo should keep GitButler branch/workspace rules in the
+The git repo should keep its branch and worktree rules in the
 base workflow. The jj repo should keep jj workspace/bookmark rules in the base
 workflow. The agentic target contract should not duplicate those VCS rules; it
 should route through the base skills.
