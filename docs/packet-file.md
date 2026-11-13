@@ -26,7 +26,7 @@ shared log folder. The file holds one JSON object:
 ```json
 {
   "version": 1,
-  "nonce": "3e8307ce7333db90303bfac15288fb35",
+  "nonce": "d5a8c0e4f1b2937a6c4e8d0b2f7a9c31",
   "target": "review",
   "input_tree": "0221b630c3468902934e27f4ab7116febf23c716",
   "worktree": "/Users/me/Projects/app-feature",
@@ -100,9 +100,9 @@ The field `result_rules` tells the fresh agent to return it:
 ```yaml
 target: review
 mode: agentic
-nonce: 3e8307ce7333db90303bfac15288fb35
+nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31
 result_rules:
-  - 'Put the top-level field nonce: 3e8307ce7333db90303bfac15288fb35 in the AGENT_RESULT v1 block. A result without this nonce gives no record.'
+  - 'Put the top-level field nonce: d5a8c0e4f1b2937a6c4e8d0b2f7a9c31 in the AGENT_RESULT v1 block. A result without this nonce gives no record.'
 ```
 
 The nonce is the one part of `jagt render` that is not deterministic. The
