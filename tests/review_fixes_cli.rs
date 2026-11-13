@@ -398,7 +398,7 @@ fn a_config_given_with_config_from_a_plain_folder_cannot_read_its_env_file() {
         .arg(repo.path().join(".jagt/config.toml"))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is hidden"));
+        .stderr(predicate::str::contains("so jagt does not read it"));
 }
 
 #[cfg(unix)]
@@ -609,9 +609,9 @@ fn every_subcommand_has_a_line_of_help() {
 }
 
 #[test]
-fn arg_and_input_take_values_that_start_with_a_dash() {
+fn arg_and_input_take_negative_numbers_and_dash_values_with_equals() {
     let dir = tempdir().expect("tempdir");
-    let text = render(dir.path(), &["--arg", "-1", "--input", "-data.csv"]);
+    let text = render(dir.path(), &["--arg", "-1", "--input=-data.csv"]);
     let yaml = packet_yaml(&text);
     assert_eq!(yaml["argv"][0].as_str(), Some("-1"));
     assert_eq!(yaml["inputs"]["files"][0].as_str(), Some("-data.csv"));
@@ -668,4 +668,38 @@ fn the_package_holds_only_the_crate() {
             "unexpected file in the package: {file}"
         );
     }
+}
+
+#[test]
+fn a_flag_after_arg_is_not_taken_as_its_value() {
+    let dir = tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q"]);
+    jagt(dir.path())
+        .args([
+            "render",
+            "--arg",
+            "--no-save",
+            "t",
+            "--no-config",
+            "--prompt-text",
+            "Go.",
+        ])
+        .assert()
+        .failure();
+    assert!(!dir.path().join(".agents/log/packets").exists());
+}
+
+#[test]
+fn an_explicit_config_reads_its_prompt_from_its_own_project() {
+    let repo = repo_with_config_prompt("prompts/ok.md");
+    let plain = tempdir().expect("tempdir");
+    fs::create_dir(plain.path().join("prompts")).expect("prompts");
+    fs::write(plain.path().join("prompts/ok.md"), "NOT_THIS_ONE\n").expect("prompt");
+    jagt(plain.path())
+        .args(["render", "t", "--no-save", "--config"])
+        .arg(repo.path().join(".jagt/config.toml"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("From the repo."))
+        .stdout(predicate::str::contains("NOT_THIS_ONE").not());
 }

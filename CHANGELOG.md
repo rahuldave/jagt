@@ -21,7 +21,8 @@ first.
 - The secret check of allowlisted variables catches many more kinds of
   secrets, such as URLs with a password, AWS, Azure, Slack and Stripe keys,
   and two variables that make a secret together.
-- `--arg` and `--input` take a value that starts with `-`, such as `--arg -1`.
+- `--arg` and `--input` take a negative number, such as `--arg -1`. Another
+  value that starts with `-` needs the `=` form, such as `--input=-data.csv`.
 - Each subcommand and flag has a line of help.
 
 ### Lint

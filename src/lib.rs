@@ -420,8 +420,14 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
         let file = if args.prompt.is_some() {
             PathBuf::from(&path)
         } else {
-            packet::check_config_prompt_path(&root, &path)?;
-            root.join(&path)
+            // A config given with --config belongs to the project that holds it, so its
+            // prompt path is read from that project's root.
+            let config_root = match args.config_path.as_deref().and_then(Path::parent) {
+                Some(folder) => packet::project_root(&cwd.join(folder)),
+                None => root.clone(),
+            };
+            packet::check_config_prompt_path(&config_root, &path)?;
+            config_root.join(&path)
         };
         let prompt_file = read_prompt_file(&file, &env_config)?;
         if prompt_file.frontmatter_seen {
@@ -1035,8 +1041,10 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 /// The name is split into parts at each character that is not a letter or a digit. A part such
 /// as `TOKEN`, `PASS`, `DSN` or `WEBHOOK` counts anywhere, and so do known compounds such as
 /// `PGPASS` and `SSHKEY`, and the words `SECRET`, `PASSWORD` and `CREDENTIAL` inside a part. The
-/// parts `AUTH`, `PW`, `PWD` and `KEY` count only at the end, so `SSH_AUTH_SOCK`, `SSH_KEYS_DIR`
-/// and `CACHE_KEY` do not. `AUTHOR`, `KEYBOARD`, `COMPASS` and `MAX_TOKENS` do not count.
+/// parts `KEY`, `KEYS` and `TOKENS` count anywhere, except after a word such as `PUBLIC`,
+/// `CACHE` or `MAX`, or in a name that ends in a word for a place, such as `SSH_KEYS_DIR`. The
+/// parts `AUTH`, `PW` and `PWD` count only at the end, so `SSH_AUTH_SOCK` does not. `AUTHOR`,
+/// `KEYBOARD`, `COMPASS` and `TOKENIZERS_PARALLELISM` do not count.
 ///
 /// # Arguments
 ///
@@ -1054,7 +1062,6 @@ fn looks_secret_name(name: &str) -> bool {
     let Some(last) = parts.last() else {
         return false;
     };
-    let before_last = parts.len().checked_sub(2).map(|at| parts[at]);
     let any_part = parts.iter().any(|part| {
         matches!(
             *part,
@@ -1087,18 +1094,31 @@ fn looks_secret_name(name: &str) -> bool {
             .iter()
             .any(|word| part.contains(word))
     });
-    // These parts name a secret only at the end, as in GITHUB_AUTH or DB_KEY, and not in
-    // SSH_AUTH_SOCK, SSH_KEYS_DIR or TOKENIZERS_PARALLELISM.
+    // KEY, KEYS and TOKENS count anywhere, as in API_KEY_2 or API_KEYS, unless the word before
+    // makes them a plain name, as in PUBLIC_KEY, CACHE_KEY or MAX_TOKENS, or the name ends in a
+    // word for a place, as in SSH_KEYS_DIR.
+    let place = matches!(
+        *last,
+        "DIR" | "DIRS" | "PATH" | "PATHS" | "FOLDER" | "FILE" | "FILES" | "NAME" | "COUNT"
+    );
+    let key_part = parts.iter().enumerate().any(|(at, part)| {
+        let before = at.checked_sub(1).map(|at| parts[at]);
+        match *part {
+            "KEY" | "KEYS" => !matches!(
+                before,
+                Some("PUBLIC" | "CACHE" | "SORT" | "PARTITION" | "FOREIGN" | "HOT" | "SHORTCUT")
+            ),
+            "TOKENS" => !matches!(before, Some("MAX" | "MIN" | "NUM" | "TOTAL" | "COUNT")),
+            _ => false,
+        }
+    }) && !place;
+    // AUTH, PW and PWD name a secret only at the end, as in GITHUB_AUTH, and not in
+    // SSH_AUTH_SOCK, or in PWD alone, the current folder.
     let last_part = (matches!(*last, "AUTH" | "SIG" | "SIGNATURE" | "PW" | "PWD")
         && !(parts.len() == 1 && *last == "PWD"))
-        || (*last == "KEY"
-            && !matches!(
-                before_last,
-                Some("PUBLIC" | "CACHE" | "SORT" | "PRIMARY" | "PARTITION" | "FOREIGN" | "ROUTING")
-            ))
         || (last.len() > 5 && last.ends_with("TOKEN"))
         || (last.len() > 4 && last.ends_with("AUTH") && parts.len() == 1);
-    any_part || last_part || upper.contains("CONNECTION_STRING")
+    any_part || key_part || last_part || upper.contains("CONNECTION_STRING")
 }
 
 /// Say whether a value looks like a secret.
@@ -2424,6 +2444,14 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
     }
 
     let text = normalize_draft_text(body);
+    // A Cyrillic letter that the map does not cover, inside a word of ASCII letters, may hide a
+    // phrase, such as `revieԝ`.
+    if text.split(|c: char| !c.is_alphanumeric()).any(|word| {
+        word.chars().any(|c| c.is_ascii_alphabetic())
+            && word.chars().any(|c| matches!(c, '\u{400}'..='\u{52f}'))
+    }) {
+        return Err(error("mixes ASCII letters with Cyrillic letters in a word"));
+    }
     if DRAFT_APPROVAL_CLAIMS
         .iter()
         .any(|phrase| affirms(&text, phrase))
@@ -2465,6 +2493,8 @@ const DRAFT_APPROVAL_CLAIMS: &[&str] = &[
     "approval has been granted",
     "signed off on this",
     "has signed off",
+    "user signed off",
+    "parent signed off",
     "have signed off",
 ];
 
@@ -2494,6 +2524,12 @@ const DRAFT_BYPASS_PHRASES: &[&str] = &[
     "circumvent the rules",
     "circumvent the checks",
     "override user instructions",
+    "override the user instructions",
+    "override the system instructions",
+    "ignore the user and",
+    "ignore the user,",
+    "ignore the user.",
+    "ignore the system instructions",
     "override the user's instructions",
     "ignore the user's instructions",
     "ignore the system prompt",
@@ -2570,6 +2606,10 @@ const DRAFT_INLINE_PHRASES: &[&str] = &[
     "immediately in this session",
     "now in this session",
     "right here in this session",
+    "right here in the current session",
+    "in the current session",
+    "task in this session",
+    "it in this session",
 ];
 
 /// Put draft text in a form for the phrase search: lower case, fullwidth letters and Cyrillic or
@@ -2701,8 +2741,10 @@ fn affirms(text: &str, phrase: &str) -> bool {
             )
         };
         let mut back = words.iter().rev();
+        // "why not bypass approval" asks for the bypass.
+        let why_not = words.len() >= 2 && words[words.len() - 2] == "why";
         match back.next() {
-            Some(word) if is_negation(word) => false,
+            Some(word) if is_negation(word) && !why_not => false,
             Some(word) if matches!(*word, "to" | "ever" | "be" | "the" | "a" | "any") => {
                 !back.next().is_some_and(|word| is_negation(word))
             }
@@ -3546,13 +3588,13 @@ struct RenderArgs {
     target: String, // the Just target
     #[arg(
         long = "arg",
-        allow_hyphen_values = true,
+        allow_negative_numbers = true,
         help = "An argument of the target; repeat for more"
     )]
     args: Vec<String>, // an argument of the target; repeat the flag for more
     #[arg(
         long = "input",
-        allow_hyphen_values = true,
+        allow_negative_numbers = true,
         help = "An input file; repeat for more"
     )]
     inputs: Vec<String>, // an input file; repeat the flag for more
@@ -4066,6 +4108,14 @@ Create the report.
             "GITHUBTOKEN",
             "DB_PW",
             "MYSQL_PWD",
+            "API_KEY_2",
+            "OPENAI_API_KEY_PROD",
+            "STRIPE_KEY_LIVE",
+            "API_KEYS",
+            "API_TOKENS",
+            "COSMOS_PRIMARY_KEY",
+            "PAGERDUTY_ROUTING_KEY",
+            "MASTER_KEY_B64",
             "DB_PASSWD",
             "DB_PASS",
             "PGPASS",
