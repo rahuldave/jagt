@@ -240,8 +240,12 @@ The accepted MVP design lives in
 [jagt_deterministic_renderer_spec.md](jagt_deterministic_renderer_spec.md), with
 the staged implementation plan in
 [docs/jagt-mvp-implementation-plan.md](docs/jagt-mvp-implementation-plan.md).
-The remaining MVP slices are schema/product polish and final verification and
-review.
+All MVP slices are done. The final review found bugs that are open as follow-up
+work. The release work is still to do. It covers CI, the package file list, an
+install section and a release tag.
+
+jagt has no formal schema. The protocol contract of the `jagt-protocol` skill,
+from jnterfaces, defines each packet, and the lint commands check it.
 
 ## License
 
