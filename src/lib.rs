@@ -269,8 +269,12 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
         effective.prompt_text = Some(prompt_file.body);
     }
 
+    // The prompt file of the CLI was read above, into prompt_text. Merging
+    // `prompt` again would clear that text, so the CLI source leaves it out
+    // and counts it only for the provenance.
+    let has_cli_prompt = args.prompt.is_some();
     let cli_source = RenderConfigSource {
-        prompt: args.prompt,
+        prompt: None,
         prompt_text: args.prompt_text,
         args: non_empty(args.args),
         inputs: non_empty(args.inputs),
@@ -279,7 +283,7 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
         verification: non_empty(args.verification),
         target: None,
     };
-    let has_cli_source = source_has_render_values(&cli_source);
+    let has_cli_source = has_cli_prompt || source_has_render_values(&cli_source);
     merge_source(&mut effective, cli_source);
     if has_cli_source && !source_order.is_empty() {
         source_order.push("CLI flags".to_string());
@@ -500,21 +504,39 @@ fn read_prompt_file(path: &Path, env_config: &EnvConfig) -> Result<PromptFile> {
 }
 
 fn parse_prompt_file(content: &str) -> std::result::Result<PromptFile, String> {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    // The frontmatter opens with a first line of exactly `---`, and closes at
+    // the next line of exactly `---`. A `\r` at the end of a line is allowed.
+    // The frontmatter can be empty, as in `---` right after `---`.
+    let is_delimiter = |line: &str| line.trim_end_matches(['\n', '\r']) == "---";
+    // Some editors put a byte order mark at the start of a file. It would hide
+    // the frontmatter, so it goes.
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let mut lines = content.split_inclusive('\n');
+    if !lines.next().is_some_and(is_delimiter) {
         return Ok(PromptFile {
             body: content.to_string(),
             frontmatter: RenderConfigSource::default(),
             frontmatter_seen: false,
         });
-    };
-    let Some((frontmatter, body)) = rest.split_once("\n---") else {
+    }
+    let mut frontmatter = String::new();
+    let mut closed = false;
+    for line in lines.by_ref() {
+        if is_delimiter(line) {
+            closed = true;
+            break;
+        }
+        frontmatter.push_str(line);
+    }
+    if !closed {
         return Err("frontmatter start without closing delimiter".to_string());
-    };
+    }
+    let body: String = lines.collect();
     let body = body.trim_start_matches(['\r', '\n']).to_string();
     let frontmatter = if frontmatter.trim().is_empty() {
         RenderConfigSource::default()
     } else {
-        serde_yaml::from_str(frontmatter)
+        serde_yaml::from_str(&frontmatter)
             .map_err(|error| format!("frontmatter contains invalid YAML: {error}"))?
     };
 
@@ -686,7 +708,7 @@ fn push_line(output: &mut String, line: &str) {
 }
 
 fn push_field(output: &mut String, key: &str, value: &str) {
-    push_line(output, &format!("{key}: {value}"));
+    push_line(output, &format!("{key}: {}", yaml_scalar(value)));
 }
 
 fn push_string_list(output: &mut String, key: &str, values: &[String]) {
@@ -737,14 +759,70 @@ fn push_literal_block(output: &mut String, key: &str, value: &str) {
     }
 }
 
+/// Writes `value` as a YAML scalar that a reader reads back as the same
+/// string, with YAML 1.2 rules and with YAML 1.1 rules.
+///
+/// - A plain scalar is kept only when it is safe: see `is_plain_yaml_scalar`.
+/// - A value with a character that a reader treats as a line break or does not
+///   allow raw gets double quotes, with escapes. YAML folds a line break inside
+///   single quotes into a space, so single quotes cannot hold one.
+/// - Every other value gets single quotes.
 fn yaml_scalar(value: &str) -> String {
     if is_plain_yaml_scalar(value) {
         return value.to_string();
+    }
+    if value.chars().any(needs_escape) {
+        return double_quoted(value);
     }
 
     format!("'{}'", value.replace('\'', "''"))
 }
 
+/// True for a character that YAML does not allow raw in a scalar, or reads
+/// as a line break: the C0 and C1 control characters, DEL, U+2028, U+2029,
+/// the byte order mark U+FEFF, and U+FFFE and U+FFFF, which YAML does not
+/// count as printable.
+fn needs_escape(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{feff}' | '\u{fffe}' | '\u{ffff}'
+        )
+}
+
+/// Writes `value` in YAML double quotes. Each character that `needs_escape`
+/// names gets an escape, and so do `\\` and `"`.
+fn double_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\u{85}' => out.push_str("\\N"),
+            '\u{2028}' => out.push_str("\\L"),
+            '\u{2029}' => out.push_str("\\P"),
+            '\u{feff}' => out.push_str("\\uFEFF"),
+            '\u{fffe}' => out.push_str("\\uFFFE"),
+            '\u{ffff}' => out.push_str("\\uFFFF"),
+            c if needs_escape(c) => out.push_str(&format!("\\x{:02X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// True when `value` can be written as a plain YAML scalar.
+///
+/// The value must read back as the same string with serde_yaml, a YAML 1.2
+/// reader. It must also not look like a YAML 1.1 bool, number, date or merge
+/// key, so that a YAML 1.1 reader such as PyYAML reads a string too. That
+/// test is wide: any value that starts with a digit, or with `+` or `.` and a
+/// digit, gets quotes, which is safe for a string.
 fn is_plain_yaml_scalar(value: &str) -> bool {
     if value.is_empty() || value.trim() != value {
         return false;
@@ -758,7 +836,31 @@ fn is_plain_yaml_scalar(value: &str) -> bool {
     ]) {
         return false;
     }
-    true
+    if value.chars().any(needs_escape) || looks_like_yaml_1_1_value(value) {
+        return false;
+    }
+    // The plain form must read back as the same string, and not as a number,
+    // a bool, a null or a mapping.
+    matches!(serde_yaml::from_str::<Value>(value), Ok(Value::String(read)) if read == value)
+}
+
+/// True when a YAML 1.1 reader could read `value` as something other than a
+/// string: a bool such as `yes`, `on` or `y`, a merge key `<<`, the value
+/// key `=`, or a number or date, which start with a digit, or with `+` or `.`
+/// and a digit.
+fn looks_like_yaml_1_1_value(value: &str) -> bool {
+    const BOOLS: [&str; 11] = [
+        "y", "n", "yes", "no", "on", "off", "true", "false", "null", "<<", "=",
+    ];
+    if BOOLS.iter().any(|word| value.eq_ignore_ascii_case(word)) {
+        return true;
+    }
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_digit() => true,
+        Some('+' | '.') => chars.next().is_some_and(|c| c.is_ascii_digit()),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
