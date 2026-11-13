@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      # smalldocs 0.5.9 reads only rustdoc JSON formats 57 and 61, so pin the
+      # smalldocs 0.5.10 reads only rustdoc JSON formats 57 and 61, so pin the
       # nightly. Keep it the same as `toolchain` in docs/smalldocs/_smalldocs.yml.
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -35,7 +35,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       # The render runs rustdoc and writes the Rust reference before the pages.
       - name: Render the site
-        run: uvx smalldocs==0.5.9 render docs/smalldocs --strict
+        run: uvx --refresh-package smalldocs smalldocs==0.5.10 render docs/smalldocs --strict
       - name: Upload site
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5

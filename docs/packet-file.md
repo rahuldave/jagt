@@ -1,8 +1,9 @@
 # The packet file and the layers of a packet
 
 `jagt render` prints an `AGENT_TASK v1` packet for a fresh agent. In a git
-worktree, it also saves a packet file in the shared log folder. The fresh
-agent later returns a result with the same nonce. A hook of the commit gates
+worktree, it also saves a packet file in the shared log folder. A saved packet
+holds a nonce, a random value of 32 lowercase hex digits that is new for each
+packet. The fresh agent later returns a result with the same nonce. A hook of the commit gates
 then reads the file, and turns the result into a record. The spec of the commit gates is
 `docs/specs/commit-gates.md` in agent_gest_git_skills.
 
@@ -64,14 +65,14 @@ The file has no time and no argv, because the gate needs neither.
 
 jagt makes `.agents`, `.agents/log` and `.agents/log/packets` when they are
 missing. If one of them is a symlink, or is not a folder, `jagt render` stops
-and writes nothing. So a symlink in a repository cannot send a packet file
-out of the log folder.
+and writes nothing. So a symlink in a repository cannot send a packet
+file out of the log folder.
 
-When `.agents/log/.gitignore` is missing, jagt writes it with the one line `*`.
-`jlog` writes the same file. jagt also writes `packets/.gitignore` with `*`. It
-leaves an existing `.gitignore` file alone. With the second file, the packets
-stay out of every worktree tree, also when an older log `.gitignore` lacks
-`*`.
+When `.agents/log/.gitignore` is missing, jagt writes it with the one line `*`,
+and `jlog` writes the same file. jagt also writes `packets/.gitignore` with
+`*`, and it leaves an existing `.gitignore` file alone. With the second file,
+the packets stay out of every worktree tree, also when an older log
+`.gitignore` lacks `*`.
 
 ## How jagt computes the input tree
 
@@ -129,8 +130,8 @@ rest of the packet text is the same for the same inputs.
   digits in a row must hold the packet nonce, and no other. jagt also looks
   for such runs with fullwidth digits as ASCII and with no hyphens, so a nonce
   in UUID form counts. So a rule cannot tie the result to the record of
-  another packet by mistake. The check guards against slips, not against a
-  writer who hides a nonce. It does not find a nonce split by spaces,
+  another packet by mistake. The check guards against slips, and not against
+  a writer who hides a nonce. It does not find a nonce split by spaces,
   underscores or a Unicode hyphen.
 - **`jagt result lint --expect-nonce <nonce>`** fails a result that holds
   another nonce, holds no nonce, or holds two `nonce` fields. It also fails
@@ -169,7 +170,7 @@ into the packet.
 - **The prompt ends in one newline.** A YAML reader reads the block back with
   one newline at its end, so a prompt without one gains it.
 - **Some characters cannot go in a block.** A YAML reader reads a lone `\r`,
-  U+0085, U+2028 and U+2029 as line breaks, and refuses a control character
+  U+0085, U+2028 and U+2029 as line breaks. It refuses a control character
   such as U+0001. A prompt with one of them is written as `prompt: "..."`, in
   double quotes with escapes. Each `\r\n` becomes `\n` first, as in a block.
 - **A profile name must be a plain name.** It starts with a letter or a digit,

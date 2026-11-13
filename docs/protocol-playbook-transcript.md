@@ -1,21 +1,37 @@
-# Live LLM Protocol Playbook Transcript
+# Live LLM protocol playbook transcript
 
-This transcript is from an actual parent-LLM run of the three protocol cases
-using [examples/protocol-playbook/Justfile](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/Justfile).
-The parent LLM is this Codex session. `jagt` renders and validates packets; it
-does not call an LLM or launch agents. The subagents below were spawned through
-the host agent runtime, and their returned envelopes were saved and linted.
+This page records an actual run of the three protocol cases by a parent LLM,
+with [examples/protocol-playbook/Justfile](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/Justfile).
+An LLM is a large language model. The parent LLM is the agent that runs the
+Just targets and hands work to subagents. A subagent is an agent that the
+parent starts for one task. A Just target is a named recipe that the tool Just runs. In this
+run, the parent LLM is this Codex session.
 
-The examples are aligned with the reusable Gest Git and Gest JJ labs:
+`jagt` renders and validates packets. A packet is a block of text in a fixed
+form that one agent hands to another. `jagt` does not call an LLM or start
+agents. The subagents below were spawned through the host agent runtime. Each
+envelope that they returned was saved and linted, which means that a `jagt`
+lint command checked its form. An envelope is one packet, from its opening line
+to its closing line.
+
+The examples follow the labs of Gest Git and Gest JJ, which are reusable. Gest
+is a task tracker, and Gest Git and Gest JJ are its sets of agent skills for
+Git and for jj repositories. The labs are in these files:
 
 - `agent_gest_git_skills/docs/live_agent_result_recursive_lab.md`
 - `agent_gest_jj_skills/docs/live_agent_result_recursive_lab.md`
 - `agent_gest_jj_skills/docs/agent_task_draft_workflow.md`
 
-Those labs use the same split: deterministic task/result, recursive
-`AGENT_RESULT v1` payloads with `outputs.proposed_tasks`, and stochastic
-`AGENT_TASK_DRAFT v1` proposals that must be revised or approved before
-promotion.
+The labs split the work into the same three cases as this page:
+
+- A deterministic task and its result.
+- Recursive `AGENT_RESULT v1` payloads with `outputs.proposed_tasks`. A
+  recursive proposal is a child task that a subagent proposes in
+  `outputs.proposed_tasks`.
+- Stochastic `AGENT_TASK_DRAFT v1` proposals, which must be revised or approved
+  before promotion. A stochastic draft is an `AGENT_TASK_DRAFT v1` that an LLM
+  proposes and that a parent or the user must approve. Promotion turns an approved draft
+  into an `AGENT_TASK v1` with `jagt render`.
 
 The shared input file is
 [examples/protocol-playbook/user_message.txt](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/user_message.txt):
@@ -24,12 +40,14 @@ The shared input file is
 Count these seven words with wc please.
 ```
 
-The run was executed after `just build`, with
+The run took place after `just build`. It used
 `JAGT_BIN=../../../target/debug/jagt` from `docs/examples/protocol-playbook/`.
 The captured packet bodies held the absolute paths of the local checkout. This
 page shows them as `/path/to/jagt`.
 
-## Live Agents
+## Live agents
+
+Each case used the subagents in this table:
 
 | Case | Subagent | Role | Packet Returned |
 | --- | --- | --- | --- |
@@ -39,10 +57,11 @@ page shows them as `/path/to/jagt`.
 | Stochastic draft | Bacon | Draft designer | `AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1` |
 | Promoted stochastic task | Gauss | Execution worker | `AGENT_RESULT v1` |
 
-## Case 1: Plain Deterministic Task And Result
+## Case 1: Plain deterministic task and result
 
-The Just target emits one executable `AGENT_TASK v1`. The parent LLM validates
-it, delegates it, validates the returned result, and reads the scalar payload.
+The Just target prints one executable `AGENT_TASK v1`. The parent LLM validates
+the packet and delegates it. Then it validates the returned result, and reads
+the scalar payload.
 
 Parent LLM runs:
 
@@ -142,13 +161,13 @@ The delegated task succeeded. The result is target-matched, success-typed, and
 verified. The usable payload is outputs.word_count = 7.
 ```
 
-## Case 2: Recursive Deterministic Result Payload
+## Case 2: Recursive deterministic result payload
 
-This is the recursive case. The Just target still emits an executable parent
-`AGENT_TASK v1`, but the planner subagent returns `AGENT_RESULT v1` with
-`outputs.proposed_tasks`. That payload can carry the shape of a new
-deterministic task. It is not a stochastic draft and it is not executable by
-itself.
+Case 2 is the recursive case. The Just target still prints an executable
+parent `AGENT_TASK v1`. But the planner subagent returns `AGENT_RESULT v1` with
+`outputs.proposed_tasks`. The payload in `outputs.proposed_tasks` can carry the
+shape of a new deterministic task. It is not a stochastic draft, and it is not
+executable by itself.
 
 Parent LLM runs:
 
@@ -423,13 +442,13 @@ inside AGENT_RESULT v1 as outputs.proposed_tasks. The parent made it executable
 only by rendering and validating a new child AGENT_TASK v1.
 ```
 
-## Case 3: Stochastic Draft Request
+## Case 3: Stochastic draft request
 
-This is different from recursion. The Just target does not emit an executable
-task. It emits a brief for the parent LLM. The parent asks a proposal subagent
-for `AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1`, validates the draft, rejects
-or revises it if needed, and only promotes an approved draft through
-deterministic `jagt render`.
+A stochastic draft differs from recursion. In case 3, the Just target prints a
+brief for the parent LLM, and no executable task. The parent asks a proposal
+subagent for `AGENT_RESULT v1` plus `AGENT_TASK_DRAFT v1`, and validates the
+draft. If needed, the parent rejects or revises the draft. It promotes only an
+approved draft, through deterministic `jagt render`.
 
 Parent LLM runs:
 

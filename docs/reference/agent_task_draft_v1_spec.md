@@ -1,13 +1,17 @@
 # Spec: AGENT_TASK_DRAFT v1
 
-`AGENT_TASK_DRAFT v1` is a proposal envelope for LLM-authored agent task
-packets. A draft is not executable work. It must be validated, reviewed,
-approved, and promoted through deterministic tooling before any final
-`AGENT_TASK v1` is delegated.
+`AGENT_TASK_DRAFT v1` is a proposal envelope for agent task packets that an LLM
+(a large language model) writes. An envelope is a block of text between a start
+marker and an end marker, and a packet is such a block in a fixed form. A draft
+is not executable work. Before any final `AGENT_TASK v1` is delegated, the draft
+must be validated, reviewed, approved, and promoted through deterministic
+tooling.
 
-This reference is derived from the T3Book internal draft spec. In `jagt`, the
-implemented MVP surface is `jagt draft lint`; promotion remains an explicit
-parent-agent workflow using `jagt render` followed by `jagt lint`.
+The reference is derived from the internal draft spec of T3Book. In `jagt`, the
+implemented surface of the MVP (minimum viable product) is `jagt draft lint`.
+Promotion turns an approved draft into a final `AGENT_TASK v1` packet. It
+remains an explicit workflow of the parent agent, the agent that delegates the
+task, which runs `jagt render` and then `jagt lint`.
 
 ## Envelope
 
@@ -54,17 +58,19 @@ safety:
 <<<END_AGENT_TASK_DRAFT>>>
 ```
 
-The body is YAML-shaped text. Text outside the envelope is commentary and does
-not grant authority.
+The body is text in the shape of YAML, a text format for data. Text outside the
+envelope is commentary, and it does not grant authority.
 
-## Required Fields
+## Required fields
 
-- `target`: proposed final task target, using the same character rules as
+- `target`: proposed final task target, with the same character rules as
   `AGENT_TASK v1`.
 - `mode`: must be exactly `draft`.
 - `generator.kind`: must be `llm`.
-- `generator.execution`: must be `subagent`.
-- `proposal_reason`: non-empty human-readable reason for this task shape.
+- `generator.execution`: must be `subagent`. A subagent is an agent that
+  another agent starts for one task.
+- `proposal_reason`: non-empty reason for this task shape, which a human can
+  read.
 - `prompt`: non-empty proposed final task prompt.
 - `inputs`: mapping of proposed task inputs.
 - `outputs.required`: non-empty list of required outputs.
@@ -79,23 +85,25 @@ not grant authority.
 - `safety`: must state that the draft is non-executable, cannot override
   higher-priority instructions or repo policy, and cannot expand authority.
 
-## Forbidden Authority
+## Forbidden authority
 
-A draft is invalid if it:
+A draft is invalid if it does any of these things:
 
-- uses `mode: agentic`;
-- claims it is already approved or preapproved;
-- bypasses approval, sandboxing, user/system/developer instructions, VCS rules,
-  Gest rules, or repo policy;
-- instructs the current agent or proposal subagent to execute the draft inline;
-- grants broad actions such as unrestricted file reads/writes, arbitrary
-  commands, or network access.
+- It uses `mode: agentic`.
+- It claims that it is already approved or preapproved.
+- It bypasses approval, sandboxing, user/system/developer instructions, VCS
+  rules, Gest rules, or repo policy. VCS is the version control system, and
+  Gest is a task tracker.
+- It instructs the current agent or the proposal subagent to execute the draft
+  inline, in its own run.
+- It grants broad actions, such as unrestricted file reads and writes,
+  arbitrary commands, or network access.
 
-## Result Pairing
+## Result pairing
 
-A draft-generation subagent should report the proposal job separately from the
-future work by returning one `AGENT_RESULT v1` envelope followed by one
-`AGENT_TASK_DRAFT v1` envelope:
+A subagent that generates a draft should report the proposal job separately
+from the future work. To do so, it should return one `AGENT_RESULT v1` envelope
+followed by one `AGENT_TASK_DRAFT v1` envelope:
 
 ```text
 <<<AGENT_RESULT v1>>>
@@ -116,10 +124,10 @@ mode: draft
 <<<END_AGENT_TASK_DRAFT>>>
 ```
 
-`jagt draft lint` validates only the draft envelope. Use `jagt result lint` for
-the result envelope when the workflow needs to validate the full pair.
+`jagt draft lint` validates only the draft envelope. When the workflow needs to
+validate the full pair, use `jagt result lint` for the result envelope.
 
-## jagt Command Contract
+## jagt command contract
 
 ```bash
 jagt draft lint [PATH|-]
@@ -127,14 +135,21 @@ jagt draft lint draft.txt --expect-count 1
 jagt draft lint --expect-none -
 ```
 
-The command validates draft envelope markers, YAML shape, required fields,
-required approval and safety language, promotion checks, recursive subagent
-delegation, and forbidden authority patterns. It does not approve a draft, call
-an LLM, execute the proposed task, or compile the draft into an executable
-packet.
+The command validates these parts of a draft:
 
-After approval, the parent maps approved draft fields into deterministic
-`jagt render` inputs and validates the promoted packet:
+- the markers of the draft envelope
+- the YAML shape
+- the required fields
+- the required approval and safety language
+- the promotion checks
+- the recursive delegation to a subagent
+- the patterns of forbidden authority
+
+It does not approve a draft, call an LLM, execute the proposed task, or compile
+the draft into an executable packet.
+
+After approval, the parent maps the approved draft fields into deterministic
+`jagt render` inputs, and it validates the promoted packet:
 
 ```bash
 jagt render count-chat-message-chars \
