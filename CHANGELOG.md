@@ -3,7 +3,29 @@
 This file lists the changes of each version of jagt. The newest version comes
 first.
 
-## Unreleased
+jagt follows semantic versioning, as Cargo reads it. Before 1.0, a change that
+can break a user raises the minor version, such as 0.4.0 to 0.5.0. A fix that
+breaks nothing raises the patch version, such as 0.5.0 to 0.5.1. A break is a
+packet that lint rejected and now passes, or passed and now fails, a change in
+the text that render writes, or a change in a flag or a message that a script
+reads. Each version that breaks something lists it under "Breaking".
+
+## 0.5.0
+
+### Breaking
+
+- Lint rejects some packets that 0.4.0 passed. They hold:
+  - a stray line at column 0, or a top-level field away from column 0;
+  - a top-level key that is not a plain or quoted scalar;
+  - YAML that yaml-rust2 cannot read, or reads with other top-level fields;
+  - a YAML merge, a tagged key or an alias key;
+  - a raw U+0085, U+2028 or U+2029;
+  - `result_rules` that is not a list of strings, names another nonce or
+    comes with no nonce.
+- Render writes a prompt line of only spaces or tabs with its whitespace,
+  under `prompt: |2`, where 0.4.0 wrote an empty line.
+- Render keeps the spaces and tabs at the end of the last line of a prompt or
+  a layer, where 0.4.0 dropped them.
 
 ### Render
 
@@ -36,6 +58,17 @@ first.
   form or in fullwidth digits.
 
 ## 0.4.0
+
+### Breaking
+
+- `jagt render` refuses a config prompt outside the project, in `.git`, with
+  a second hard link, or ignored by git.
+- A value that starts with `-`, other than a negative number, needs the `=`
+  form, such as `--input=-data.csv`.
+- The secret check refuses more values of allowlisted variables.
+- `jagt result lint --check-files` refuses a path with a `..` part.
+- `jagt draft lint` rejects more drafts, and passes some text that 0.3.0
+  rejected, such as "Never run inline."
 
 ### Render
 
