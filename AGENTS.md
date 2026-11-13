@@ -33,7 +33,7 @@ verification request, it must say why in the final response.
 
 - Project name: `jagt`
 - Main source directory: `src/`
-- Primary preliminary spec: `jagt_deterministic_renderer_spec.md`
+- Primary spec: `jagt_deterministic_renderer_spec.md`, the design of the built MVP
 - Rust prep notes: `docs/jagt-rust-prep.md`
 - Detailed workflow playbook:
   `.agents/skills/gtw/references/gest_codex_workflow.md`
@@ -50,20 +50,19 @@ verification request, it must say why in the final response.
 - Protocol references: `docs/reference/agentic_just_targets_base_spec.md` and
   `docs/reference/agent_result_v1_spec.md`
 
-`jagt_deterministic_renderer_spec.md` is a preliminary design proposal. Treat it
-as material to agree, disagree, revise, or promote into a Gest-tracked spec. Do
-not assume it is an accepted implementation plan until a Gest spec/task
-explicitly adopts it.
+`jagt_deterministic_renderer_spec.md` holds the design of the MVP, and
+`docs/jagt-mvp-implementation-plan.md` its staged plan. The MVP is built and
+released; `CHANGELOG.md` records each version. A change to the design beyond
+the MVP needs a Gest spec or task that adopts it.
 
-`jagt` is intended as a Rust CLI for deterministic rendering, linting, and
+`jagt` is a Rust CLI for deterministic rendering, linting, and
 explanation of agentic Just handoff envelopes. It should make `AGENT_TASK v1`
 packet creation reproducible and testable without using an LLM.
 
-## Preliminary `jagt` Design Guardrails
+## `jagt` Design Guardrails
 
-These guardrails summarize the current proposal in
-`jagt_deterministic_renderer_spec.md`; revisit them before implementation and
-update this section when the accepted design changes.
+These guardrails summarize the design in `jagt_deterministic_renderer_spec.md`,
+as the MVP implements it. Update this section when the design changes.
 
 - `jagt` must be deterministic. It must not call an LLM or depend on network
   access for rendering, linting, explanation, or schema output.
@@ -74,10 +73,10 @@ update this section when the accepted design changes.
   commit gates spec. `--no-save` turns the write off. Do not add another file
   write unless an accepted design adds it. `docs/packet-file.md` describes the
   file.
-- Accepted render inputs are proposed to be CLI arguments, `.jagt/config.toml`
+- Accepted render inputs are CLI arguments, `.jagt/config.toml`
   when present, target config, Markdown prompt files with optional YAML
   frontmatter, and explicitly allowlisted environment variables.
-- Configuration precedence is proposed as built-in defaults, project config,
+- Configuration precedence is built-in defaults, project config,
   target config, prompt frontmatter, then CLI flags.
 - Environment capture must be explicit and auditable. Do not read arbitrary
   environment variables by default, and never emit secrets.
@@ -85,9 +84,10 @@ update this section when the accepted design changes.
   recursive subagent delegation block.
 - Config and prompt frontmatter must not disable safety text, recursive
   delegation, or normal user/system/developer/VCS/approval instructions.
-- `AGENT_RESULT v1` lint/explain support is proposed, but implementation should
-  check whether the result contract has been accepted or revised before coding.
-- `.jagt/config.toml` is the proposed default config path; `.jagt/tmp/` is
+- `jagt result lint` and `jagt result explain` support `AGENT_RESULT v1`.
+  Before a change to them, check whether the result contract has been revised
+  upstream.
+- `.jagt/config.toml` is the default config path; `.jagt/tmp/` is
   ignored for future fixture or scratch output.
 
 ## Tag And Dependency Impact

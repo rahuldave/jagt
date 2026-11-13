@@ -1,6 +1,6 @@
 # Spec: jagt Deterministic Agentic Just Envelope Renderer
 
-Status: proposed MVP, ready for implementation planning.
+Status: MVP built and released. `CHANGELOG.md` records each version.
 
 ## Problem Statement
 
@@ -52,12 +52,14 @@ this spec if the contract has moved.
 - Spawning subagents.
 - Running Just recipes.
 - Replacing Just.
-- Writing rendered packets to files before an explicit future `--out` design.
+- Writing rendered packets to files other than the packet file. `jagt render`
+  saves `.agents/log/packets/<nonce>.json` for the commit gates, and
+  `--no-save` turns it off. `docs/packet-file.md` describes it.
 
 ## Proposed Solution
 
-This repository already contains the Rust crate scaffold, command contract, and
-reference material. The implementation should build the CLI in place.
+The CLI is built in place in this repository, on its Rust crate scaffold,
+command contract, and reference material.
 
 The primary renderer command is:
 
@@ -448,7 +450,8 @@ Phase 4 decided the schema and the later commands. It adds no command. See
 - Running the delegated task.
 - Spawning subagents.
 - Writing project outputs such as reports or charts.
-- Writing rendered packets to files.
+- Writing rendered packets to files, other than the packet file that
+  `jagt render` saves for the commit gates.
 - Replacing Just itself.
 
 ## Acceptance Criteria
@@ -485,14 +488,18 @@ Phase 4 decided the schema and the later commands. It adds no command. See
 - `task_ref` digest: not MVP. Revisit when result/task pairing needs a stable
   cross-envelope identifier.
 
-## Open Questions
+## Answered Questions
 
 - Which crate set should the implementation use for CLI parsing, YAML/TOML,
-  frontmatter, redaction globs, and tests?
+  frontmatter, redaction globs, and tests? Answer: `clap` for the CLI,
+  `serde_yaml` and `yaml-rust2` for YAML, `toml` for config, `serde_json`,
+  `sha2` and `getrandom` for the packet file, and `assert_cmd`, `predicates`
+  and `tempfile` for tests. No crate handles frontmatter or globs. `Cargo.toml`
+  has the list.
 - Should GitHub/CI/release packaging be part of the first public milestone or a
-  follow-up after the CLI behavior stabilizes? Phase 4 recorded it as a
-  follow-up. It covers CI, the package file list, an install section and a
-  release tag.
+  follow-up after the CLI behavior stabilizes? Answer: Phase 4 recorded it as a
+  follow-up, and it is now done. It covers CI, the package file list, an
+  install section and the release tags `v0.4.0` and `v0.5.0`.
 
 ## References
 
