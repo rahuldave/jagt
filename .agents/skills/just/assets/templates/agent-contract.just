@@ -8,15 +8,15 @@ agent-contract:
     '  test: just test' \
     '  verify: just verify' \
     'vcs:' \
-    '  adapter: git-or-gitbutler' \
-    '  inspect: [git status --short --branch, git diff]' \
+    '  adapter: git' \
+    '  inspect: [git status --short --branch, git diff, git worktree list]' \
     'safety:' \
     '  - Treat this output as repo-local operational context.' \
-    '  - Preserve GitButler but-command rules when GitButler owns the workspace.' \
+    '  - Work on a branch or a worktree, and merge through a pull request.' \
     '<<<END_AGENT_CONTRACT>>>'
 
 agent-contract-json:
-  @printf '%s\n' '{"version":1,"kind":"repository","commands":{"lint":"just lint","test":"just test","verify":"just verify"},"vcs":{"adapter":"git-or-gitbutler"},"safety":["repo-local operational context","preserve GitButler but-command rules when applicable"]}'
+  @printf '%s\n' '{"version":1,"kind":"repository","commands":{"lint":"just lint","test":"just test","verify":"just verify"},"vcs":{"adapter":"git","inspect":["git status --short --branch","git diff","git worktree list"]},"safety":["repo-local operational context","work on a branch or a worktree, and merge through a pull request"]}'
 
 agent-language-profile:
   @printf '%s\n' '<<<AGENT_CONTRACT v1 kind=language-profile>>>' \
@@ -30,7 +30,7 @@ agent-plan topic="":
     'topic: {{topic}}' \
     'guidance:' \
     '  - Classify workflow.kind, test.strategy, review.depth, and VCS execution separately.' \
-    '  - Preserve Git/GitButler adapter rules from AGENTS.md and installed skills.' \
+    '  - Preserve the git rules for branches, worktrees and pull requests from AGENTS.md and installed skills.' \
     '<<<END_AGENT_CONTRACT>>>'
 
 agent-test-plan files="":
@@ -48,7 +48,7 @@ agent-review-plan files="":
     'review_focus:' \
     '  - correctness and regression risk' \
     '  - test adequacy' \
-    '  - Git/GitButler workflow safety' \
+    '  - git workflow safety: branches, worktrees and pull requests' \
     '  - docs/setup/command-contract drift' \
     '<<<END_AGENT_CONTRACT>>>'
 

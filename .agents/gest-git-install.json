@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "agent_gest_git_skills",
   "source_repository": "git@github.com:rahuldave/agent_gest_git_skills.git",
-  "source_revision": "666306effef347ded8d02bcfb4e6cd31785ec345",
+  "source_revision": "3364aa41c54d8797ab2061ece236b67c100a3e81",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [

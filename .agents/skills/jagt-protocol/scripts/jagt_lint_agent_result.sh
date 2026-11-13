@@ -10,6 +10,7 @@ Validate AGENT_RESULT v1 envelopes with jagt. Options pass through to `jagt resu
   --expect-count N
   --expect-target TARGET
   --expect-status STATUS
+  --expect-nonce NONCE   (jagt 0.3.0 or later; fails a result without this nonce)
   --check-files
   --base-dir DIR
 USAGE
