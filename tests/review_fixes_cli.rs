@@ -346,6 +346,35 @@ fn check_files_refuses_a_file_with_a_second_hard_link() {
 
 #[cfg(unix)]
 #[test]
+fn check_files_passes_a_missing_optional_file_and_fails_a_required_dangling_link() {
+    use std::os::unix::fs::symlink;
+    let root = tempdir().expect("tempdir");
+    let project = root.path().join("project");
+    fs::create_dir(&project).expect("project");
+    // A link whose target is missing, and that would lead outside.
+    symlink(root.path().join("gone.txt"), project.join("dangling.txt")).expect("link");
+    let result = |path: &str, role: &str| {
+        RESULT_WITH_PARENT_PATH
+            .replace("../outside.txt", path)
+            .replace("role: required", &format!("role: {role}"))
+    };
+    for path in ["absent.txt", "dangling.txt"] {
+        jagt(&project)
+            .args(["result", "lint", "--check-files", "--base-dir", "."])
+            .write_stdin(result(path, "optional"))
+            .assert()
+            .success();
+        jagt(&project)
+            .args(["result", "lint", "--check-files", "--base-dir", "."])
+            .write_stdin(result(path, "required"))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("required output file missing"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn check_files_accepts_a_symlink_that_stays_inside_the_base_folder() {
     use std::os::unix::fs::symlink;
     let root = tempdir().expect("tempdir");
