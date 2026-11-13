@@ -89,6 +89,14 @@ line. The temporary index is in the temporary folder of the system, outside
 the repository. jagt removes it after the last line. A `GIT_INDEX_FILE` in the
 environment of the caller has no effect on the tree.
 
+`git add -A` has two effects outside the packet file:
+
+- **It writes objects.** Git stores each new or changed file as an object in
+  `.git/objects`, as any `git add` does. `git gc` removes the objects that no
+  commit uses.
+- **It runs clean filters.** A filter such as Git LFS runs on each changed
+  file, so a render in a large worktree can be slow.
+
 ## The nonce
 
 jagt draws 16 random bytes from the operating system for each packet. If the
@@ -138,8 +146,8 @@ checkout. So a change to a layer file in a linked worktree takes effect in
 that worktree. A layer file can be a symlink, but its real path must be inside
 `.agents/targets` of the worktree. The real path of `stack.json` must be the
 file `.agents/stack.json` itself. A symlink that leads elsewhere stops the
-render. So a repository cannot put a file such as `.env`, `.git/config` or a
-key into the packet.
+render. So a layer cannot put a file such as `.env`, `.git/config` or a key
+into the packet.
 
 - **A missing layer is not an error.** A missing file, a missing
   `stack.json`, or a file of blank lines adds no layer.
@@ -148,6 +156,10 @@ key into the packet.
 - **One blank line** goes between two layers.
 - **A first line with an indent** is kept. jagt then writes `prompt: |2`, so
   that YAML reads the indent of the block correctly.
+- **Some characters cannot go in a block.** A YAML reader reads a lone `\r`,
+  U+0085, U+2028 and U+2029 as line breaks, and refuses a control character
+  such as U+0001. A prompt with one of them is written as `prompt: "..."`, in
+  double quotes with escapes. Each `\r\n` becomes `\n` first, as in a block.
 - **A profile name must be a plain name.** It starts with a letter or a digit,
   and holds only letters, digits, `_`, `.` and `-`. So a name such as `..`
   cannot read a file outside `.agents/targets`. A bad name stops the render.
@@ -164,7 +176,37 @@ provenance:
     - 'repository text: .agents/targets/docs.md'
 ```
 
+## The prompt file of a config
+
+A config file comes with the repository, like a layer. So jagt checks the
+`prompt` that a config names, in `[defaults]` or in a target, before it reads
+the file. Each of these stops the render:
+
+- **A path outside the current folder.** jagt compares real paths, so an
+  absolute path, a `..` path or a symlink that leads elsewhere counts.
+- **A part of the path that is `.git`.**
+- **A file with more than one hard link**, on Unix. A hard link can name a file
+  outside the folder.
+- **A file that a repository ignores**, such as an ignored `.env`. jagt asks
+  each repository from the folder of the file up to the current folder. So a
+  submodule and the repository around it both answer, and one "ignored" is
+  enough.
+- **A file that the nearest repository cannot answer for.** When a folder
+  above the file holds `.git`, and git cannot start or gives an error, jagt
+  cannot tell whether git ignores the file.
+- **A hidden file outside any repository.** With no `.git` above the file,
+  there is no ignore list. A part of the path that starts with `.` then stops
+  the render. The folders `.agents` and `.jagt` are allowed.
+
+The check does not cover a file that is neither tracked nor ignored, such as a
+new `creds.json` in the folder. A prompt file from `--prompt` is the choice of
+the caller, so jagt reads it with no check.
+
 ## When jagt saves no file
+
+jagt checks the text with its own lint in these cases too, as for a saved
+packet. So `jagt render` never prints a packet that `jagt lint` rejects.
+
 
 - **`--no-save`** renders the text only. The text has no nonce, and jagt saves
   no file. Use it for a demo or a draft that needs no record. With

@@ -412,6 +412,11 @@ fn build_render_options(args: RenderArgs) -> Result<TaskRenderOptions> {
     if args.prompt_text.is_none()
         && let Some(path) = prompt_path
     {
+        // A `--prompt` is the caller's own choice. A prompt path from a config
+        // comes with the repository, so it must pass the containment check.
+        if args.prompt.is_none() {
+            packet::check_config_prompt_path(&std::env::current_dir()?, &path)?;
+        }
         let prompt_file = read_prompt_file(Path::new(&path), &env_config)?;
         if prompt_file.frontmatter_seen {
             source_order.push(format!("prompt frontmatter: {path}"));
@@ -524,8 +529,8 @@ pub struct RenderOutcome {
 /// layers come from the top of the worktree when git finds one, and from `cwd`
 /// when it does not; git errors are then ignored.
 ///
-/// Before it saves the file, it lints the rendered text as one packet. A packet
-/// that fails lint gives a render error and no file.
+/// It lints the rendered text as one packet on every path, before it saves a
+/// file. A packet that fails lint gives a render error and no file.
 ///
 /// # Returns
 ///
@@ -549,8 +554,10 @@ pub fn render_and_save(
         .unwrap_or_else(|| cwd.to_path_buf());
     apply_prompt_layers(&mut options, &root)?;
     let Some(context) = context.filter(|_| !no_save) else {
+        let text = render_task_packet(&options)?;
+        lint_rendered_packet(&text)?;
         return Ok(RenderOutcome {
-            text: render_task_packet(&options)?,
+            text,
             packet_file: None,
         });
     };
@@ -560,14 +567,7 @@ pub fn render_and_save(
     options.nonce = Some(nonce.clone());
     let text = render_task_packet(&options)?;
     // A packet file must belong to a packet that parses.
-    lint_agent_task(
-        &text,
-        LintOptions {
-            expect_none: false,
-            expect_count: Some(1),
-        },
-    )
-    .map_err(|error| JagtError::Render(format!("the rendered packet is not valid: {error}")))?;
+    lint_rendered_packet(&text)?;
     let record = packet::PacketRecord {
         version: packet::PACKET_FILE_VERSION,
         nonce,
@@ -581,6 +581,28 @@ pub fn render_and_save(
         text,
         packet_file: Some(path),
     })
+}
+
+/// Lint a rendered packet as exactly one `AGENT_TASK v1` packet, so that `jagt render` never
+/// prints a packet that `jagt lint` rejects.
+///
+/// # Arguments
+///
+/// * `text` - the packet text that `jagt render` would print
+///
+/// # Returns
+///
+/// `Ok(())`, or a `Render` error that names the lint problem.
+fn lint_rendered_packet(text: &str) -> Result<()> {
+    lint_agent_task(
+        text,
+        LintOptions {
+            expect_none: false,
+            expect_count: Some(1),
+        },
+    )
+    .map(|_| ())
+    .map_err(|error| JagtError::Render(format!("the rendered packet is not valid: {error}")))
 }
 
 /// Turn an empty list into `None`, so that an unused CLI flag does not replace a config value.
@@ -1097,12 +1119,22 @@ fn push_nested_string_list(output: &mut String, key: &str, values: &[String], in
 /// When the first line that is not blank starts with whitespace, the block starts with `key: |2`,
 /// so that YAML keeps that indent. A line of only whitespace is written empty.
 ///
+/// A literal block cannot hold some characters. A YAML reader reads a lone `\r`, U+0085, U+2028
+/// and U+2029 as line breaks, and refuses a control character such as U+0001. A value with one of
+/// them is written as `key: "..."` instead, with escapes, after each `\r\n` becomes `\n`, as the
+/// block would make it.
+///
 /// # Arguments
 ///
 /// * `output` - the packet text so far, added to in place
 /// * `key` - the YAML key, written with no quotes
 /// * `value` - the text of the block, such as the prompt
 fn push_literal_block(output: &mut String, key: &str, value: &str) {
+    if !fits_literal_block(value) {
+        let value = value.replace("\r\n", "\n");
+        push_line(output, &format!("{key}: {}", double_quoted(&value)));
+        return;
+    }
     // YAML finds the indent of a block from its first line that is not empty.
     // When that line starts with a space, the indent must be given, as `|2`.
     let first_starts_indented = value
@@ -1123,6 +1155,31 @@ fn push_literal_block(output: &mut String, key: &str, value: &str) {
             push_line(output, &format!("  {line}"));
         }
     }
+}
+
+/// Tell whether a YAML literal block can hold `value`, line by line, as [`push_literal_block`]
+/// writes it.
+///
+/// # Arguments
+///
+/// * `value` - the text of the block
+///
+/// # Returns
+///
+/// `false` when the value has a `\r` that is not part of `\r\n`, or another character that
+/// [`needs_escape`] names, other than a tab and a line feed.
+fn fits_literal_block(value: &str) -> bool {
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.peek() != Some(&'\n') {
+                return false;
+            }
+        } else if c != '\t' && c != '\n' && needs_escape(c) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Write `value` as a YAML scalar that a reader reads back as the same
@@ -1585,7 +1642,6 @@ where
 /// `Ok(())`, or the first problem found.
 fn validate_task_block(body: &str, index: usize) -> Result<()> {
     check_malformed_top_level_fields(body, index)?;
-    check_balanced_delimiters(body, index)?;
 
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentTask(format!("block {index} contains invalid YAML: {error}"))
@@ -1650,7 +1706,6 @@ fn validate_task_block(body: &str, index: usize) -> Result<()> {
 /// `Ok(())`, or the first problem found.
 fn validate_draft_block(body: &str, index: usize) -> Result<()> {
     check_malformed_draft_top_level_fields(body, index)?;
-    check_balanced_draft_delimiters(body, index)?;
 
     let value: Value = serde_yaml::from_str(body).map_err(|error| {
         JagtError::InvalidAgentTaskDraft(format!("block {index} contains invalid YAML: {error}"))
@@ -2443,7 +2498,13 @@ fn validate_result_files(map: &Mapping, index: usize, base_dir: &Path) -> Result
             JagtError::InvalidAgentResult(format!("block {index} outputs.files entry missing path"))
         })?;
         let path_ref = Path::new(path);
-        if path_ref.is_absolute() {
+        // A `..` part could name a file outside the base folder, such as
+        // `../../etc/hosts`, so it counts as not repo-relative.
+        if path_ref.is_absolute()
+            || path_ref
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
             return Err(JagtError::InvalidAgentResult(format!(
                 "block {index} output file {path} must be repo-relative"
             )));
@@ -2575,47 +2636,6 @@ fn split_first_char(value: &str) -> Option<(char, &str)> {
     let mut chars = value.chars();
     let first = chars.next()?;
     Some((first, chars.as_str()))
-}
-
-/// Check that a packet has as many `[` as `]`, and as many `{` as `}`, anywhere in its text.
-///
-/// # Arguments
-///
-/// * `body` - the YAML text of the packet
-/// * `index` - the packet's number, for messages
-///
-/// # Returns
-///
-/// `Ok(())`, or an `InvalidAgentTask` error.
-fn check_balanced_delimiters(body: &str, index: usize) -> Result<()> {
-    for (open, close, label) in [('[', ']', "square brackets"), ('{', '}', "curly braces")] {
-        let open_count = body.chars().filter(|value| *value == open).count();
-        let close_count = body.chars().filter(|value| *value == close).count();
-        if open_count != close_count {
-            return Err(JagtError::InvalidAgentTask(format!(
-                "block {index} has unbalanced {label}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Check the brackets and braces of a draft, as [`check_balanced_delimiters`] does, with a draft
-/// error.
-///
-/// # Arguments
-///
-/// * `body` - the YAML text of the draft
-/// * `index` - the draft's number, for messages
-///
-/// # Returns
-///
-/// `Ok(())`, or an `InvalidAgentTaskDraft` error.
-fn check_balanced_draft_delimiters(body: &str, index: usize) -> Result<()> {
-    check_balanced_delimiters(body, index).map_err(|error| match error {
-        JagtError::InvalidAgentTask(message) => JagtError::InvalidAgentTaskDraft(message),
-        other => other,
-    })
 }
 
 /// Check that a target is not empty and holds only ASCII letters, digits, `_`, `.` and `-`.

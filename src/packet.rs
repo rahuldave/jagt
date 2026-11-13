@@ -671,6 +671,146 @@ fn read_inside(root: &Path, relative: &str, allowed: &str) -> Result<Option<Stri
     }
 }
 
+/// Check the prompt path that a config file names, before jagt reads it.
+///
+/// A config file comes with the repository, so its `prompt` must not put any
+/// file into the packet. A missing file is left for the read to report. Each of
+/// these refuses the file:
+///
+/// - its real path is outside the real path of `cwd`;
+/// - a part of its path is `.git`;
+/// - on Unix, the file has more than one hard link, so it may be a file outside;
+/// - a repository between the file and `cwd` ignores the file, such as an
+///   ignored `.env`. jagt asks each repository from the folder of the file up
+///   to `cwd`, so a submodule and the repository around it both answer;
+/// - a folder above the file holds a `.git` entry, and the repository nearest
+///   the file gives no clear answer, for example when git cannot start;
+/// - no folder above the file holds a `.git` entry, and a part of its path
+///   starts with `.`, other than the folders `.agents` and `.jagt`.
+///
+/// # Arguments
+///
+/// * `cwd` - the folder that jagt runs in, against which a relative path is read
+/// * `path` - the prompt path from the config
+///
+/// # Returns
+///
+/// `Ok(())`, or a render error that says why jagt does not read the file.
+pub fn check_config_prompt_path(cwd: &Path, path: &str) -> Result<()> {
+    let refuse = |why: &str| {
+        render_error(&format!(
+            "the config names the prompt file {path}, which {why}, so jagt does not read it; pass it with --prompt instead"
+        ))
+    };
+    let real = match fs::canonicalize(cwd.join(path)) {
+        Ok(real) => real,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(render_error(&format!("could not read {path}: {error}"))),
+    };
+    let real_cwd = fs::canonicalize(cwd)?;
+    let Ok(inside) = real.strip_prefix(&real_cwd) else {
+        return Err(refuse("leads outside the current folder"));
+    };
+    if inside.components().any(|part| part.as_os_str() == ".git") {
+        return Err(refuse("is inside .git"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if fs::metadata(&real)?.nlink() > 1 {
+            return Err(refuse("has more than one hard link"));
+        }
+    }
+    // Each repository from the folder of the file up to the current folder
+    // may ignore the file: a submodule or nested repository has its own
+    // ignore list, and so has the repository around it. jagt asks each one.
+    let Some(folder) = real.parent() else {
+        return Err(refuse("has no folder"));
+    };
+    let mut askers: Vec<&Path> = folder
+        .ancestors()
+        .take_while(|dir| dir.starts_with(&real_cwd))
+        .filter(|dir| dir.join(".git").exists())
+        .collect();
+    if askers.last() != Some(&real_cwd.as_path()) {
+        askers.push(&real_cwd);
+    }
+    let in_repository = folder.ancestors().any(|dir| dir.join(".git").exists());
+    let answers: Vec<Option<i32>> = askers.iter().map(|dir| check_ignore(dir, &real)).collect();
+    // `git check-ignore` exits 0 for an ignored path, 1 for a path that is
+    // not ignored, and 128 outside a repository or on an error.
+    if answers.contains(&Some(0)) {
+        return Err(refuse("git ignores"));
+    }
+    if in_repository {
+        // The repository nearest the file must answer. A repository further
+        // out may give 128, as git does for a path inside a submodule.
+        let nearest_answers = answers.first() == Some(&Some(1));
+        let others_answer = answers[1..]
+            .iter()
+            .all(|answer| matches!(answer, Some(1) | Some(128)));
+        if nearest_answers && others_answer {
+            return Ok(());
+        }
+        return Err(refuse(
+            "is in a git repository, but git cannot say whether it ignores the file",
+        ));
+    }
+    // With no repository there is no ignore list. A hidden file such as
+    // `.env` or `.ssh/id_rsa` is then refused.
+    if has_hidden_part(inside) {
+        return Err(refuse(
+            "is hidden, and no git repository can say whether it ignores the file",
+        ));
+    }
+    Ok(())
+}
+
+/// Ask git, run in `dir`, whether it ignores the file `real`.
+///
+/// # Arguments
+///
+/// * `dir` - the folder that git runs in
+/// * `real` - the real path of the file
+///
+/// # Returns
+///
+/// The exit code of `git check-ignore -q`, or `None` when git cannot start.
+fn check_ignore(dir: &Path, real: &Path) -> Option<i32> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(dir)
+        .args(["check-ignore", "-q", "--"])
+        .arg(real)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for name in LOCAL_ENV_VARS {
+        command.env_remove(name);
+    }
+    command.status().ok().and_then(|status| status.code())
+}
+
+/// Tell whether a part of `path` starts with `.`, other than the folders
+/// `.agents` and `.jagt` of jagt and its skills.
+///
+/// # Arguments
+///
+/// * `path` - a relative path
+///
+/// # Returns
+///
+/// `true` when a part is hidden.
+fn has_hidden_part(path: &Path) -> bool {
+    let count = path.components().count();
+    path.components().enumerate().any(|(index, part)| {
+        let name = part.as_os_str().to_string_lossy();
+        let folder = index + 1 < count;
+        name.starts_with('.') && !(folder && (name == ".agents" || name == ".jagt"))
+    })
+}
+
 /// Join the layers in order, with one blank line between two layers. The
 /// whitespace at the end of each layer is dropped.
 ///
