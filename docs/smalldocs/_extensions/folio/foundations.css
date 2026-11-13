@@ -39,7 +39,8 @@ html .sidebar-item-section:first-child { margin-top:0; }
 html .sidebar-item-section>.sidebar-item-container .sidebar-link { padding-bottom:var(--f-space-12); }
 html .sidebar-link { color:var(--f-muted); opacity:1; padding:var(--f-space-8) var(--f-space-12); border-left:1px solid transparent; }
 html .sidebar-item .sidebar-item-toggle { color:var(--f-muted); }
-html #TOC .nav-link { color:var(--f-muted); }
+html #TOC .nav-link { color:var(--f-muted); overflow-wrap:anywhere; }
+html main.content > #TOC a, html #TOC-body a, html .quarto-listing-category .category { overflow-wrap:anywhere; }
 html #TOC .nav-link.active { color:var(--f-accent-text); border-left-color:var(--f-accent-text); text-decoration:underline; }
 html #TOC .nav-link:hover { color:var(--f-link-hover); }
 html .callout { border:1px solid var(--f-decorative-line); border-left-width:2px; }
