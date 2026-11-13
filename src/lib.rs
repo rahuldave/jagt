@@ -1033,10 +1033,10 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 /// Say whether a variable name looks like a secret's.
 ///
 /// The name is split into parts at each character that is not a letter or a digit. A part such
-/// as `TOKEN`, `PASS`, `AUTH`, `DSN` or `KEY` counts, except `PUBLIC_KEY`. So do the words
-/// `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PASSPHRASE` and `CREDENTIAL` inside a part, a part
-/// that ends in `AUTH` or `TOKEN`, and known compounds such as `PGPASS` and `SSHKEY`. `AUTHOR`,
-/// `KEYBOARD` and `COMPASS` do not count.
+/// as `TOKEN`, `PASS`, `DSN` or `WEBHOOK` counts anywhere, and so do known compounds such as
+/// `PGPASS` and `SSHKEY`, and the words `SECRET`, `PASSWORD` and `CREDENTIAL` inside a part. The
+/// parts `AUTH`, `PW`, `PWD` and `KEY` count only at the end, so `SSH_AUTH_SOCK`, `SSH_KEYS_DIR`
+/// and `CACHE_KEY` do not. `AUTHOR`, `KEYBOARD`, `COMPASS` and `MAX_TOKENS` do not count.
 ///
 /// # Arguments
 ///
@@ -1051,12 +1051,14 @@ fn looks_secret_name(name: &str) -> bool {
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())
         .collect();
-    let secret_part = parts.iter().enumerate().any(|(at, part)| {
-        let public_key = *part == "KEY" && at > 0 && parts[at - 1] == "PUBLIC";
-        let named = matches!(
+    let Some(last) = parts.last() else {
+        return false;
+    };
+    let before_last = parts.len().checked_sub(2).map(|at| parts[at]);
+    let any_part = parts.iter().any(|part| {
+        matches!(
             *part,
             "TOKEN"
-                | "TOKENS"
                 | "SECRET"
                 | "SECRETS"
                 | "PASS"
@@ -1066,35 +1068,12 @@ fn looks_secret_name(name: &str) -> bool {
                 | "CREDENTIAL"
                 | "CREDENTIALS"
                 | "CREDS"
-                | "AUTH"
                 | "COOKIE"
                 | "COOKIES"
                 | "DSN"
-                | "SIG"
-                | "SIGNATURE"
-                | "KEY"
-                | "KEYS"
                 | "APIKEY"
                 | "WEBHOOK"
-        );
-        let inside = [
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "PASSWD",
-            "PASSPHRASE",
-            "CREDENTIAL",
-        ]
-        .iter()
-        .any(|word| part.contains(word));
-        let ends = ["AUTH", "TOKEN"]
-            .iter()
-            .any(|end| part.len() > end.len() && part.ends_with(end));
-        // Many words end in KEY or PASS, such as KEYBOARD's kin MONKEY or COMPASS,
-        // so only known compounds count.
-        let compound = matches!(
-            *part,
-            "PGPASS"
+                | "PGPASS"
                 | "DBPASS"
                 | "SSHKEY"
                 | "ACCESSKEY"
@@ -1104,10 +1083,22 @@ fn looks_secret_name(name: &str) -> bool {
                 | "SIGNINGKEY"
                 | "ENCRYPTIONKEY"
                 | "ACCOUNTKEY"
-        );
-        (named && !public_key) || inside || ends || compound
+        ) || ["SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "CREDENTIAL"]
+            .iter()
+            .any(|word| part.contains(word))
     });
-    secret_part || upper.contains("CONNECTION_STRING")
+    // These parts name a secret only at the end, as in GITHUB_AUTH or DB_KEY, and not in
+    // SSH_AUTH_SOCK, SSH_KEYS_DIR or TOKENIZERS_PARALLELISM.
+    let last_part = (matches!(*last, "AUTH" | "SIG" | "SIGNATURE" | "PW" | "PWD")
+        && !(parts.len() == 1 && *last == "PWD"))
+        || (*last == "KEY"
+            && !matches!(
+                before_last,
+                Some("PUBLIC" | "CACHE" | "SORT" | "PRIMARY" | "PARTITION" | "FOREIGN" | "ROUTING")
+            ))
+        || (last.len() > 5 && last.ends_with("TOKEN"))
+        || (last.len() > 4 && last.ends_with("AUTH") && parts.len() == 1);
+    any_part || last_part || upper.contains("CONNECTION_STRING")
 }
 
 /// Say whether a value looks like a secret.
@@ -1150,7 +1141,8 @@ fn looks_secret_value(value: &str) -> bool {
     .any(|marker| lower.contains(marker));
     marker
         || has_url_password(value)
-        || has_auth_scheme_token(&lower)
+        || has_auth_scheme_token(value)
+        || has_query_secret(&lower)
         || looks_aws_secret_key(value.trim())
         || value
             .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
@@ -1175,12 +1167,18 @@ fn looks_secret_value(value: &str) -> bool {
 /// True when the word looks like a token.
 fn looks_secret_word(word: &str) -> bool {
     let lower = word.to_ascii_lowercase();
+    // A GitHub token has a long tail of letters and digits, so a path part such as `ghs_build`
+    // does not count.
+    let github = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| {
+            lower.starts_with(prefix)
+                && word.len() >= prefix.len() + 30
+                && word[prefix.len()..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric())
+        });
     let any_prefix = [
-        "ghp_",
-        "gho_",
-        "ghu_",
-        "ghs_",
-        "ghr_",
         "github_pat_",
         "glpat-",
         "xoxa-",
@@ -1232,7 +1230,8 @@ fn looks_secret_word(word: &str) -> bool {
         && parts[0].starts_with("eyJ")
         && parts[1].starts_with("eyJ")
         && parts.iter().all(|part| part.len() >= 8);
-    any_prefix
+    github
+        || any_prefix
         || alnum_tail("npm_", 30)
         || alnum_tail("hf_", 30)
         || sk_key
@@ -1246,21 +1245,65 @@ fn looks_secret_word(word: &str) -> bool {
 ///
 /// # Arguments
 ///
-/// * `lower` - the value, in lower case
+/// * `value` - the value
 ///
 /// # Returns
 ///
-/// True when `basic ` or `bearer ` is followed by a token of 8 or more characters.
-fn has_auth_scheme_token(lower: &str) -> bool {
+/// True when `basic ` or `bearer `, in any case, is followed by a token of 8 or more characters
+/// with mixed case, a digit or `=`.
+fn has_auth_scheme_token(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
     ["basic ", "bearer "].iter().any(|scheme| {
         lower.match_indices(scheme).any(|(at, _)| {
-            let token: String = lower[at + scheme.len()..]
+            let token: String = value[at + scheme.len()..]
                 .chars()
                 .take_while(|c| {
                     c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_' | '.')
                 })
                 .collect();
-            token.len() >= 8
+            // A word of prose, such as "basic diagnostics", has one case and no digits.
+            let mixed = token.bytes().any(|byte| byte.is_ascii_uppercase())
+                && token.bytes().any(|byte| byte.is_ascii_lowercase());
+            let coded = token
+                .bytes()
+                .any(|byte| byte.is_ascii_digit() || byte == b'=');
+            token.len() >= 8 && (mixed || coded)
+        })
+    })
+}
+
+/// Say whether a URL query names a secret with a value, such as `?password=x` or `&token=x`.
+///
+/// # Arguments
+///
+/// * `lower` - the value, in lower case
+///
+/// # Returns
+///
+/// True when such a pair has a value that is not empty.
+fn has_query_secret(lower: &str) -> bool {
+    [
+        "password",
+        "passwd",
+        "pwd",
+        "pass",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_token",
+        "client_secret",
+    ]
+    .iter()
+    .any(|key| {
+        ["?", "&"].iter().any(|sep| {
+            let pair = format!("{sep}{key}=");
+            lower.match_indices(&pair).any(|(at, _)| {
+                lower[at + pair.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| !matches!(c, '&' | '#') && !c.is_whitespace())
+            })
         })
     })
 }
@@ -1276,7 +1319,9 @@ fn has_auth_scheme_token(lower: &str) -> bool {
 ///
 /// True when it has that form.
 fn looks_aws_secret_key(value: &str) -> bool {
-    value.len() == 40
+    // A path, such as `/Users/me/Project2025/src`, is not a key.
+    !value.starts_with(['/', '.', '~'])
+        && value.len() == 40
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
@@ -2378,11 +2423,6 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
         return Err(error("attempts direct draft execution"));
     }
 
-    if has_mixed_script_word(body) {
-        return Err(error(
-            "mixes ASCII letters with lookalike letters in a word",
-        ));
-    }
     let text = normalize_draft_text(body);
     if DRAFT_APPROVAL_CLAIMS
         .iter()
@@ -2423,7 +2463,9 @@ const DRAFT_APPROVAL_CLAIMS: &[&str] = &[
     "approval granted",
     "approval was granted",
     "approval has been granted",
-    "signed off",
+    "signed off on this",
+    "has signed off",
+    "have signed off",
 ];
 
 /// Phrases that skip an approval, the sandbox or a rule.
@@ -2443,7 +2485,18 @@ const DRAFT_BYPASS_PHRASES: &[&str] = &[
     "bypass the checks",
     "bypass hooks",
     "bypass the hooks",
-    "circumvent",
+    "circumvent approval",
+    "circumvent the approval",
+    "circumvent review",
+    "circumvent the review",
+    "circumvent the sandbox",
+    "circumvent the policy",
+    "circumvent the rules",
+    "circumvent the checks",
+    "override user instructions",
+    "override the user's instructions",
+    "ignore the user's instructions",
+    "ignore the system prompt",
     "get around the sandbox",
     "get around approval",
     "skip approval",
@@ -2472,14 +2525,10 @@ const DRAFT_BYPASS_PHRASES: &[&str] = &[
     "escape the sandbox",
     "escape sandbox",
     "outside the sandbox",
-    "override the user",
-    "override user",
     "override approval",
     "override the policy",
     "override policy",
-    "ignore the user",
     "ignore user instructions",
-    "ignore the system",
     "ignore system instructions",
     "ignore previous instructions",
     "ignore all previous instructions",
@@ -2518,12 +2567,13 @@ const DRAFT_INLINE_PHRASES: &[&str] = &[
     "do the task yourself",
     "do it yourself",
     "in the current agent",
-    "in this session",
-    "in the current session",
+    "immediately in this session",
+    "now in this session",
+    "right here in this session",
 ];
 
-/// Put draft text in a form for the phrase search: lower case, fullwidth letters as ASCII, no
-/// zero-width characters, and one space for each run of whitespace.
+/// Put draft text in a form for the phrase search: lower case, fullwidth letters and Cyrillic or
+/// Greek lookalikes as ASCII, no zero-width characters, and one space for each run of whitespace.
 ///
 /// # Arguments
 ///
@@ -2539,7 +2589,7 @@ fn normalize_draft_text(body: &str) -> String {
         let c = match c {
             '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
             '\u{3000}' => ' ',
-            _ => c,
+            _ => ascii_lookalike(c).unwrap_or(c),
         };
         if matches!(
             c,
@@ -2560,27 +2610,41 @@ fn normalize_draft_text(body: &str) -> String {
     out
 }
 
-/// Say whether a word mixes ASCII letters with lookalike letters, such as `bypаss` with a
-/// Cyrillic `а` or `arbıtrary` with a dotless `ı`. Accented Latin letters do not count.
+/// Give the ASCII letter that a Cyrillic, Greek or dotless letter looks like, such as the
+/// Cyrillic `а` in `bypаss`.
 ///
 /// # Arguments
 ///
-/// * `body` - the text to search
+/// * `c` - a character
 ///
 /// # Returns
 ///
-/// True when a word holds both kinds of letter.
-fn has_mixed_script_word(body: &str) -> bool {
-    body.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\u{200b}'..='\u{200d}'))
-        .any(|word| {
-            word.chars().any(|c| c.is_ascii_alphabetic())
-                && word.chars().any(|c| {
-                    // Greek, Cyrillic, the dotless i and fullwidth letters look like ASCII ones.
-                    // Accented Latin letters, as in "café", do not count.
-                    matches!(c, '\u{370}'..='\u{3ff}' | '\u{400}'..='\u{52f}' | '\u{131}')
-                        || matches!(c, '\u{ff21}'..='\u{ff3a}' | '\u{ff41}'..='\u{ff5a}')
-                })
-        })
+/// The ASCII letter, or `None` when `c` looks like no ASCII letter.
+fn ascii_lookalike(c: char) -> Option<char> {
+    Some(match c {
+        'а' | 'А' | 'α' | 'Α' => 'a',
+        'в' | 'В' | 'β' | 'Β' => 'b',
+        'с' | 'С' | 'ϲ' => 'c',
+        'ԁ' => 'd',
+        'е' | 'Е' | 'ε' | 'Ε' => 'e',
+        'һ' | 'Н' | 'Η' => 'h',
+        'і' | 'І' | 'ı' | 'ι' | 'Ι' => 'i',
+        'ј' | 'Ј' => 'j',
+        'к' | 'К' | 'κ' | 'Κ' => 'k',
+        'ӏ' => 'l',
+        'М' | 'Μ' => 'm',
+        'п' | 'η' | 'Ν' => 'n',
+        'о' | 'О' | 'ο' | 'Ο' => 'o',
+        'р' | 'Р' | 'ρ' | 'Ρ' => 'p',
+        'ѕ' | 'Ѕ' => 's',
+        'Т' | 'τ' | 'Τ' => 't',
+        'υ' | 'ս' => 'u',
+        'ν' => 'v',
+        'х' | 'Х' | 'χ' | 'Χ' => 'x',
+        'у' | 'У' | 'γ' | 'Υ' => 'y',
+        'Ζ' => 'z',
+        _ => return None,
+    })
 }
 
 /// Say whether `text` holds `phrase` with no negation just before it.
@@ -2608,7 +2672,14 @@ fn affirms(text: &str, phrase: &str) -> bool {
         {
             return false;
         }
-        let words: Vec<&str> = before
+        // A negation counts only within the same run of words. A mark such as `.`, `,`, `-` or
+        // `?` ends the run, so the "no" of "Should we wait? No - skip approval" is an answer, not
+        // a negation of the phrase.
+        let run_start = before
+            .char_indices()
+            .rfind(|(_, c)| !(c.is_alphanumeric() || *c == '\'' || *c == ' '))
+            .map_or(0, |(at, c)| at + c.len_utf8());
+        let words: Vec<&str> = before[run_start..]
             .split(|c: char| !(c.is_alphanumeric() || c == '\''))
             .filter(|word| !word.is_empty())
             .collect();
@@ -2734,10 +2805,7 @@ fn is_overbroad_draft_action(action: &str) -> bool {
             "outside the repo",
             "outside of the repo",
             "outside the project",
-            "as needed",
             "modify the codebase",
-            "the whole repo",
-            "the entire repo",
         ]
         .iter()
         .any(|target| phrase(target))
@@ -3884,8 +3952,10 @@ Create the report.
             "xoxb-123-456-abc",
             "xapp-1-abc",
             "glpat-abcdefghij",
-            "ghs_abc",
-            "Bearer ghp_abc",
+            "ghs_abcdefghijklmnopqrstuvwxyz0123456789",
+            "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+            "https://host/db?password=hunter2",
+            "https://host/x?a=1&token=abc",
             "sk_live_abc",
             "sk-ant-api03-AbCdEfGhIjKlMnOpQrSt",
             "sk-proj-Ab3dEfGhIjKlMnOpQrStUv",
@@ -3895,7 +3965,7 @@ Create the report.
             "https://a.blob.core.windows.net/c?sv=2020&sig=abc%3D",
             "{\"type\": \"service_account\", \"private_key_id\": \"x\"}",
             "Authorization: Basic dXNlcjpwYXNz",
-            "Bearer abcdefghijklmnop",
+            "Bearer abcDEF123ghiJKL",
             "sk_test_abc",
             "whsec_abc",
             concat!("SG.", "abcdefghijklmnopqrstuv", ".abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"),
@@ -3938,6 +4008,11 @@ Create the report.
             "/Users/me/AIzaSomethingThatIsLongerThanThirtyNineCharacters",
             "0123456789abcdef0123456789abcdef01234567",
             "basic usage",
+            "Run basic diagnostics",
+            "/home/ghs_build/x",
+            "/Users/me/Project2025/src/main/lib.rsXYZ",
+            "https://host/search?q=token",
+            "https://host/x?password=",
             "v1.2.3",
         ] {
             assert!(!looks_secret_value(value), "{value}");
@@ -3949,6 +4024,8 @@ Create the report.
         for name in [
             "API_TOKEN",
             "GITHUBTOKEN",
+            "DB_PW",
+            "MYSQL_PWD",
             "DB_PASSWD",
             "DB_PASS",
             "PGPASS",
@@ -3973,6 +4050,14 @@ Create the report.
             "AUTHORS_FILE",
             "PRIVATE_REPO_URL",
             "COMPASS_DIR",
+            "TOKENIZERS_PARALLELISM",
+            "OPENAI_MAX_TOKENS",
+            "SSH_AUTH_SOCK",
+            "NEXTAUTH_URL",
+            "SSH_KEYS_DIR",
+            "CACHE_KEY",
+            "PWD",
+            "OLDPWD",
         ] {
             assert!(!looks_secret_name(name), "{name}");
         }

@@ -308,9 +308,9 @@ of phrases holds. So the parent still reads each draft, and records
   `parent-or-user`. `execute_inline`, when present, must be `false`.
 - **Text:** a phrase does not count when a negation comes just before it, as in
   "never run it inline".
-- **Lookalike letters:** a word that mixes ASCII letters with Cyrillic, Greek or
-  fullwidth letters is an error. Before the search, jagt drops zero-width
-  characters, and turns fullwidth letters into ASCII.
+- **Lookalike letters:** before the search, jagt drops zero-width characters.
+  It turns fullwidth letters, and Cyrillic or Greek letters that look like
+  ASCII ones, into ASCII. So a Cyrillic `а` cannot hide a phrase.
 
 ## Deterministic Versus Stochastic
 
