@@ -1,6 +1,6 @@
 # jagt MVP Implementation Plan
 
-Status: proposed for approval before implementation.
+Status: done. All slices are built, and the MVP is released.
 
 This plan decomposes `jagt_deterministic_renderer_spec.md` into small,
 verifiable Rust slices. The recommended branch/execution model is one normal
@@ -128,7 +128,9 @@ Outcome:
   and `normalize` are deferred. `jagt_deterministic_renderer_spec.md` gives the
   reasons.
 - **Release:** CI, the package file list, an install section and a release tag
-  are follow-up work. The MIT licence is in place.
+  were follow-up work, and are now done: `.github/workflows/ci.yml`, the
+  `include` list of `Cargo.toml`, the install section of the README, and the
+  tags `v0.4.0` and `v0.5.0`. The MIT licence is in place.
 
 Verification:
 
@@ -151,6 +153,8 @@ Verification:
   especially for parser/linter/render function contracts.
 
 ## Approval Recommendation
+
+This section is history; the plan was approved and all phases are built.
 
 Start implementation with Phase 1 only. It creates the smallest durable core,
 keeps config/frontmatter/env risk out of the first slice, and gives every later
