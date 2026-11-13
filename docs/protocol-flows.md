@@ -297,6 +297,21 @@ they claim to be preapproved, use `mode: agentic`, bypass approval or VCS rules,
 request broad authority, or instruct the proposal subagent to execute the
 proposed work inline.
 
+`jagt draft lint` checks the structure of a draft strictly, and it searches the
+text for common ways to word these things. The search is a first filter, not a
+judgment of meaning, because a model can word a bypass in a way that no list
+of phrases holds. So the parent still reads each draft, and records
+`policy_review_passed`, before it promotes the draft.
+
+- **Fields:** a draft may hold only the known fields. `approval` may hold only
+  `required`, `approver` and `reason`. `approver` must be `parent`, `user` or
+  `parent-or-user`. `execute_inline`, when present, must be `false`.
+- **Text:** a phrase does not count when a negation comes just before it, as in
+  "never run it inline".
+- **Lookalike letters:** a word that mixes ASCII letters with Cyrillic, Greek or
+  fullwidth letters is an error. Before the search, jagt drops zero-width
+  characters, and turns fullwidth letters into ASCII.
+
 ## Deterministic Versus Stochastic
 
 | Situation | Use | Why |

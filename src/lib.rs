@@ -2297,17 +2297,52 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// The top-level fields that a draft may have. Any other field, such as `approved: true`, is an
+/// error, so a draft cannot carry a claim in a field that no check reads.
+const DRAFT_FIELDS: &[&str] = &[
+    "target",
+    "mode",
+    "generator",
+    "proposal_reason",
+    "source_request",
+    "assumptions",
+    "alternatives",
+    "rejected_options",
+    "risks",
+    "source_context",
+    "provenance",
+    "argv",
+    "prompt",
+    "inputs",
+    "outputs",
+    "allowed_actions",
+    "verification",
+    "approval",
+    "promotion",
+    "delegation",
+    "safety",
+    "execute_inline",
+];
+
 /// Check that a draft does not claim approval, try to bypass a rule, or ask to run inline.
 ///
-/// The structured fields are checked by value:
+/// This is a first filter, not a judgment of meaning: a model can always word a bypass in a way
+/// that no list of phrases holds. The parent still reviews each draft before promotion, as the
+/// `policy_review_passed` check of the promotion says.
 ///
-/// - `approval` may hold only `required`, `approver`, `reason` and `notes`, so a field such as
-///   `status: approved` or `approved_by` counts as a claim of approval;
+/// The structure is checked strictly:
+///
+/// - the draft may hold only the fields of [`DRAFT_FIELDS`];
+/// - `approval` may hold only `required`, `approver` and `reason`, and `approver` must be
+///   `parent`, `user` or `parent-or-user`;
+/// - `promotion` may hold only `method` and `required_checks`;
 /// - `execute_inline`, when present, must be `false`.
 ///
-/// The text of the draft is searched, in lower case, for phrases that claim approval, bypass a
-/// rule or ask to run inline. A phrase counts only when its clause has no negation before it, so
-/// "Never run inline." is not an order to run inline.
+/// The text is then searched for phrases that claim approval, bypass a rule or ask to run in the
+/// current agent. Before the search, the text is put in lower case, fullwidth letters become
+/// ASCII, zero-width characters are dropped and each run of whitespace becomes one space. A word
+/// that mixes ASCII letters with other letters, such as a Cyrillic `а` in `bypаss`, is an error.
+/// A phrase does not count when a negation comes just before it, as in "never run it inline".
 ///
 /// # Arguments
 ///
@@ -2319,122 +2354,259 @@ fn validate_draft_safety(map: &Mapping, index: usize) -> Result<()> {
 ///
 /// `Ok(())`, or the first problem found.
 fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize) -> Result<()> {
-    let claims_approval = || {
-        JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} claims the draft is already approved"
-        ))
-    };
+    let error =
+        |message: &str| JagtError::InvalidAgentTaskDraft(format!("block {index} {message}"));
+    let claims_approval = || error("claims the draft is already approved");
+
+    for key in map.keys() {
+        let key = key.as_str().unwrap_or("");
+        if !DRAFT_FIELDS.contains(&key) {
+            return Err(error(&format!("has the unknown field {key}")));
+        }
+    }
     if let Some(approval) = mapping_get(map, "approval").and_then(Value::as_mapping) {
         for key in approval.keys() {
-            let known = key
-                .as_str()
-                .is_some_and(|key| matches!(key, "required" | "approver" | "reason" | "notes"));
-            if !known {
+            if !matches!(key.as_str(), Some("required" | "approver" | "reason")) {
                 return Err(claims_approval());
             }
         }
+        if let Some(approver) = mapping_get(approval, "approver")
+            && !matches!(
+                approver.as_str(),
+                Some("parent" | "user" | "parent-or-user")
+            )
+        {
+            return Err(error(
+                "approval.approver must be parent, user or parent-or-user",
+            ));
+        }
+    }
+    if let Some(promotion) = mapping_get(map, "promotion").and_then(Value::as_mapping) {
+        for key in promotion.keys() {
+            if !matches!(key.as_str(), Some("method" | "required_checks")) {
+                return Err(error("promotion may hold only method and required_checks"));
+            }
+        }
+    }
+    if mapping_get(map, "execute_inline").is_some_and(|value| value.as_bool() != Some(false)) {
+        return Err(error("attempts direct draft execution"));
     }
 
-    let lower = body.to_ascii_lowercase();
-    if [
-        "already approved",
-        "preapproved",
-        "pre-approved",
-        "has been approved",
-        "was approved",
-        "is approved",
-        "approval granted",
-        "approval was granted",
-        "approval has been granted",
-        "approval is granted",
-        "approval recorded",
-    ]
-    .iter()
-    .any(|phrase| affirms(&lower, phrase))
+    if has_mixed_script_word(body) {
+        return Err(error(
+            "mixes ASCII letters with lookalike letters in a word",
+        ));
+    }
+    let text = normalize_draft_text(body);
+    if DRAFT_APPROVAL_CLAIMS
+        .iter()
+        .any(|phrase| affirms(&text, phrase))
     {
         return Err(claims_approval());
     }
-
-    if [
-        "bypass",
-        "circumvent",
-        "skip approval",
-        "skip the approval",
-        "skip approvals",
-        "skip review",
-        "skip the review",
-        "ignore approval",
-        "ignore the approval",
-        "ignore approvals",
-        "without approval",
-        "without asking",
-        "no approval needed",
-        "no need for approval",
-        "disable the sandbox",
-        "disable sandbox",
-        "escape the sandbox",
-        "escape sandbox",
-        "outside the sandbox",
-        "override the user",
-        "override user",
-        "override approval",
-        "override the policy",
-        "override policy",
-        "ignore the user",
-        "ignore user instructions",
-        "ignore the system",
-        "ignore system instructions",
-        "ignore previous instructions",
-        "ignore all previous instructions",
-        "--no-verify",
-        "force push",
-        "force-push",
-        "push --force",
-    ]
-    .iter()
-    .any(|phrase| affirms(&lower, phrase))
-    {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} attempts to bypass approvals or policy"
-        )));
-    }
-
-    let inline_flag =
-        mapping_get(map, "execute_inline").is_some_and(|value| value.as_bool() != Some(false));
-    if inline_flag
-        || [
-            "execute inline",
-            "execute it inline",
-            "run inline",
-            "run it inline",
-            "perform inline",
-            "execute it now",
-            "run it now",
-            "run it yourself",
-            "execute it yourself",
-            "do the task yourself",
-            "do it yourself",
-            "in the current agent",
-        ]
+    if DRAFT_BYPASS_PHRASES
         .iter()
-        .any(|phrase| affirms(&lower, phrase))
+        .any(|phrase| affirms(&text, phrase))
+        || DRAFT_DENIED_WAITS
+            .iter()
+            .any(|phrase| text.contains(phrase))
     {
-        return Err(JagtError::InvalidAgentTaskDraft(format!(
-            "block {index} attempts direct draft execution"
-        )));
+        return Err(error("attempts to bypass approvals or policy"));
     }
-
+    if DRAFT_INLINE_PHRASES
+        .iter()
+        .any(|phrase| affirms(&text, phrase))
+    {
+        return Err(error("attempts direct draft execution"));
+    }
     Ok(())
 }
 
-/// Say whether `text` holds `phrase` in a clause that does not deny it.
-///
-/// A clause runs from the last `.`, `!`, `?`, `;`, `:` or line break before the phrase. A clause
-/// with a negation such as `not`, `never`, `no` or `cannot` before the phrase denies it.
+/// Phrases that claim a draft is approved.
+const DRAFT_APPROVAL_CLAIMS: &[&str] = &[
+    "already approved",
+    "preapproved",
+    "pre-approved",
+    "has been approved",
+    "have been approved",
+    "user approved",
+    "user has approved",
+    "parent approved",
+    "parent has approved",
+    "was approved by",
+    "approval granted",
+    "approval was granted",
+    "approval has been granted",
+    "signed off",
+];
+
+/// Phrases that skip an approval, the sandbox or a rule.
+const DRAFT_BYPASS_PHRASES: &[&str] = &[
+    "bypass approval",
+    "bypass approvals",
+    "bypass the approval",
+    "bypass review",
+    "bypass the review",
+    "bypass the sandbox",
+    "bypass sandbox",
+    "bypass the policy",
+    "bypass policy",
+    "bypass the rules",
+    "bypass rules",
+    "bypass checks",
+    "bypass the checks",
+    "bypass hooks",
+    "bypass the hooks",
+    "circumvent",
+    "get around the sandbox",
+    "get around approval",
+    "skip approval",
+    "skip the approval",
+    "skip approvals",
+    "skip review",
+    "skip the review",
+    "ignore approval",
+    "ignore the approval",
+    "ignore approvals",
+    "turn off approval",
+    "turn off approvals",
+    "turn off the sandbox",
+    "without approval",
+    "without waiting for approval",
+    "without asking",
+    "approval is not required",
+    "approval is not needed",
+    "no approval needed",
+    "no approval is needed",
+    "no need for approval",
+    "no one needs to approve",
+    "nobody needs to approve",
+    "disable the sandbox",
+    "disable sandbox",
+    "escape the sandbox",
+    "escape sandbox",
+    "outside the sandbox",
+    "override the user",
+    "override user",
+    "override approval",
+    "override the policy",
+    "override policy",
+    "ignore the user",
+    "ignore user instructions",
+    "ignore the system",
+    "ignore system instructions",
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "--no-verify",
+    "force push",
+    "force-push",
+    "push --force",
+];
+
+/// Phrases with a negation that is itself the bypass, such as "don't wait for approval".
+const DRAFT_DENIED_WAITS: &[&str] = &[
+    "don't wait for approval",
+    "do not wait for approval",
+    "don't wait for review",
+    "do not wait for review",
+    "don't ask for approval",
+    "do not ask for approval",
+    "approval is not required",
+    "approval isn't required",
+];
+
+/// Phrases that ask to run the task in the current agent.
+const DRAFT_INLINE_PHRASES: &[&str] = &[
+    "execute inline",
+    "execute it inline",
+    "execute this inline",
+    "run it inline",
+    "run this inline",
+    "run the task inline",
+    "perform inline",
+    "execute it now",
+    "run it now",
+    "run it yourself",
+    "execute it yourself",
+    "perform the task yourself",
+    "do the task yourself",
+    "do it yourself",
+    "in the current agent",
+    "in this session",
+    "in the current session",
+];
+
+/// Put draft text in a form for the phrase search: lower case, fullwidth letters as ASCII, no
+/// zero-width characters, and one space for each run of whitespace.
 ///
 /// # Arguments
 ///
-/// * `text` - the text, in lower case
+/// * `body` - the YAML text of the draft
+///
+/// # Returns
+///
+/// The text in that form.
+fn normalize_draft_text(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut last_space = false;
+    for c in body.chars() {
+        let c = match c {
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            '\u{3000}' => ' ',
+            _ => c,
+        };
+        if matches!(
+            c,
+            '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}' | '\u{ad}'
+        ) {
+            continue;
+        }
+        if c.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+            continue;
+        }
+        last_space = false;
+        out.extend(c.to_lowercase());
+    }
+    out
+}
+
+/// Say whether a word mixes ASCII letters with lookalike letters, such as `bypаss` with a
+/// Cyrillic `а` or `arbıtrary` with a dotless `ı`. Accented Latin letters do not count.
+///
+/// # Arguments
+///
+/// * `body` - the text to search
+///
+/// # Returns
+///
+/// True when a word holds both kinds of letter.
+fn has_mixed_script_word(body: &str) -> bool {
+    body.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\u{200b}'..='\u{200d}'))
+        .any(|word| {
+            word.chars().any(|c| c.is_ascii_alphabetic())
+                && word.chars().any(|c| {
+                    // Greek, Cyrillic, the dotless i and fullwidth letters look like ASCII ones.
+                    // Accented Latin letters, as in "café", do not count.
+                    matches!(c, '\u{370}'..='\u{3ff}' | '\u{400}'..='\u{52f}' | '\u{131}')
+                        || matches!(c, '\u{ff21}'..='\u{ff3a}' | '\u{ff41}'..='\u{ff5a}')
+                })
+        })
+}
+
+/// Say whether `text` holds `phrase` with no negation just before it.
+///
+/// The negation is the word just before the phrase, or the word before that when the word just
+/// before is `to`, `ever`, `be`, `the`, `a` or `any`. So "never run it inline" and "do not bypass approval"
+/// deny the phrase, but "do not hesitate to bypass approval" and "never ask, and bypass the
+/// sandbox" do not. A phrase must start at the start of a word.
+///
+/// # Arguments
+///
+/// * `text` - the text, in the form of [`normalize_draft_text`]
 /// * `phrase` - the phrase, in lower case
 ///
 /// # Returns
@@ -2443,28 +2615,42 @@ fn validate_draft_no_forbidden_authority(body: &str, map: &Mapping, index: usize
 fn affirms(text: &str, phrase: &str) -> bool {
     text.match_indices(phrase).any(|(start, _)| {
         let before = &text[..start];
-        let clause_start = before
-            .rfind(['.', '!', '?', ';', ':', '\n'])
-            .map_or(0, |at| at + 1);
-        let clause = &before[clause_start..];
-        !clause
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '\''))
-            .any(|word| {
-                matches!(
-                    word,
-                    "not"
-                        | "never"
-                        | "no"
-                        | "nor"
-                        | "cannot"
-                        | "can't"
-                        | "don't"
-                        | "doesn't"
-                        | "mustn't"
-                        | "shouldn't"
-                        | "won't"
-                )
-            })
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '-')
+        {
+            return false;
+        }
+        let words: Vec<&str> = before
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .filter(|word| !word.is_empty())
+            .collect();
+        let is_negation = |word: &str| {
+            matches!(
+                word,
+                "not"
+                    | "never"
+                    | "no"
+                    | "nor"
+                    | "cannot"
+                    | "can't"
+                    | "don't"
+                    | "doesn't"
+                    | "mustn't"
+                    | "shouldn't"
+                    | "won't"
+                    | "avoid"
+            )
+        };
+        let mut back = words.iter().rev();
+        match back.next() {
+            Some(word) if is_negation(word) => false,
+            Some(word) if matches!(*word, "to" | "ever" | "be" | "the" | "a" | "any") => {
+                !back.next().is_some_and(|word| is_negation(word))
+            }
+            _ => true,
+        }
     })
 }
 
@@ -2479,22 +2665,19 @@ fn affirms(text: &str, phrase: &str) -> bool {
 ///
 /// True when it is too broad.
 fn is_overbroad_draft_action(action: &str) -> bool {
-    let lower = action.to_ascii_lowercase();
-    let words: Vec<&str> = lower
+    let text = normalize_draft_text(action);
+    let words: Vec<&str> = text
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .filter(|word| !word.is_empty())
         .collect();
-    // A word counts only when none of the two words before it is a negation,
-    // so "no network access" is not broad.
     let negation = |word: &str| matches!(word, "no" | "not" | "never" | "without" | "cannot");
-    let has = |target: &str| {
-        words.iter().enumerate().any(|(at, word)| {
-            *word == target && !words[at.saturating_sub(2)..at].iter().any(|w| negation(w))
-        })
-    };
-    // "any" or "all" before a broad object, such as "any file" or "all commands".
+    let free = |at: usize| !words[at.saturating_sub(2)..at].iter().any(|w| negation(w));
+    // "any" or "all" before a broad object, such as "any file" or "all commands". A list that
+    // the draft names, as in "all files listed in inputs", is not broad.
+    let listed =
+        text.contains("listed") || text.contains("in inputs") || text.contains("from inputs");
     let broad_object = words.windows(2).enumerate().any(|(at, pair)| {
-        !words[at.saturating_sub(2)..at].iter().any(|w| negation(w))
+        free(at)
             && matches!(pair[0], "any" | "all" | "every" | "arbitrary")
             && matches!(
                 pair[1],
@@ -2502,10 +2685,13 @@ fn is_overbroad_draft_action(action: &str) -> bool {
                     | "files"
                     | "folder"
                     | "folders"
+                    | "directory"
+                    | "directories"
                     | "path"
                     | "paths"
                     | "command"
                     | "commands"
+                    | "shell"
                     | "program"
                     | "programs"
                     | "url"
@@ -2520,26 +2706,55 @@ fn is_overbroad_draft_action(action: &str) -> bool {
                     | "tool"
                     | "tools"
             )
+            && !(pair[0] == "all" && listed)
     });
+    let word = |target: &str| {
+        words
+            .iter()
+            .enumerate()
+            .any(|(at, word)| *word == target && free(at))
+    };
+    let phrase = |target: &str| {
+        text.match_indices(target)
+            .any(|(at, _)| !text[..at].split_whitespace().rev().take(2).any(negation))
+    };
     broad_object
-        || has("arbitrary")
-        || has("anywhere")
-        || has("unrestricted")
-        || has("unlimited")
-        || has("everything")
-        || has("internet")
-        || has("network")
-        || has("sudo")
-        || has("root")
-        || has("url")
-        || has("urls")
-        || has("download")
-        || has("curl")
-        || has("wget")
-        || lower.contains("shell access")
-        || lower.contains("read all")
-        || lower.contains("write all")
-        || lower.contains("delete all")
+        || word("arbitrary")
+        || word("anywhere")
+        || word("unrestricted")
+        || word("unlimited")
+        || word("everything")
+        || word("internet")
+        || word("sudo")
+        || word("curl")
+        || word("wget")
+        || [
+            "network access",
+            "use the network",
+            "access the network",
+            "fetch url",
+            "fetch any",
+            "open url",
+            "visit url",
+            "download from",
+            "download files",
+            "download the",
+            "root access",
+            "as root",
+            "shell access",
+            "shell command",
+            "rm -rf",
+            "git push",
+            "outside the repo",
+            "outside of the repo",
+            "outside the project",
+            "as needed",
+            "modify the codebase",
+            "the whole repo",
+            "the entire repo",
+        ]
+        .iter()
+        .any(|target| phrase(target))
 }
 
 /// Check that a task packet delegates to a subagent, recursively, with every one of
