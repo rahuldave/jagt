@@ -5,12 +5,13 @@ Gest, named below, is a task tracker.
 
 - `agentic_just_targets_base_spec.md`: current AGENT_TASK v1 context from the
   reusable Git/Gest skill work.
-- `agent_result_v1_spec.md`: current AGENT_RESULT v1 context from the reusable
-  Git/Gest skill work.
+- `agent_result_v1_spec.md`: a copy of the canonical AGENT_RESULT v1 spec, from
+  the jagt-protocol skill of jnterfaces. The copy is not edited, apart from a
+  note at its top and links that point to jnterfaces.
 - `agent_task_draft_v1_spec.md`: current AGENT_TASK_DRAFT v1 proposal and
   `jagt draft lint` contract from the T3Book stochastic task draft work.
 
-The copies are now edited for the jagt docs site, by the writing guide of
+The other two copies are edited for the jagt docs site, by the writing guide of
 nossaifd. So their wording differs from the files in the source repositories,
 but each copy keeps the claims of its source.
 
