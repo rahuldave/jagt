@@ -3,6 +3,38 @@
 This file lists the changes of each version of jagt. The newest version comes
 first.
 
+## Unreleased
+
+### Render
+
+- A prompt keeps the spaces and tabs at the ends of its lines, and a line of
+  only spaces or tabs. The packet reads back as the same prompt, with one
+  newline at its end.
+
+### Lint
+
+- `jagt lint` and `jagt draft lint` reject a stray line at column 0. The YAML
+  1.2 spec needs such a line indented. It can be:
+  - a `]` that closes a flow list;
+  - a line inside a quoted value that looks like a field;
+  - a line that starts with a tab;
+  - a list item under a key with a value.
+- A field, a quoted key, a comment and a list item under an empty key still
+  pass.
+- `jagt lint`, `jagt draft lint` and `jagt result lint` reject a YAML merge
+  at any depth. A merge can be a `<<` key, a node with the `!!merge` tag, a
+  tagged key or an alias key. A YAML 1.1 reader such as PyYAML merges the fields they name, and
+  lint would not check those fields. Text that only mentions `!!merge` passes.
+- Lint reads each packet with a second YAML parser, yaml-rust2, which gives
+  the tag and position of each node. Each top-level field of a task or a draft
+  must start at column 0.
+- Lint refuses a raw U+0085, U+2028 or U+2029 in a packet. The two parsers
+  differ on whether it breaks a line. `jagt render` writes these characters
+  escaped, so its packets still pass.
+- `jagt lint` checks `result_rules`. They must be a list of strings, and the
+  packet must have a `nonce`. A rule must name no other nonce, also in UUID
+  form or in fullwidth digits.
+
 ## 0.4.0
 
 ### Render
