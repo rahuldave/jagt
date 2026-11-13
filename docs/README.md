@@ -24,10 +24,10 @@ Reference docs:
 
 Implementation planning:
 
-- [jagt-mvp-implementation-plan.md](jagt-mvp-implementation-plan.md)
-- [jagt-testing-strategy.md](jagt-testing-strategy.md)
-- [jagt-rust-prep.md](jagt-rust-prep.md)
+- [jagt-mvp-implementation-plan.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-mvp-implementation-plan.md)
+- [jagt-testing-strategy.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-testing-strategy.md)
+- [jagt-rust-prep.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-rust-prep.md)
 
 Runnable examples:
 
-- [examples/protocol-playbook/Justfile](examples/protocol-playbook/Justfile)
+- [examples/protocol-playbook/Justfile](https://github.com/rahuldave/jagt/blob/main/docs/examples/protocol-playbook/Justfile)

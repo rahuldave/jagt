@@ -1,0 +1,4 @@
+/* The page description is for search engines and link previews only. */
+#title-block-header .description {
+  display: none;
+}

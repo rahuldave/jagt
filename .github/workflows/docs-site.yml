@@ -1,0 +1,63 @@
+name: Documentation site
+
+# Builds the user documentation with smalldocs on every pull request, and on a
+# push to main also publishes it to GitHub Pages at https://rahuldave.com/jagt/.
+# The project is docs/smalldocs. Its Rust reference comes from the JSON that
+# rustdoc writes, and only a nightly toolchain writes it. smalldocs runs with
+# uvx, so the job needs no Python environment of its own. Pages must use
+# "GitHub Actions" as its source in the repository settings.
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-site-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build documentation site
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      # smalldocs 0.5.9 reads only rustdoc JSON formats 57 and 61, so pin the
+      # nightly. Keep it the same as `toolchain` in docs/smalldocs/_smalldocs.yml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-11-12
+      - uses: astral-sh/setup-uv@v6
+      # The render runs rustdoc and writes the Rust reference before the pages.
+      - name: Render the site
+        run: uvx smalldocs==0.5.9 render docs/smalldocs --strict
+      - name: Upload site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/smalldocs/_site
+
+  deploy:
+    name: Publish documentation
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v5

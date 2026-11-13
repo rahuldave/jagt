@@ -1,0 +1,70 @@
+# The user documentation of jagt, built with smalldocs (https://pypi.org/project/smalldocs/).
+# Build:   uvx smalldocs==0.5.9 render docs/smalldocs --strict
+# Each page here includes its text from the README, the CHANGELOG or a file in
+# docs/, so edit the text there. The folders here mirror the repository, so the
+# links between those files work on the site too.
+# Each build first writes the Rust reference into api/ (not in git) with rustdoc
+# from the pinned nightly below: rustup toolchain install nightly-2026-11-12
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: jagt
+  description: Deterministic renderer and linter for AGENT_TASK and AGENT_RESULT packets of agentic Just recipes
+  site-url: https://rahuldave.com/jagt/
+  repo-url: https://github.com/rahuldave/jagt
+  repo-subdir: docs/smalldocs
+  page-navigation: true
+  navbar:
+    left:
+      - text: Home
+        href: index.md
+      - text: Guide
+        href: docs/index.md
+      - text: Protocol specs
+        href: docs/reference/index.md
+      - text: Changelog
+        href: CHANGELOG.md
+      - text: Reference
+        href: api/index.qmd
+    tools:
+      - icon: github
+        href: https://github.com/rahuldave/jagt
+  sidebar:
+    search: true
+    contents:
+      - index.md
+      - section: Guide
+        href: docs/index.md
+        contents:
+          - docs/protocol-flows.md
+          - docs/protocol-playbook-transcript.md
+          - docs/packet-file.md
+      - section: Protocol specs
+        href: docs/reference/index.md
+        contents:
+          - docs/reference/agentic_just_targets_base_spec.md
+          - docs/reference/agent_result_v1_spec.md
+          - docs/reference/agent_task_draft_v1_spec.md
+      - CHANGELOG.md
+      - section: Reference
+        href: api/index.qmd
+        contents:
+          - auto: "api/**"
+
+theme:
+  light: cerulean
+  dark: darkly
+css: styles.css
+toc: true
+search: true
+
+api:
+  language: rust
+  manifest: ../../Cargo.toml
+  # smalldocs 0.5.9 reads rustdoc JSON formats 57 and 61 only; keep in step with docs-site.yml.
+  toolchain: nightly-2026-11-12
+  root: ../..
+  source: https://github.com/rahuldave/jagt/blob/main
+  out: api
