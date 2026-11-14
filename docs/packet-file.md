@@ -16,7 +16,7 @@ then reads the file, and turns the result into a record. The spec of the commit 
 | Log folder | The folder `.agents/log/` of a checkout. Git ignores it. |
 | Main checkout | The first worktree of a repository, the one that `git clone` made. |
 | Shared log folder | The log folder of the main checkout. All worktrees of a repository save their packet files there. |
-| Worktree tree | The tree hash of all the files in the worktree, staged or not. Ignored files are not in it. |
+| Worktree tree | The tree hash of all the files in the worktree, staged or not. An ignored file is not in it, unless the index holds it. |
 | Layer | One part of the prompt text of a packet. |
 
 ## What the packet file holds
@@ -68,6 +68,13 @@ missing. If one of them is a symlink, or is not a folder, `jagt render` stops
 and writes nothing. So a symlink in a repository cannot send a packet
 file out of the log folder.
 
+On Unix, jagt opens each of these folders through the folder above it, and
+never through a symlink. It then makes each file inside the open folder. So a
+process that swaps a folder for a symlink during a render cannot move the
+file either. After a broken pipe, jagt removes the packet file through the
+same folders. On other systems, jagt checks each folder by its path, and then
+writes by the path.
+
 When `.agents/log/.gitignore` is missing, jagt writes it with the one line `*`,
 and `jlog` writes the same file. jagt also writes `packets/.gitignore` with
 `*`, and it leaves an existing `.gitignore` file alone. With the second file,
@@ -76,27 +83,55 @@ the packets stay out of every worktree tree, also when an older log
 
 ## How jagt computes the input tree
 
-jagt computes the worktree tree with a temporary index, so the real index does
-not change:
+jagt computes the worktree tree as the gate of the commit gates does. So a
+commit of all the changes has the input tree, if no entry of the index is
+assume-unchanged or skip-worktree. jagt works on a copy of the
+index and a temporary object store, in the temporary folder of the system:
 
 ```sh
-GIT_INDEX_FILE=<tmp> git read-tree HEAD
-GIT_INDEX_FILE=<tmp> git add -A
-GIT_INDEX_FILE=<tmp> git write-tree
+cp -p <index> <tmp>/index
+export GIT_INDEX_FILE=<tmp>/index
+export GIT_OBJECT_DIRECTORY=<tmp>/objects
+export GIT_ALTERNATE_OBJECT_DIRECTORIES=<the object store of the repository>
+git -c core.splitIndex=false add -A -- :/
+git -c core.splitIndex=false write-tree
 ```
 
-Before the first commit, there is no `HEAD`, so jagt leaves out the first
-line. The temporary index is in the temporary folder of the system, outside
-the repository. jagt removes it after the last line. A `GIT_INDEX_FILE` in the
-environment of the caller has no effect on the tree.
+| Term | Meaning |
+|---|---|
+| Index | The file in which git keeps the staged files, `.git/index`. |
+| Object store | The folder in which git keeps each file, tree and commit, `.git/objects`. |
+| Alternate | A second object store, which git reads but does not write. |
+| Split index | An index that git keeps in two files, when `core.splitIndex` is on. |
 
-`git add -A` has two effects outside the packet file:
+- **The tree starts from the index.** A file that the index holds stays in
+  the tree, also when `.gitignore` names it, for example after `git add -f`.
+- **The copy keeps the time of the index.** Git trusts the time and the size
+  of a file only when the file is older than the index. So a file that changed
+  in the same second as the index, with the same size, is still read again.
+- **Some entries hide changes.** `git add` does not see a change in a file
+  that is assume-unchanged or skip-worktree. When the index has such an entry,
+  or there is no index, jagt starts from `git read-tree HEAD` instead of the
+  copy. Before the first commit, it then starts from an empty index.
+- **New objects go into the temporary store.** Git reads the objects that
+  exist from the store of the repository, as an alternate. So `.git/objects`
+  gets no new object, and jagt removes the temporary store at the end. Git
+  can still update the time of an object that exists there.
+- **An index that git cannot read stops the render**, as it stops git and the
+  gate. An example is a split index whose shared file is gone.
+- **The temporary folder stays out of the tree.** jagt makes its path
+  absolute. When a `TMPDIR` puts it inside the worktree, `git add` leaves it
+  out.
+- **The split index is off for the copy.** Otherwise each write of the copy
+  would leave a new `sharedindex` file in `.git`.
+- **The caller has no effect.** A `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` or pathspec variable, such as
+  `GIT_LITERAL_PATHSPECS`, in the environment of the caller does not change
+  the tree.
 
-- **It writes objects.** Git stores each new or changed file as an object in
-  `.git/objects`, as any `git add` does. `git gc` removes the objects that no
-  commit uses.
-- **It runs clean filters.** A filter such as Git LFS runs on each changed
-  file, so a render in a large worktree can be slow.
+The tree object stays in the temporary store, so the repository does not
+hold it. `git add -A` still runs clean filters. A filter such as Git LFS runs
+on each changed file, so a render in a large worktree can be slow.
 
 ## The nonce
 
@@ -182,7 +217,7 @@ The `provenance` of the packet lists the layers that it holds:
 ```yaml
 provenance:
   renderer: jagt
-  renderer_version: 0.6.0
+  renderer_version: 0.6.1
   layers:
     - base task
     - 'language layer: .agents/targets/python/docs.md'

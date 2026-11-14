@@ -4172,7 +4172,7 @@ where
             };
             if let Err(error) = written {
                 if let Some(path) = &outcome.packet_file {
-                    let _ = fs::remove_file(path);
+                    let _ = packet::remove_record(path);
                 }
                 return Err(JagtError::Io(error));
             }

@@ -166,26 +166,343 @@ fn sha256_hex(text: &str) -> String {
         .collect()
 }
 
-/// The worktree tree, computed the way the spec says, apart from jagt.
+/// The worktree tree, computed apart from jagt as the commit gates compute
+/// it: a copy of the index with every change added. A commit of all the
+/// changes has this tree.
 fn expected_tree(worktree: &Path) -> String {
     let scratch = tempdir().expect("tempdir");
     let index = scratch.path().join("index");
+    let real_index = worktree.join(git(worktree, &["rev-parse", "--git-path", "index"]).trim());
     let env = [("GIT_INDEX_FILE", index.as_path())];
-    let has_head = {
-        let mut command = StdCommand::new("git");
-        isolate(&mut command).arg("-C").arg(worktree).args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            "HEAD",
-        ]);
-        command.output().expect("git").status.success()
-    };
-    if has_head {
-        git_env(worktree, &["read-tree", "HEAD"], &env);
+    if real_index.is_file() {
+        fs::copy(&real_index, &index).expect("copy the index");
     }
     git_env(worktree, &["add", "-A"], &env);
     git_env(worktree, &["write-tree"], &env).trim().to_string()
+}
+
+/// The tree of HEAD with every change added, for an index that jagt does not
+/// copy.
+fn head_tree_with_changes(worktree: &Path) -> String {
+    let scratch = tempdir().expect("tempdir");
+    let index = scratch.path().join("index");
+    let env = [("GIT_INDEX_FILE", index.as_path())];
+    git_env(worktree, &["read-tree", "HEAD"], &env);
+    git_env(worktree, &["add", "-A"], &env);
+    git_env(worktree, &["write-tree"], &env).trim().to_string()
+}
+
+/// The input tree of the one packet file of `lab`.
+fn input_tree(lab: &Lab) -> String {
+    let files = lab.packet_files();
+    assert_eq!(files.len(), 1, "one packet file");
+    read_json(&files[0])["input_tree"]
+        .as_str()
+        .expect("tree")
+        .to_string()
+}
+
+/// The paths of the files under `dir`, sorted.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        for entry in fs::read_dir(&next).expect("read folder") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The names in `.git` that start with `sharedindex.`.
+fn shared_indexes(main: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(main.join(".git"))
+        .expect(".git")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with("sharedindex."))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_input_tree_keeps_a_file_that_the_index_holds_and_gitignore_names() {
+    let lab = Lab::new();
+    write(&lab.main, "forced.ignored", "staged with git add -f\n");
+    git(&lab.main, &["add", "-f", "forced.ignored"]);
+    write(&lab.main, "README.md", "changed, not staged\n");
+    render(&lab.main, "review", Some("Review."), &[]);
+    // jagt writes its tree into a temporary object store, so the lab
+    // compares hashes and reads the tree that git writes here.
+    let tree = input_tree(&lab);
+    git(&lab.main, &["add", "-A"]);
+    let commit_tree = git(&lab.main, &["write-tree"]).trim().to_string();
+    let listing = git(&lab.main, &["ls-tree", "-r", "--name-only", &commit_tree]);
+    assert!(listing.contains("forced.ignored"), "{listing}");
+    assert_eq!(
+        tree, commit_tree,
+        "a commit of all the changes has the input tree"
+    );
+}
+
+#[test]
+fn render_writes_no_object_into_the_repository() {
+    for unborn in [false, true] {
+        let lab = if unborn { Lab::unborn() } else { Lab::new() };
+        write(&lab.main, "new.txt", "a file with no object yet\n");
+        write(&lab.main, "README.md", "changed, not staged\n");
+        let objects = lab.main.join(".git/objects");
+        let before = files_under(&objects);
+        render(&lab.main, "review", Some("Review."), &[]);
+        assert_eq!(files_under(&objects), before, "unborn: {unborn}");
+        assert_eq!(
+            input_tree(&lab),
+            expected_tree(&lab.main),
+            "unborn: {unborn}"
+        );
+    }
+}
+
+#[test]
+fn render_writes_no_shared_index_with_a_split_index() {
+    let lab = Lab::new();
+    git(&lab.main, &["config", "core.splitIndex", "true"]);
+    git(&lab.main, &["update-index", "--split-index"]);
+    write(&lab.main, "README.md", "changed\n");
+    write(&lab.main, "new.txt", "new\n");
+    let before = shared_indexes(&lab.main);
+    assert!(!before.is_empty(), "the lab has a split index");
+    render(&lab.main, "review", Some("Review."), &[]);
+    assert_eq!(shared_indexes(&lab.main), before);
+    assert_eq!(input_tree(&lab), expected_tree(&lab.main));
+}
+
+#[test]
+fn an_assume_unchanged_or_skip_worktree_entry_makes_jagt_start_from_head() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let lab = Lab::new();
+        git(&lab.main, &["update-index", flag, "README.md"]);
+        write(
+            &lab.main,
+            "README.md",
+            "a change that git add does not see\n",
+        );
+        render(&lab.main, "review", Some("Review."), &[]);
+        let tree = input_tree(&lab);
+        let expected = head_tree_with_changes(&lab.main);
+        assert_eq!(
+            git(&lab.main, &["show", &format!("{expected}:README.md")]),
+            "a change that git add does not see\n",
+            "{flag}"
+        );
+        assert_eq!(tree, expected, "{flag}");
+    }
+}
+
+#[test]
+fn a_change_in_the_second_of_the_index_with_the_same_size_is_in_the_tree() {
+    // Git trusts the time and size of a file only when the file is older than
+    // the index. Here the file, its entry and the index have one time, so git
+    // must read the file again. A copy of the index with a new time would
+    // hide the change. ctime is turned off, so the time is all git has.
+    let lab = Lab::new();
+    git(&lab.main, &["config", "core.trustctime", "false"]);
+    let when = std::time::SystemTime::now() - std::time::Duration::from_secs(100);
+    let set_time = |path: &Path| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_modified(when)
+            .expect("set time");
+    };
+    let file = lab.main.join("a.txt");
+    fs::write(&file, "aaaa\n").expect("write");
+    set_time(&file);
+    git(&lab.main, &["add", "a.txt"]);
+    let staged = git(&lab.main, &["write-tree"]);
+    fs::write(&file, "bbbb\n").expect("write in place");
+    set_time(&file);
+    set_time(&lab.main.join(".git/index"));
+
+    render(&lab.main, "review", Some("Review."), &[]);
+    let tree = input_tree(&lab);
+    // A fresh index has no times, so git reads every file.
+    let expected = head_tree_with_changes(&lab.main);
+    assert_eq!(
+        git(&lab.main, &["show", &format!("{expected}:a.txt")]),
+        "bbbb\n"
+    );
+    assert_ne!(tree, staged.trim());
+    assert_eq!(tree, expected);
+}
+
+#[test]
+fn an_index_that_git_cannot_read_stops_the_render() {
+    let lab = Lab::new();
+    git(&lab.main, &["config", "core.splitIndex", "true"]);
+    git(&lab.main, &["update-index", "--split-index"]);
+    write(&lab.main, "new.txt", "new\n");
+    git(&lab.main, &["add", "new.txt"]);
+    for name in shared_indexes(&lab.main) {
+        fs::remove_file(lab.main.join(".git").join(name)).expect("remove");
+    }
+    jagt(&lab.main)
+        .args([
+            "render",
+            "review",
+            "--no-config",
+            "--prompt-text",
+            "Review.",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ls-files -v failed"));
+    assert!(lab.packet_files().is_empty());
+}
+
+#[test]
+fn a_tmpdir_inside_the_worktree_stays_out_of_the_tree() {
+    for relative in [false, true] {
+        let lab = Lab::new();
+        write(&lab.main, "sub/new.txt", "new\n");
+        fs::create_dir(lab.main.join("tmpx")).expect("tmpx");
+        let expected = expected_tree(&lab.main);
+        // A relative TMPDIR is read from the folder in which jagt runs.
+        let (cwd, tmpdir) = if relative {
+            (lab.main.join("sub"), PathBuf::from("../tmpx"))
+        } else {
+            (lab.main.clone(), lab.main.join("tmpx"))
+        };
+        jagt(&cwd)
+            .args([
+                "render",
+                "review",
+                "--no-config",
+                "--prompt-text",
+                "Review.",
+            ])
+            .env("TMPDIR", &tmpdir)
+            .assert()
+            .success();
+        assert_eq!(input_tree(&lab), expected, "relative: {relative}");
+        assert_eq!(
+            fs::read_dir(lab.main.join("tmpx")).expect("tmpx").count(),
+            0,
+            "the temporary folder is removed"
+        );
+    }
+}
+
+#[test]
+fn a_tmpdir_inside_a_submodule_still_renders() {
+    let lab = Lab::new();
+    let other = lab.root.join("other");
+    fs::create_dir(&other).expect("other");
+    git(&other, &["init", "-q", "-b", "main"]);
+    git(&other, &["config", "user.name", "Lab"]);
+    git(&other, &["config", "user.email", "lab@example.invalid"]);
+    write(&other, "o.txt", "o\n");
+    git(&other, &["add", "-A"]);
+    git(&other, &["commit", "-q", "-m", "first"]);
+    git(
+        &lab.main,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            other.to_str().expect("utf8"),
+            "sub",
+        ],
+    );
+    git(&lab.main, &["commit", "-q", "-m", "add the submodule"]);
+    write(&lab.main, "new.txt", "new\n");
+    fs::create_dir_all(lab.main.join("sub/deep")).expect("deep");
+    let expected = expected_tree(&lab.main);
+    for tmpdir in ["sub", "sub/deep"] {
+        jagt(&lab.main)
+            .args([
+                "render",
+                "review",
+                "--no-config",
+                "--prompt-text",
+                "Review.",
+            ])
+            .env("TMPDIR", lab.main.join(tmpdir))
+            .assert()
+            .success();
+    }
+    for file in lab.packet_files() {
+        assert_eq!(read_json(&file)["input_tree"], expected.as_str());
+    }
+    assert_eq!(lab.packet_files().len(), 2);
+}
+
+#[test]
+fn a_repository_path_with_a_colon_and_a_quote_still_reads_its_objects() {
+    // With an assume-unchanged entry, jagt runs git read-tree HEAD, which
+    // reads HEAD from the store of the repository, through the alternate.
+    let dir = tempdir().expect("tempdir");
+    let main = dir
+        .path()
+        .canonicalize()
+        .expect("canonical")
+        .join("a:b \"c\\d");
+    fs::create_dir(&main).expect("main");
+    git(&main, &["init", "-q", "-b", "main"]);
+    git(&main, &["config", "user.name", "Lab"]);
+    git(&main, &["config", "user.email", "lab@example.invalid"]);
+    write(&main, "README.md", "hello\n");
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-q", "-m", "first"]);
+    git(&main, &["update-index", "--assume-unchanged", "README.md"]);
+    write(&main, "README.md", "changed\n");
+    render(&main, "review", Some("Review."), &[]);
+    let packets = main.join(".agents/log/packets");
+    let file = fs::read_dir(&packets)
+        .expect("packets")
+        .map(|entry| entry.expect("entry").path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .expect("a packet file");
+    assert_eq!(
+        read_json(&file)["input_tree"],
+        head_tree_with_changes(&main).as_str()
+    );
+}
+
+#[test]
+fn a_file_where_a_log_folder_belongs_stops_the_render() {
+    // A file named `.agents` stops the render earlier, when jagt reads the
+    // layers, so the lab covers the two folders of the log.
+    for path in [".agents/log", ".agents/log/packets"] {
+        let lab = Lab::new();
+        write(&lab.main, path, "a file, not a folder\n");
+        jagt(&lab.main)
+            .args([
+                "render",
+                "review",
+                "--no-config",
+                "--prompt-text",
+                "Review.",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("is not a folder"));
+    }
 }
 
 #[test]
