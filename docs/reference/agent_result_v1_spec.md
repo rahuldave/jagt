@@ -1,6 +1,6 @@
 # Spec of AGENT_RESULT v1
 
-> This file is a copy of the canonical spec, from jnterfaces commit fa5a229.
+> This file is a copy of the canonical spec, from jnterfaces commit dedb0a0.
 > In the text below, "this page" means
 > [the canonical spec](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/agent_result_v1_spec.md).
 > Change the spec there, and then copy it here again.
@@ -14,8 +14,8 @@ The page agrees with
 [the contract of the agentic packets](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/protocol_contract.md). The contract
 gives the whole protocol. This page gives the details of the result packet.
 
-The rules for a check describe what `jagt result lint` does in the next jagt
-release after 0.5.0. Earlier versions miss some of these checks. jagt 0.5.0
+The rules for a check describe what `jagt result lint` of jagt 0.6.0 does.
+Earlier versions miss some of these checks. jagt 0.5.0
 passes a symbolic link that leads out of the base folder, and a file with a
 second hard link. jagt 0.3.0 and 0.4.0 also pass a YAML merge key, and 0.3.0
 passes a path with a `..` part.
