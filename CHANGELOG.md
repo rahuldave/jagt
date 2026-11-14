@@ -15,6 +15,42 @@ A nonce, in the entries below, is a random value of 32 lowercase hex digits
 that `jagt render` puts in a packet when it saves the packet file. The agent
 must return the same nonce in its result.
 
+## 0.6.1
+
+### Fixes
+
+- The input tree of a packet file now equals the tree that the gate of the
+  commit gates computes. jagt starts from a copy of the index, not from HEAD.
+  So a commit of all the changes has the input tree, if no entry is
+  assume-unchanged or skip-worktree.
+  Before, a file that the index held and `.gitignore` named, as after
+  `git add -f`, was not in the input tree. So the record of such a packet
+  never matched the commit.
+- The copy of the index keeps the time of the index. So git still sees a file
+  that changed in the same second, with the same size. When an entry is
+  assume-unchanged or skip-worktree, jagt starts from HEAD, as the gate does.
+- `jagt render` no longer writes new objects into `.git/objects`. It writes
+  them into a temporary object store, and reads the old ones from the store
+  of the repository. Git can still update the time of an old object.
+- An index that git cannot read now stops the render, as it stops the gate.
+- A `TMPDIR` inside the worktree no longer puts the temporary files of jagt
+  into the input tree. A relative `TMPDIR` no longer stops a render from a
+  subfolder.
+- A pathspec variable from the caller, such as `GIT_LITERAL_PATHSPECS`, no
+  longer stops the render.
+- With `core.splitIndex` on, `jagt render` no longer leaves a new
+  `sharedindex` file in `.git` for each render.
+- On Unix, `jagt render` opens each folder of the log through the folder
+  above it, never through a symlink. It makes the packet file inside the open
+  folder. Before, it checked each folder by its path and then wrote by the
+  path. So a process that swapped a folder for a symlink between the two steps
+  could move the packet file outside the repository. The removal of the
+  packet file after a broken pipe goes through the same folders.
+
+### Package
+
+- jagt depends on `rustix` on Unix, for the folder handles.
+
 ## 0.6.0
 
 ### Breaking

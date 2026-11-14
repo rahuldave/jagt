@@ -6,7 +6,9 @@
 //! input tree and the worktree.
 
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io;
+#[cfg(not(unix))]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -146,49 +148,232 @@ pub fn project_root(cwd: &Path) -> PathBuf {
     }
 }
 
-/// Compute the worktree tree: HEAD with every change in the worktree, staged
-/// or not, plus the untracked files that are not ignored. A tracked file that
-/// matches `.gitignore` stays in the tree. Before the first commit, the tree
-/// holds the files that are not ignored. It uses a temporary index, so the
-/// real index does not change:
+/// Compute the worktree tree: the index with every change in the worktree,
+/// staged or not, plus the untracked files that are not ignored. A file that
+/// the index holds stays in the tree, also when `.gitignore` names it. The
+/// commit gates compute the tree the same way. So a commit of all the changes
+/// has this tree, if no entry is assume-unchanged or skip-worktree.
+///
+/// It works on a copy of the index and a temporary object store, so the real
+/// index does not change and `.git/objects` gets no new object. Git can still
+/// update the time of an object that exists there:
 ///
 /// ```sh
-/// GIT_INDEX_FILE=<tmp> git read-tree HEAD   # skipped before the first commit
-/// GIT_INDEX_FILE=<tmp> git add -A
-/// GIT_INDEX_FILE=<tmp> git write-tree
+/// cp -p <index> <tmp>/index            # keeps the time of the index
+/// GIT_INDEX_FILE=<tmp>/index GIT_OBJECT_DIRECTORY=<tmp>/objects \
+///   GIT_ALTERNATE_OBJECT_DIRECTORIES=<objects> \
+///   git -c core.splitIndex=false add -A -- :/
+/// ... git -c core.splitIndex=false write-tree
 /// ```
 ///
+/// The copy keeps the time of the real index. Git compares the time of each
+/// file with it, so a file that changed in the same second as the index is
+/// still read again. jagt starts from `git read-tree HEAD` instead of the copy
+/// when there is no index, or when an entry of the index is assume-unchanged
+/// or skip-worktree, because `git add` does not see a change in such a file.
+/// Before the first commit, it then starts from an empty index.
+/// `core.splitIndex=false` keeps git from writing a shared index file into
+/// the git folder for the copy.
+///
 /// It fails when the folder of the temporary index exists already, or when
-/// git fails. `git add -A` writes the new objects into the repository.
+/// git fails.
 ///
 /// # Arguments
 ///
 /// * `worktree` - the top folder of the worktree
-/// * `scratch_name` - the end of the name of the temporary index folder, `jagt-index-<name>`;
+/// * `scratch_name` - the end of the name of the temporary folder, `jagt-index-<name>`;
 ///   `jagt render` gives the nonce
 ///
 /// # Returns
 ///
 /// The hash of the tree, as `git write-tree` prints it, with no newline.
 pub fn worktree_tree(worktree: &Path, scratch_name: &str) -> Result<String> {
-    let index = TempIndex::new(scratch_name)?;
-    let env = [("GIT_INDEX_FILE", index.path.as_os_str())];
-    if git_output(
-        worktree,
-        &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
-        &[],
-    )
-    .is_ok()
-    {
-        git_output(worktree, &["read-tree", "HEAD"], &env)?;
+    let objects = worktree.join(git_line(worktree, &["rev-parse", "--git-path", "objects"])?);
+    let real_index = worktree.join(git_line(worktree, &["rev-parse", "--git-path", "index"])?);
+    let scratch = TempIndex::new(scratch_name)?;
+    let temp_objects = scratch.dir.join("objects");
+    fs::create_dir(&temp_objects)?;
+    let alternates = alternate_entry(&std::path::absolute(&objects)?);
+    let env = [
+        ("GIT_INDEX_FILE", scratch.path.as_os_str()),
+        ("GIT_OBJECT_DIRECTORY", temp_objects.as_os_str()),
+        ("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates.as_os_str()),
+    ];
+    let copied = real_index.is_file()
+        && copy_with_time(&real_index, &scratch.path)?
+        && index_hides_no_change(worktree, &env)?;
+    if !copied {
+        let _ = fs::remove_file(&scratch.path);
+        if git_output(
+            worktree,
+            &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+            &[],
+        )
+        .is_ok()
+        {
+            git_output(
+                worktree,
+                &[NO_SPLIT_INDEX[0], NO_SPLIT_INDEX[1], "read-tree", "HEAD"],
+                &env,
+            )?;
+        }
     }
-    git_output(worktree, &["add", "-A"], &env)?;
-    let tree = git_output(worktree, &["write-tree"], &env)?;
+    // A temporary folder of the system inside the worktree, as a TMPDIR can
+    // give, must not put the copy and the store into the tree.
+    let exclude = scratch_pathspec(worktree, &scratch.dir);
+    let mut add: Vec<&std::ffi::OsStr> = [
+        NO_SPLIT_INDEX[0],
+        NO_SPLIT_INDEX[1],
+        "add",
+        "-A",
+        "--",
+        ":/",
+    ]
+    .map(std::ffi::OsStr::new)
+    .to_vec();
+    if let Some(exclude) = &exclude {
+        add.push(exclude);
+    }
+    git_output(worktree, &add, &env)?;
+    let tree = git_output(
+        worktree,
+        &[NO_SPLIT_INDEX[0], NO_SPLIT_INDEX[1], "write-tree"],
+        &env,
+    )?;
     Ok(tree.trim().to_string())
 }
 
-/// A path for a temporary index outside the repository, removed on drop.
-/// The file must not exist yet, because `git read-tree` makes it.
+/// The pathspec that leaves the temporary folder `scratch` out of `git add`,
+/// when it is inside the worktree.
+///
+/// # Arguments
+///
+/// * `worktree` - the top folder of the worktree
+/// * `scratch` - the path of the temporary folder
+///
+/// # Returns
+///
+/// `:(top,literal,exclude)<path>`, with the path from the top of the
+/// worktree, or `None` when the folder is outside the worktree, or inside a
+/// submodule or a nested repository.
+fn scratch_pathspec(worktree: &Path, scratch: &Path) -> Option<std::ffi::OsString> {
+    let top = fs::canonicalize(worktree).ok()?;
+    let real = fs::canonicalize(scratch).ok()?;
+    let inside = real.strip_prefix(&top).ok()?;
+    // git refuses a pathspec inside a submodule or a nested repository, and
+    // its `git add -A` does not go inside one, so no exclude is needed there.
+    let mut folder = top.clone();
+    for part in inside.parent()?.components() {
+        folder.push(part);
+        if fs::symlink_metadata(folder.join(".git")).is_ok() {
+            return None;
+        }
+    }
+    let mut spec = std::ffi::OsString::from(":(top,literal,exclude)");
+    spec.push(inside.as_os_str());
+    Some(spec)
+}
+
+/// The arguments that turn the split index off for one git call. With a split
+/// index, each write of the temporary index would leave a new
+/// `sharedindex.<hash>` file in the git folder.
+const NO_SPLIT_INDEX: [&str; 2] = ["-c", "core.splitIndex=false"];
+
+/// Copy the index `from` to `to`, and give the copy the time of `from`.
+///
+/// # Arguments
+///
+/// * `from` - the real index
+/// * `to` - the path of the copy, which must not exist
+///
+/// # Returns
+///
+/// `Ok(true)` when the copy is made, `Ok(false)` when `from` is gone, as
+/// after a `git rm --cached` of every file, or the I/O error.
+fn copy_with_time(from: &Path, to: &Path) -> Result<bool> {
+    let mut source = match fs::File::open(from) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(JagtError::Io(error)),
+    };
+    let modified = source.metadata()?.modified()?;
+    let mut target = OpenOptions::new().write(true).create_new(true).open(to)?;
+    io::copy(&mut source, &mut target)?;
+    target.set_modified(modified)?;
+    Ok(true)
+}
+
+/// Check the copy of the index for an entry whose changes `git add` does not
+/// see: an assume-unchanged entry, which `git ls-files -v` shows with a small
+/// letter, or a skip-worktree entry, which it shows with `S`.
+///
+/// # Arguments
+///
+/// * `worktree` - the top folder of the worktree
+/// * `env` - the variables that point git at the copy
+///
+/// # Returns
+///
+/// True when the copy has no such entry, false when it has one. It fails
+/// when git cannot read the copy, such as a broken index, as git itself and
+/// the gate fail.
+fn index_hides_no_change(worktree: &Path, env: &[(&str, &std::ffi::OsStr)]) -> Result<bool> {
+    let listing = git_output(
+        worktree,
+        &[NO_SPLIT_INDEX[0], NO_SPLIT_INDEX[1], "ls-files", "-v"],
+        env,
+    )?;
+    Ok(!listing.lines().any(|line| {
+        line.chars()
+            .next()
+            .is_some_and(|tag| tag.is_ascii_lowercase() || tag == 'S')
+    }))
+}
+
+/// The value of `GIT_ALTERNATE_OBJECT_DIRECTORIES` that names one folder.
+/// Git splits the value at the path separator, so a path that holds the
+/// separator, or that starts with a double quote, goes in double quotes with
+/// C escapes, as git reads it.
+///
+/// # Arguments
+///
+/// * `objects` - the absolute path of the object store
+///
+/// # Returns
+///
+/// The value of the variable.
+fn alternate_entry(objects: &Path) -> std::ffi::OsString {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let text = objects.as_os_str();
+    let plain = text.to_string_lossy();
+    if !plain.contains(separator) && !plain.starts_with('"') {
+        return text.to_os_string();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let mut quoted = vec![b'"'];
+        for &byte in text.as_bytes() {
+            match byte {
+                b'"' | b'\\' => quoted.extend([b'\\', byte]),
+                b'\n' => quoted.extend(b"\\n"),
+                b'\t' => quoted.extend(b"\\t"),
+                _ => quoted.push(byte),
+            }
+        }
+        quoted.push(b'"');
+        std::ffi::OsString::from_vec(quoted)
+    }
+    #[cfg(not(unix))]
+    {
+        let escaped = plain.replace('\\', "\\\\").replace('"', "\\\"");
+        std::ffi::OsString::from(format!("\"{escaped}\""))
+    }
+}
+
+/// A temporary folder for the index and the object store, in the temporary
+/// folder of the system, removed on drop. A `TMPDIR` can put it inside the
+/// worktree; [`worktree_tree`] then leaves it out of the tree. The index file does not exist yet.
 struct TempIndex {
     /// The folder that holds the index, in the system's temporary folder.
     dir: PathBuf,
@@ -209,7 +394,8 @@ impl TempIndex {
     ///
     /// The temporary index. Its folder exists, and its index file does not.
     fn new(name: &str) -> Result<Self> {
-        let dir = std::env::temp_dir().join(format!("jagt-index-{name}"));
+        // git runs in the worktree, so a relative TMPDIR must not reach it.
+        let dir = std::path::absolute(std::env::temp_dir())?.join(format!("jagt-index-{name}"));
         // create_dir fails if the folder exists, so no other process owns it.
         fs::create_dir(&dir)?;
         let path = dir.join("index");
@@ -225,9 +411,10 @@ impl Drop for TempIndex {
 }
 
 /// The variables that `git rev-parse --local-env-vars` lists in git 2.54,
-/// and two more that change where git looks, `GIT_INTERNAL_SUPER_PREFIX`
-/// and `GIT_NAMESPACE`.
-pub const LOCAL_ENV_VARS: [&str; 17] = [
+/// two more that change where git looks, `GIT_INTERNAL_SUPER_PREFIX` and
+/// `GIT_NAMESPACE`, and the four that change how git reads a pathspec, such
+/// as `:/`.
+pub const LOCAL_ENV_VARS: [&str; 21] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
     "GIT_CONFIG_PARAMETERS",
@@ -245,6 +432,10 @@ pub const LOCAL_ENV_VARS: [&str; 17] = [
     "GIT_SHALLOW_FILE",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ];
 
 /// The result of one git call.
@@ -269,7 +460,11 @@ struct GitRun {
 /// # Returns
 ///
 /// Whether git succeeded, and its output.
-fn run_git(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Result<GitRun> {
+fn run_git<S: AsRef<std::ffi::OsStr>>(
+    dir: &Path,
+    args: &[S],
+    env: &[(&str, &std::ffi::OsStr)],
+) -> Result<GitRun> {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args).stdin(Stdio::null());
     // A git hook or `git rebase --exec` sets variables such as GIT_DIR and
@@ -303,12 +498,20 @@ fn run_git(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Resul
 /// # Returns
 ///
 /// The stdout of git.
-fn git_output(dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Result<String> {
+fn git_output<S: AsRef<std::ffi::OsStr>>(
+    dir: &Path,
+    args: &[S],
+    env: &[(&str, &std::ffi::OsStr)],
+) -> Result<String> {
     let run = run_git(dir, args, env)?;
     if !run.success {
+        let shown: Vec<String> = args
+            .iter()
+            .map(|arg| arg.as_ref().to_string_lossy().into_owned())
+            .collect();
         return Err(render_error(&format!(
             "git {} failed: {}",
-            args.join(" "),
+            shown.join(" "),
             run.stderr.trim()
         )));
     }
@@ -421,28 +624,24 @@ pub fn save_record(log_dir: &Path, record: &PacketRecord) -> Result<PathBuf> {
             "the nonce of a packet file must be 32 hex digits",
         ));
     }
-    let checkout = log_dir
+    let agents = log_dir
         .parent()
-        .and_then(Path::parent)
         .ok_or_else(|| render_error("the log folder has no checkout"))?;
-    let packets = log_dir.join(PACKETS_DIR);
-    for dir in [
-        checkout.join(".agents"),
-        log_dir.to_path_buf(),
-        packets.clone(),
-    ] {
-        make_real_dir(&dir)?;
-    }
-    // Each folder gets its own `.gitignore`, so the packets stay out of every
-    // worktree tree, also when an older `.agents/log/.gitignore` lacks `*`.
-    write_new(&log_dir.join(".gitignore"), b"*\n").or_else(ignore_exists)?;
-    write_new(&packets.join(".gitignore"), b"*\n").or_else(ignore_exists)?;
-
+    let checkout = agents
+        .parent()
+        .ok_or_else(|| render_error("the log folder has no checkout"))?;
+    let name_of = |dir: &Path| {
+        dir.file_name()
+            .map(std::ffi::OsStr::to_os_string)
+            .ok_or_else(|| render_error("the log folder has no checkout"))
+    };
+    let (agents_name, log_name) = (name_of(agents)?, name_of(log_dir)?);
     let mut json = serde_json::to_string_pretty(record)
         .map_err(|error| render_error(&format!("could not write the packet file: {error}")))?;
     json.push('\n');
-    let path = packets.join(format!("{}.json", record.nonce));
-    write_new(&path, json.as_bytes()).map_err(|error| {
+    let file_name = format!("{}.json", record.nonce);
+    let path = log_dir.join(PACKETS_DIR).join(&file_name);
+    let already = |error: io::Error| {
         if error.kind() == io::ErrorKind::AlreadyExists {
             render_error(&format!(
                 "the packet file {} exists already",
@@ -451,13 +650,193 @@ pub fn save_record(log_dir: &Path, record: &PacketRecord) -> Result<PathBuf> {
         } else {
             JagtError::Io(error)
         }
-    })?;
+    };
+    let folders = [
+        (checkout.join(&agents_name), agents_name),
+        (log_dir.to_path_buf(), log_name),
+        (log_dir.join(PACKETS_DIR), PACKETS_DIR.into()),
+    ];
+    #[cfg(unix)]
+    {
+        // Each folder is opened through the handle of the folder above it,
+        // and never through a symlink. A folder that a process swaps for a
+        // symlink after the check then cannot move the file elsewhere.
+        let mut dir = dirs::open_top(checkout)?;
+        let mut handles = Vec::new();
+        for (shown, name) in &folders {
+            dir = dirs::open_child(&dir, name, shown, true)?;
+            handles.push(dir.try_clone()?);
+        }
+        // Each folder gets its own `.gitignore`, so the packets stay out of
+        // every worktree tree, also when an older `.agents/log/.gitignore`
+        // lacks `*`.
+        dirs::write_new(&handles[1], ".gitignore", b"*\n").or_else(ignore_exists)?;
+        dirs::write_new(&handles[2], ".gitignore", b"*\n").or_else(ignore_exists)?;
+        dirs::write_new(&handles[2], &file_name, json.as_bytes()).map_err(already)?;
+    }
+    #[cfg(not(unix))]
+    {
+        for (shown, _) in &folders {
+            make_real_dir(shown)?;
+        }
+        let packets = &folders[2].0;
+        write_new(&log_dir.join(".gitignore"), b"*\n").or_else(ignore_exists)?;
+        write_new(&packets.join(".gitignore"), b"*\n").or_else(ignore_exists)?;
+        write_new(&path, json.as_bytes()).map_err(already)?;
+    }
     Ok(path)
+}
+
+/// Remove the packet file `path` that [`save_record`] wrote, as after a
+/// broken pipe. On Unix, it goes through the same folder handles, so a folder
+/// that is now a symlink cannot point the removal elsewhere.
+///
+/// # Arguments
+///
+/// * `path` - the path that [`save_record`] returned
+///
+/// # Returns
+///
+/// `Ok(())` when the file is gone, or the error.
+pub fn remove_record(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let bad = || render_error("the packet file has no log folder");
+        let packets = path.parent().ok_or_else(bad)?;
+        let log_dir = packets.parent().ok_or_else(bad)?;
+        let agents = log_dir.parent().ok_or_else(bad)?;
+        let checkout = agents.parent().ok_or_else(bad)?;
+        let mut dir = dirs::open_top(checkout)?;
+        for shown in [agents, log_dir, packets] {
+            let name = shown.file_name().ok_or_else(bad)?;
+            dir = dirs::open_child(&dir, name, shown, false)?;
+        }
+        let name = path.file_name().ok_or_else(bad)?;
+        rustix::fs::unlinkat(&dir, name, rustix::fs::AtFlags::empty())
+            .map_err(|error| JagtError::Io(error.into()))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::remove_file(path).map_err(JagtError::Io)
+    }
+}
+
+/// The folder handles that [`save_record`] writes through on Unix.
+#[cfg(unix)]
+mod dirs {
+    use std::ffi::OsStr;
+    use std::fs::File;
+    use std::io::{self, Write};
+    use std::path::Path;
+
+    use rustix::fs::{AtFlags, Mode, OFlags};
+    use rustix::io::Errno;
+
+    use crate::{JagtError, Result};
+
+    use super::render_error;
+
+    /// Open the checkout folder. A symlink to the checkout itself is allowed,
+    /// as before.
+    ///
+    /// # Arguments
+    ///
+    /// * `checkout` - the main checkout
+    ///
+    /// # Returns
+    ///
+    /// The handle of the folder.
+    pub(super) fn open_top(checkout: &Path) -> Result<File> {
+        let fd = rustix::fs::open(
+            checkout,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| JagtError::Io(error.into()))?;
+        Ok(File::from(fd))
+    }
+
+    /// Open the folder `name` in `parent`, and make it when it is missing and
+    /// `create` is true.
+    /// A symlink, or a path that is not a folder, stops the render.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent` - the handle of the folder above
+    /// * `name` - the name of the folder, one part of a path
+    /// * `shown` - the full path, for the error text
+    /// * `create` - whether to make a missing folder
+    ///
+    /// # Returns
+    ///
+    /// The handle of the folder.
+    pub(super) fn open_child(
+        parent: &File,
+        name: &OsStr,
+        shown: &Path,
+        create: bool,
+    ) -> Result<File> {
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        for _ in 0..2 {
+            match rustix::fs::openat(parent, name, flags, Mode::empty()) {
+                Ok(fd) => return Ok(File::from(fd)),
+                Err(Errno::NOENT) if create => {
+                    match rustix::fs::mkdirat(parent, name, Mode::from_raw_mode(0o777)) {
+                        Ok(()) | Err(Errno::EXIST) => continue,
+                        Err(error) => return Err(JagtError::Io(error.into())),
+                    }
+                }
+                Err(error) => return Err(not_a_folder(parent, name, shown, error)),
+            }
+        }
+        Err(render_error(&format!("{} keeps changing", shown.display())))
+    }
+
+    /// The error for a folder that `openat` refused: a symlink, a path that is
+    /// not a folder, or the error of the system.
+    fn not_a_folder(parent: &File, name: &OsStr, shown: &Path, error: Errno) -> JagtError {
+        match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) if rustix::fs::FileType::from_raw_mode(stat.st_mode).is_symlink() => {
+                render_error(&format!(
+                    "{} is a symlink, so jagt does not write in it",
+                    shown.display()
+                ))
+            }
+            Ok(stat) if !rustix::fs::FileType::from_raw_mode(stat.st_mode).is_dir() => {
+                render_error(&format!("{} is not a folder", shown.display()))
+            }
+            _ => JagtError::Io(error.into()),
+        }
+    }
+
+    /// Write the new file `name` in `dir`, and sync it to the disk. It fails
+    /// on any existing name, a symlink too.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - the handle of the folder
+    /// * `name` - the name of the new file
+    /// * `bytes` - what the file holds
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the file is written, or the I/O error.
+    pub(super) fn write_new(dir: &File, name: &str, bytes: &[u8]) -> io::Result<()> {
+        let fd = rustix::fs::openat(
+            dir,
+            name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o666),
+        )?;
+        let mut file = File::from(fd);
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
 }
 
 /// Make `dir` when it is missing. A symlink, or a path that is not a
 /// folder, stops the render, so a symlink in a repository cannot send the
-/// packet files out of the log folder.
+/// packet files out of the log folder. Unix uses folder handles instead.
 ///
 /// It does not make the parent folders of `dir`.
 ///
@@ -468,6 +847,7 @@ pub fn save_record(log_dir: &Path, record: &PacketRecord) -> Result<PathBuf> {
 /// # Returns
 ///
 /// `Ok(())` when `dir` is a real folder, or the error that stops the render.
+#[cfg(not(unix))]
 fn make_real_dir(dir: &Path) -> Result<()> {
     match fs::symlink_metadata(dir) {
         Ok(meta) if meta.file_type().is_symlink() => Err(render_error(&format!(
@@ -496,6 +876,7 @@ fn make_real_dir(dir: &Path) -> Result<()> {
 /// # Returns
 ///
 /// `Ok(())` when the file is written, or the I/O error.
+#[cfg(not(unix))]
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(bytes)?;
@@ -890,6 +1271,20 @@ fn render_error(message: &str) -> JagtError {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[test]
+    fn an_alternate_path_with_the_separator_or_a_quote_goes_in_c_quotes() {
+        use super::alternate_entry;
+        use std::path::Path;
+        assert_eq!(alternate_entry(Path::new("/a b/objects")), "/a b/objects");
+        assert_eq!(alternate_entry(Path::new("/a\\b/objects")), "/a\\b/objects");
+        assert_eq!(
+            alternate_entry(Path::new("/a:b/\"q\\\n\t/objects")),
+            "\"/a:b/\\\"q\\\\\\n\\t/objects\""
+        );
+        assert_eq!(alternate_entry(Path::new("\"/x")), "\"\\\"/x\"");
+    }
 
     #[test]
     fn a_layer_keeps_the_spaces_at_the_end_of_its_last_line() {

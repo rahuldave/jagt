@@ -1,6 +1,6 @@
 [package]
 name = "jagt"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT"
 description = "Deterministic renderer and validator for agentic Just task envelopes"
@@ -21,6 +21,11 @@ sha2 = "0.10"
 thiserror = "2.0.12"
 toml = "0.8.23"
 yaml-rust2 = { version = "0.13", default-features = false }
+
+# Writes the packet file through folder handles (openat), so a folder that is
+# swapped for a symlink during a render cannot move the file.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
 assert_cmd = "2.0.17"
