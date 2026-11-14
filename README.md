@@ -214,7 +214,11 @@ normal local gate.
   their sources.
 - `jagt result lint [PATH|-]` validates `AGENT_RESULT v1` report packets.
   `--expect-nonce <nonce>` fails a result that does not hold the nonce of its
-  packet.
+  packet. `--check-files` checks the files that a result lists in
+  `outputs.files`. Each required file must exist under `--base-dir`. A listed
+  file that exists fails when its real path is outside the base folder, for
+  example through a symbolic link. On Unix, it also fails when it has more than
+  one hard link.
 - `jagt result explain [PATH|-]` summarizes the status, outputs,
   verification, follow-up, and report-only state of a result.
 - `jagt draft lint [PATH|-]` validates non-executable `AGENT_TASK_DRAFT v1`
