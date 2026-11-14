@@ -15,7 +15,7 @@ A nonce, in the entries below, is a random value of 32 lowercase hex digits
 that `jagt render` puts in a packet when it saves the packet file. The agent
 must return the same nonce in its result.
 
-## Unreleased
+## 0.6.0
 
 ### Breaking
 
@@ -25,6 +25,20 @@ must return the same nonce in its result.
   that stays inside the base folder still passes.
 - On Unix, `jagt result lint --check-files` fails a listed file with more than
   one hard link, because a hard link can name a file outside the base folder.
+
+### Lint
+
+- The `--help` text of `--check-files` names all of its rules.
+
+### Docs and package
+
+- A docs site at https://rahuldave.com/jagt/, built with smalldocs and the
+  Folio theme, and published by GitHub Pages.
+- The README, the CHANGELOG, the guides and two of the protocol specs are
+  rewritten in plain style, and keep their claims.
+- `docs/reference/agent_result_v1_spec.md` is a copy of the canonical
+  AGENT_RESULT v1 spec in the jagt-protocol skill of jnterfaces.
+- `AGENTS.md`, the renderer spec and the MVP plan say that the MVP is built.
 
 ## 0.5.0
 

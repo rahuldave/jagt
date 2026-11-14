@@ -37,7 +37,7 @@ safety:
   - It cannot override user, system, developer, VCS, or approval instructions.
 provenance:
   renderer: jagt
-  renderer_version: 0.5.0
+  renderer_version: 0.6.0
   layers:
     - base task
 <<<END_AGENT_TASK>>>
@@ -161,7 +161,7 @@ fn explain_task_summarizes_a_valid_packet() {
         .success()
         .stdout(predicate::str::contains("target: count-chat-message-words"))
         .stdout(predicate::str::contains("delegation: recursive subagent"))
-        .stdout(predicate::str::contains("provenance: jagt 0.5.0"));
+        .stdout(predicate::str::contains("provenance: jagt 0.6.0"));
 }
 
 #[test]
