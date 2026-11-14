@@ -1,6 +1,6 @@
 # Spec of AGENT_RESULT v1
 
-> This file is a copy of the canonical spec, from jnterfaces commit ad63276.
+> This file is a copy of the canonical spec, from jnterfaces commit fa5a229.
 > In the text below, "this page" means
 > [the canonical spec](https://github.com/rahuldave/jnterfaces/blob/main/.agents/skills/jagt-protocol/references/agent_result_v1_spec.md).
 > Change the spec there, and then copy it here again.
@@ -300,8 +300,8 @@ These options add checks to the default check:
   must be a nonce, as the section "Terms" defines it.
 - **`--check-files`** checks `outputs.files` by the rules of the section
   "File outputs". Each required file must exist and be a file. A missing
-  required file fails as missing. A missing optional file, or a link whose
-  target is missing, is not checked further.
+  required file fails as missing. A missing optional file, or an optional link
+  whose target is missing, is not checked further.
   - **A symbolic link.** The check follows it, but a listed file that exists
     must have its real path inside the real base folder. So a link that leads
     out of the base folder fails, for a required or an optional file.
