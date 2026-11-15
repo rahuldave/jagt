@@ -51,10 +51,25 @@ The file has no time and no argv, because the gate needs neither.
 
 - **The worktree** is the output of `git rev-parse --show-toplevel`. So
   `jagt render` works from any subfolder of a worktree.
-- **The main checkout** is the first entry of `git worktree list --porcelain`.
-  Git lists the main checkout first, also from a linked worktree. The parent
-  of `git rev-parse --git-common-dir` is not always the checkout, for example
-  in a submodule. So jagt does not use it.
+- **The main checkout** is the folder whose `.git` holds the repository.
+  Usually it is the first entry of `git worktree list --porcelain`, which git
+  lists first, also from a linked worktree.
+- **A submodule, or a repository from `git init --separate-git-dir`,** keeps
+  its git folder elsewhere, and git then lists that folder first. So jagt
+  tries these in order:
+  1. the current worktree, when its git folder is the one of the repository.
+  2. the checkout that the `core.worktree` setting names, as a submodule
+     has it, also in `config.worktree` or an included file. A folder inside
+     the git folder does not count.
+  3. the first entry of the list, when its `.git` is the git folder of the
+     repository.
+- **With none of these, `jagt render` stops** with an error, and `--no-save`
+  still works. An example is a linked worktree after
+  `git init --separate-git-dir`.
+- **One case jagt cannot tell.** The name of the git folder can itself be
+  `.git`, as in `--separate-git-dir store/proj/.git`. A render in a linked worktree
+  then saves to `store/proj`, because git lists that folder as the main
+  worktree. A render in the main checkout is not affected.
 - **A bare repository** has no main checkout, so it has no shared log folder.
   In a worktree of a bare repository, `jagt render` stops with an error.
   `--no-save` still works there.
@@ -217,7 +232,7 @@ The `provenance` of the packet lists the layers that it holds:
 ```yaml
 provenance:
   renderer: jagt
-  renderer_version: 0.6.1
+  renderer_version: 0.6.2
   layers:
     - base task
     - 'language layer: .agents/targets/python/docs.md'

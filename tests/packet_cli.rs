@@ -484,6 +484,192 @@ fn a_repository_path_with_a_colon_and_a_quote_still_reads_its_objects() {
     );
 }
 
+/// The `.json` files in `<checkout>/.agents/log/packets`.
+fn packets_in(checkout: &Path) -> usize {
+    fs::read_dir(checkout.join(".agents/log/packets"))
+        .map(|entries| {
+            entries
+                .filter(|entry| {
+                    entry.as_ref().is_ok_and(|entry| {
+                        entry.path().extension().is_some_and(|ext| ext == "json")
+                    })
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_submodule_saves_its_packets_in_its_own_checkout_not_in_the_git_folder() {
+    let lab = Lab::new();
+    let other = lab.root.join("other");
+    fs::create_dir(&other).expect("other");
+    git(&other, &["init", "-q", "-b", "main"]);
+    git(&other, &["config", "user.name", "Lab"]);
+    git(&other, &["config", "user.email", "lab@example.invalid"]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    git(
+        &lab.main,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            other.to_str().expect("utf8"),
+            "sub",
+        ],
+    );
+    let sub = lab.main.join("sub");
+    git(&sub, &["config", "user.name", "Lab"]);
+    git(&sub, &["config", "user.email", "lab@example.invalid"]);
+    let linked = lab.root.join("sub-linked");
+    git(
+        &sub,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "side",
+            linked.to_str().expect("utf8"),
+        ],
+    );
+    render(&sub, "review", Some("Review."), &[]);
+    render(&linked, "review", Some("Review."), &[]);
+    // A sparse checkout moves core.worktree into config.worktree.
+    git(&sub, &["sparse-checkout", "init"]);
+    let sparse = lab.root.join("sub-sparse");
+    git(
+        &sub,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "sparse",
+            sparse.to_str().expect("utf8"),
+        ],
+    );
+    render(&sparse, "review", Some("Review."), &[]);
+    assert_eq!(
+        packets_in(&sub),
+        3,
+        "every packet is in the submodule checkout"
+    );
+    assert_eq!(packets_in(&sparse), 0);
+    // A core.worktree inside the git folder must not become the checkout.
+    let config = lab.main.join(".git/modules/sub/config.worktree");
+    let kept = fs::read_to_string(&config).expect("config.worktree");
+    git(
+        &lab.main,
+        &[
+            "config",
+            "--file",
+            config.to_str().expect("utf8"),
+            "core.worktree",
+            ".",
+        ],
+    );
+    jagt(&sparse)
+        .args([
+            "render",
+            "review",
+            "--no-config",
+            "--prompt-text",
+            "Review.",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot find the main checkout"));
+    assert!(!lab.main.join(".git/modules/sub/.agents").exists());
+    fs::write(&config, kept).expect("restore config.worktree");
+    assert!(!lab.main.join(".git/modules/sub/.agents").exists());
+    assert_eq!(packets_in(&linked), 0);
+}
+
+#[test]
+fn a_separate_git_dir_named_dot_git_renders_in_the_main_checkout() {
+    // git lists `store/proj` as the main worktree, because it cuts `/.git`
+    // off the git folder. The render in the real checkout must not go there.
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical");
+    let main = root.join("w");
+    let gitdir = root.join("store/proj/.git");
+    fs::create_dir_all(root.join("store/proj")).expect("store");
+    git(
+        &root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            gitdir.to_str().expect("utf8"),
+            main.to_str().expect("utf8"),
+        ],
+    );
+    git(&main, &["config", "user.name", "Lab"]);
+    git(&main, &["config", "user.email", "lab@example.invalid"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    render(&main, "review", Some("Review."), &[]);
+    assert_eq!(packets_in(&main), 1);
+    assert!(!root.join("store/proj/.agents").exists());
+}
+
+#[test]
+fn a_separate_git_dir_renders_in_the_main_checkout_and_stops_in_a_linked_worktree() {
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical");
+    let main = root.join("w");
+    let gitdir = root.join("g.git");
+    git(
+        &root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            gitdir.to_str().expect("utf8"),
+            main.to_str().expect("utf8"),
+        ],
+    );
+    git(&main, &["config", "user.name", "Lab"]);
+    git(&main, &["config", "user.email", "lab@example.invalid"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    render(&main, "review", Some("Review."), &[]);
+    assert_eq!(packets_in(&main), 1);
+    assert!(!gitdir.join(".agents").exists());
+
+    let linked = root.join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "side",
+            linked.to_str().expect("utf8"),
+        ],
+    );
+    jagt(&linked)
+        .args([
+            "render",
+            "review",
+            "--no-config",
+            "--prompt-text",
+            "Review.",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot find the main checkout"));
+    assert_eq!(packets_in(&main), 1);
+    assert!(!gitdir.join(".agents").exists());
+    assert!(!linked.join(".agents").exists());
+}
+
 #[test]
 fn a_file_where_a_log_folder_belongs_stops_the_render() {
     // A file named `.agents` stops the render earlier, when jagt reads the

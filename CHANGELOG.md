@@ -15,6 +15,23 @@ A nonce, in the entries below, is a random value of 32 lowercase hex digits
 that `jagt render` puts in a packet when it saves the packet file. The agent
 must return the same nonce in its result.
 
+## 0.6.2
+
+### Fixes
+
+- In a submodule, and in each linked worktree of a submodule, `jagt render`
+  saves the packet file in the log folder of the submodule checkout. Before,
+  it saved the file inside the git folder, `.git/modules/<name>`, because git
+  lists that folder as the main worktree. jagt reads `core.worktree` through
+  git, so `config.worktree` counts.
+- After `git init --separate-git-dir`, a render in the main checkout saves
+  the packet file there, and not next to the git folder. In a linked worktree
+  of such a repository, the render stops with an error, because jagt cannot
+  tell the main checkout. `--no-save` still works.
+- One case stays open. When the git folder is itself named `.git`, a render
+  in a linked worktree saves next to that folder. git lists the folder as the
+  main worktree, and gives no way to tell it from a checkout.
+
 ## 0.6.1
 
 ### Fixes
