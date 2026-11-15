@@ -97,10 +97,21 @@ impl GitContext {
 
 /// Find the main checkout of a worktree.
 ///
-/// The main checkout is the first entry of `git worktree list`. Git keeps
-/// that order for linked worktrees and for submodules alike, where the parent
-/// of `--git-common-dir` is not always the checkout. It fails when git fails,
-/// when the list is empty, and when the main repository is bare.
+/// The main checkout is the worktree whose git folder is the git common
+/// folder. jagt takes, in this order:
+///
+/// 1. the current worktree, when its git folder is the common one;
+/// 2. the `core.worktree` of the common folder, as a submodule has it, when
+///    that checkout uses the same git folder and is not inside it;
+/// 3. the first entry of `git worktree list`, when its `.git` is the common
+///    folder. In a submodule, or after `git init --separate-git-dir`, git
+///    names the git folder itself there, so this check matters.
+///
+/// It fails when git fails, when the list is empty, when the main repository
+/// is bare, and when none of these finds the main checkout, as in a linked
+/// worktree of a repository from `git init --separate-git-dir`. A separate git
+/// folder whose own name is `.git` passes rule 3 from a linked worktree, and
+/// git gives no way to tell it from a checkout.
 ///
 /// # Arguments
 ///
@@ -126,7 +137,58 @@ fn main_checkout(worktree: &Path) -> Result<PathBuf> {
             ));
         }
     }
-    Ok(PathBuf::from(first))
+    let first = PathBuf::from(first);
+    let common = real_git_dir(worktree, "--git-common-dir")?;
+    if real_git_dir(worktree, "--absolute-git-dir")? == common {
+        return Ok(worktree.to_path_buf());
+    }
+    // git reads core.worktree from `config`, from the `config.worktree` of the
+    // main worktree, and from included files, as a submodule may keep it.
+    let mut git_dir = std::ffi::OsString::from("--git-dir=");
+    git_dir.push(common.as_os_str());
+    let configured = run_git(
+        worktree,
+        &[
+            git_dir.as_os_str(),
+            std::ffi::OsStr::new("config"),
+            std::ffi::OsStr::new("core.worktree"),
+        ],
+        &[],
+    )?;
+    if configured.success {
+        let value = configured.stdout.trim_end_matches('\n');
+        // git finds the git folder from any folder inside it, so a checkout
+        // there would pass the check below, and must not count.
+        if let Ok(checkout) = fs::canonicalize(common.join(value))
+            && !checkout.starts_with(&common)
+            && real_git_dir(&checkout, "--absolute-git-dir").ok().as_ref() == Some(&common)
+        {
+            return Ok(checkout);
+        }
+    }
+    if fs::canonicalize(first.join(".git")).ok().as_ref() == Some(&common) {
+        return Ok(first);
+    }
+    Err(render_error(&format!(
+        "jagt cannot find the main checkout of the git folder {}; render in the \
+         main checkout, or use --no-save",
+        common.display()
+    )))
+}
+
+/// The real path of a git folder that `git rev-parse` names.
+///
+/// # Arguments
+///
+/// * `worktree` - the folder that git runs in
+/// * `flag` - `--git-common-dir` or `--absolute-git-dir`
+///
+/// # Returns
+///
+/// The real path of the folder.
+fn real_git_dir(worktree: &Path, flag: &str) -> Result<PathBuf> {
+    let path = git_line(worktree, &["rev-parse", flag])?;
+    Ok(fs::canonicalize(worktree.join(path))?)
 }
 
 /// Find the folder that jagt reads the project config and the layers from: the top of the git
