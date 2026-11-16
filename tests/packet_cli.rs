@@ -500,7 +500,7 @@ fn packets_in(checkout: &Path) -> usize {
 }
 
 #[test]
-fn a_submodule_saves_its_packets_in_its_own_checkout_not_in_the_git_folder() {
+fn each_worktree_of_a_submodule_saves_its_packets_in_its_own_checkout() {
     let lab = Lab::new();
     let other = lab.root.join("other");
     fs::create_dir(&other).expect("other");
@@ -552,40 +552,17 @@ fn a_submodule_saves_its_packets_in_its_own_checkout_not_in_the_git_folder() {
         ],
     );
     render(&sparse, "review", Some("Review."), &[]);
-    assert_eq!(
-        packets_in(&sub),
-        3,
-        "every packet is in the submodule checkout"
+    // A submodule keeps its git folder in `.git/modules`, which is not named
+    // `.git`, so each worktree keeps its own packets, as the gate reads them.
+    assert_eq!(packets_in(&sub), 1);
+    assert_eq!(packets_in(&linked), 1);
+    assert_eq!(packets_in(&sparse), 1);
+    assert_eq!(packets_in(&lab.main), 0);
+    assert!(
+        files_under(&lab.main.join(".git"))
+            .iter()
+            .all(|path| !path.to_string_lossy().contains(".agents"))
     );
-    assert_eq!(packets_in(&sparse), 0);
-    // A core.worktree inside the git folder must not become the checkout.
-    let config = lab.main.join(".git/modules/sub/config.worktree");
-    let kept = fs::read_to_string(&config).expect("config.worktree");
-    git(
-        &lab.main,
-        &[
-            "config",
-            "--file",
-            config.to_str().expect("utf8"),
-            "core.worktree",
-            ".",
-        ],
-    );
-    jagt(&sparse)
-        .args([
-            "render",
-            "review",
-            "--no-config",
-            "--prompt-text",
-            "Review.",
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot find the main checkout"));
-    assert!(!lab.main.join(".git/modules/sub/.agents").exists());
-    fs::write(&config, kept).expect("restore config.worktree");
-    assert!(!lab.main.join(".git/modules/sub/.agents").exists());
-    assert_eq!(packets_in(&linked), 0);
 }
 
 #[test]
@@ -615,10 +592,28 @@ fn a_separate_git_dir_named_dot_git_renders_in_the_main_checkout() {
     render(&main, "review", Some("Review."), &[]);
     assert_eq!(packets_in(&main), 1);
     assert!(!root.join("store/proj/.agents").exists());
+    // This layout breaks the convention that a `.git` folder sits in its
+    // checkout. From a linked worktree, jagt takes the folder that holds it,
+    // as the gate does, and still writes nothing inside the git folder.
+    let linked = root.join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "side",
+            linked.to_str().expect("utf8"),
+        ],
+    );
+    render(&linked, "review", Some("Review."), &[]);
+    assert_eq!(packets_in(&root.join("store/proj")), 1);
+    assert!(!gitdir.join(".agents").exists());
 }
 
 #[test]
-fn a_separate_git_dir_renders_in_the_main_checkout_and_stops_in_a_linked_worktree() {
+fn a_separate_git_dir_keeps_packets_in_each_worktree() {
     let dir = tempdir().expect("tempdir");
     let root = dir.path().canonicalize().expect("canonical");
     let main = root.join("w");
@@ -654,6 +649,97 @@ fn a_separate_git_dir_renders_in_the_main_checkout_and_stops_in_a_linked_worktre
             linked.to_str().expect("utf8"),
         ],
     );
+    render(&linked, "review", Some("Review."), &[]);
+    assert_eq!(packets_in(&main), 1);
+    assert_eq!(packets_in(&linked), 1);
+    assert!(!gitdir.join(".agents").exists());
+}
+
+#[test]
+fn a_repository_inside_a_git_folder_of_another_name_saves_nothing() {
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical");
+    let store = root.join("store");
+    git(
+        &root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            store.to_str().expect("utf8"),
+            root.join("w").to_str().expect("utf8"),
+        ],
+    );
+    let other = store.join("other");
+    fs::create_dir(&other).expect("other");
+    git(&other, &["init", "-q", "-b", "main"]);
+    jagt(&other)
+        .args([
+            "render",
+            "review",
+            "--no-config",
+            "--prompt-text",
+            "Review.",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("inside a git folder"));
+    assert!(!other.join(".agents").exists());
+}
+
+#[test]
+fn files_shaped_like_a_git_folder_in_a_checkout_do_not_stop_a_nested_repository() {
+    let lab = Lab::new();
+    let shaped = lab.main.join("fixture");
+    // git takes a folder as a git folder only with a valid HEAD.
+    write(&lab.main, "fixture/HEAD", "not a ref\n");
+    write(&lab.main, "fixture/objects/keep", "");
+    write(&lab.main, "fixture/refs/keep", "");
+    let nested = shaped.join("nested");
+    fs::create_dir(&nested).expect("nested");
+    git(&nested, &["init", "-q", "-b", "main"]);
+    render(&nested, "review", Some("Review."), &[]);
+    assert_eq!(packets_in(&nested), 1);
+}
+
+#[test]
+fn jagt_never_saves_inside_a_git_folder() {
+    // A git folder named `.git` inside another git folder: the folder that
+    // holds it is itself inside a git folder, so the render stops.
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical");
+    let main = root.join("w");
+    let gitdir = root.join("outer/.git/inner/.git");
+    fs::create_dir_all(root.join("outer/.git/inner")).expect("store");
+    git(
+        &root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            gitdir.to_str().expect("utf8"),
+            main.to_str().expect("utf8"),
+        ],
+    );
+    git(&main, &["config", "user.name", "Lab"]);
+    git(&main, &["config", "user.email", "lab@example.invalid"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let linked = root.join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "side",
+            linked.to_str().expect("utf8"),
+        ],
+    );
     jagt(&linked)
         .args([
             "render",
@@ -664,10 +750,24 @@ fn a_separate_git_dir_renders_in_the_main_checkout_and_stops_in_a_linked_worktre
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("cannot find the main checkout"));
-    assert_eq!(packets_in(&main), 1);
-    assert!(!gitdir.join(".agents").exists());
-    assert!(!linked.join(".agents").exists());
+        .stderr(predicate::str::contains("inside a git folder"));
+    jagt(&linked)
+        .args([
+            "render",
+            "review",
+            "--no-config",
+            "--no-save",
+            "--prompt-text",
+            "Review.",
+        ])
+        .assert()
+        .success();
+    assert!(
+        files_under(&root.join("outer"))
+            .iter()
+            .all(|path| !path.to_string_lossy().contains(".agents"))
+    );
+    assert_eq!(packets_in(&linked), 0);
 }
 
 #[test]

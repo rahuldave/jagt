@@ -15,7 +15,7 @@ then reads the file, and turns the result into a record. The spec of the commit 
 | Nonce | A random value of 32 lowercase hex digits, of which the first is a letter. The packet and its result both hold it. |
 | Log folder | The folder `.agents/log/` of a checkout. Git ignores it. |
 | Main checkout | The first worktree of a repository, the one that `git clone` made. |
-| Shared log folder | The log folder of the main checkout. All worktrees of a repository save their packet files there. |
+| Shared log folder | The log folder of the main checkout. All worktrees of a repository save their packet files there, when its git folder is named `.git`. |
 | Worktree tree | The tree hash of all the files in the worktree, staged or not. An ignored file is not in it, unless the index holds it. |
 | Layer | One part of the prompt text of a packet. |
 
@@ -51,25 +51,22 @@ The file has no time and no argv, because the gate needs neither.
 
 - **The worktree** is the output of `git rev-parse --show-toplevel`. So
   `jagt render` works from any subfolder of a worktree.
-- **The main checkout** is the folder whose `.git` holds the repository.
-  Usually it is the first entry of `git worktree list --porcelain`, which git
-  lists first, also from a linked worktree.
-- **A submodule, or a repository from `git init --separate-git-dir`,** keeps
-  its git folder elsewhere, and git then lists that folder first. So jagt
-  tries these in order:
-  1. the current worktree, when its git folder is the one of the repository.
-  2. the checkout that the `core.worktree` setting names, as a submodule
-     has it, also in `config.worktree` or an included file. A folder inside
-     the git folder does not count.
-  3. the first entry of the list, when its `.git` is the git folder of the
-     repository.
-- **With none of these, `jagt render` stops** with an error, and `--no-save`
-  still works. An example is a linked worktree after
-  `git init --separate-git-dir`.
-- **One case jagt cannot tell.** The name of the git folder can itself be
-  `.git`, as in `--separate-git-dir store/proj/.git`. A render in a linked worktree
-  then saves to `store/proj`, because git lists that folder as the main
-  worktree. A render in the main checkout is not affected.
+- **The convention:** a git folder named `.git` sits inside its checkout.
+  jagt follows the same rule as the commit gate, in this order:
+  1. In the main checkout, jagt saves there.
+  2. In a linked worktree, jagt saves in the folder that holds the shared git
+     folder, when that folder is named `.git`. That folder is the main
+     checkout.
+  3. Otherwise jagt saves in the current worktree. This covers a submodule,
+     whose git folder is in `.git/modules`, and a repository from
+     `git init --separate-git-dir`. The gate reads that worktree too.
+- **jagt never saves inside a git folder.** If the log folder would be inside
+  the git folder, inside the shared git folder, under any folder named `.git`,
+  or under any other folder that git takes as a git folder, `jagt render`
+  stops with an error. `--no-save` still works.
+- **A layout that breaks the convention** is a separate git folder that is
+  itself named `.git`, as in `--separate-git-dir store/proj/.git`. From a
+  linked worktree, jagt then saves in `store/proj`, as the gate reads it.
 - **A bare repository** has no main checkout, so it has no shared log folder.
   In a worktree of a bare repository, `jagt render` stops with an error.
   `--no-save` still works there.
@@ -232,7 +229,7 @@ The `provenance` of the packet lists the layers that it holds:
 ```yaml
 provenance:
   renderer: jagt
-  renderer_version: 0.6.2
+  renderer_version: 0.6.3
   layers:
     - base task
     - 'language layer: .agents/targets/python/docs.md'
