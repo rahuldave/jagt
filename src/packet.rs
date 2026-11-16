@@ -48,7 +48,8 @@ pub struct PacketRecord {
 pub struct GitContext {
     /// The top folder of the current worktree.
     pub worktree: PathBuf,
-    /// The top folder of the main checkout. Its log folder is the shared one.
+    /// The checkout whose log folder jagt saves in: the main checkout, or the
+    /// current worktree when the shared git folder is not named `.git`.
     pub main_checkout: PathBuf,
 }
 
@@ -95,23 +96,21 @@ impl GitContext {
     }
 }
 
-/// Find the main checkout of a worktree.
+/// Find the checkout that holds the shared log folder, by the convention of
+/// the commit gate.
 ///
-/// The main checkout is the worktree whose git folder is the git common
-/// folder. jagt takes, in this order:
+/// A git folder named `.git` sits inside its checkout. So jagt takes, in this
+/// order:
 ///
 /// 1. the current worktree, when its git folder is the common one;
-/// 2. the `core.worktree` of the common folder, as a submodule has it, when
-///    that checkout uses the same git folder and is not inside it;
-/// 3. the first entry of `git worktree list`, when its `.git` is the common
-///    folder. In a submodule, or after `git init --separate-git-dir`, git
-///    names the git folder itself there, so this check matters.
+/// 2. the folder that holds the common git folder, when that folder is named
+///    `.git`, as from a linked worktree of a normal repository;
+/// 3. the current worktree otherwise, as in a submodule or after
+///    `git init --separate-git-dir`. The gate reads that worktree too.
 ///
-/// It fails when git fails, when the list is empty, when the main repository
-/// is bare, and when none of these finds the main checkout, as in a linked
-/// worktree of a repository from `git init --separate-git-dir`. A separate git
-/// folder whose own name is `.git` passes rule 3 from a linked worktree, and
-/// git gives no way to tell it from a checkout.
+/// It fails when git fails, when the main repository is bare, and when the
+/// folder lies inside a git folder of any name. jagt never saves inside a git
+/// folder.
 ///
 /// # Arguments
 ///
@@ -119,15 +118,10 @@ impl GitContext {
 ///
 /// # Returns
 ///
-/// The top folder of the main checkout.
+/// The top folder of the checkout.
 fn main_checkout(worktree: &Path) -> Result<PathBuf> {
     let output = git_output(worktree, &["worktree", "list", "--porcelain", "-z"], &[])?;
-    let mut fields = output.split('\0');
-    let first = fields
-        .next()
-        .and_then(|field| field.strip_prefix("worktree "))
-        .ok_or_else(|| render_error("git worktree list gave no main worktree"))?;
-    for field in fields {
+    for field in output.split('\0') {
         if field.is_empty() {
             break;
         }
@@ -137,43 +131,50 @@ fn main_checkout(worktree: &Path) -> Result<PathBuf> {
             ));
         }
     }
-    let first = PathBuf::from(first);
     let common = real_git_dir(worktree, "--git-common-dir")?;
-    if real_git_dir(worktree, "--absolute-git-dir")? == common {
-        return Ok(worktree.to_path_buf());
-    }
-    // git reads core.worktree from `config`, from the `config.worktree` of the
-    // main worktree, and from included files, as a submodule may keep it.
-    let mut git_dir = std::ffi::OsString::from("--git-dir=");
-    git_dir.push(common.as_os_str());
-    let configured = run_git(
-        worktree,
-        &[
-            git_dir.as_os_str(),
-            std::ffi::OsStr::new("config"),
-            std::ffi::OsStr::new("core.worktree"),
-        ],
-        &[],
-    )?;
-    if configured.success {
-        let value = configured.stdout.trim_end_matches('\n');
-        // git finds the git folder from any folder inside it, so a checkout
-        // there would pass the check below, and must not count.
-        if let Ok(checkout) = fs::canonicalize(common.join(value))
-            && !checkout.starts_with(&common)
-            && real_git_dir(&checkout, "--absolute-git-dir").ok().as_ref() == Some(&common)
+    let git_dir = real_git_dir(worktree, "--absolute-git-dir")?;
+    let here = fs::canonicalize(worktree)?;
+    let checkout = match common.parent() {
+        Some(parent)
+            if git_dir != common && common.file_name() == Some(std::ffi::OsStr::new(".git")) =>
         {
-            return Ok(checkout);
+            parent.to_path_buf()
         }
+        _ => here,
+    };
+    if checkout.starts_with(&common)
+        || checkout.starts_with(&git_dir)
+        || checkout.components().any(|part| part.as_os_str() == ".git")
+        || checkout.ancestors().skip(1).any(is_git_folder)
+    {
+        return Err(render_error(&format!(
+            "the log folder would be inside a git folder, at {}; jagt saves \
+             nothing there, so use --no-save",
+            checkout.display()
+        )));
     }
-    if fs::canonicalize(first.join(".git")).ok().as_ref() == Some(&common) {
-        return Ok(first);
-    }
-    Err(render_error(&format!(
-        "jagt cannot find the main checkout of the git folder {}; render in the \
-         main checkout, or use --no-save",
-        common.display()
-    )))
+    Ok(checkout)
+}
+
+/// Tell whether a folder is a git folder of any name.
+///
+/// A folder with a `HEAD` file and the folders `objects` and `refs` has the
+/// shape of one, and git then confirms it, so that tracked files of that
+/// shape in a checkout do not count.
+///
+/// # Arguments
+///
+/// * `dir` - the folder to test
+///
+/// # Returns
+///
+/// True when git takes the folder as a git folder.
+fn is_git_folder(dir: &Path) -> bool {
+    dir.join("HEAD").is_file()
+        && dir.join("objects").is_dir()
+        && dir.join("refs").is_dir()
+        && run_git(dir, &["rev-parse", "--is-inside-git-dir"], &[])
+            .is_ok_and(|out| out.success && out.stdout.trim() == "true")
 }
 
 /// The real path of a git folder that `git rev-parse` names.
