@@ -1,6 +1,8 @@
 {
   "version": 2,
-  "profiles": [],
+  "profiles": [
+    "rust"
+  ],
   "choices": {
     "cx": true,
     "jagt-protocol": true,

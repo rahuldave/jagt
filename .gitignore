@@ -40,3 +40,6 @@ htmlcov/
 
 # Rust profiling/build byproducts
 *.profraw
+
+# The release archives of just dist.
+/dist/

@@ -18,6 +18,13 @@ fn isolate(command: &mut StdCommand) -> &mut StdCommand {
     command
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        // No background maintenance or gc: it writes and removes files such
+        // as objects/maintenance.lock while a test lists the objects.
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "gc.auto")
+        .env("GIT_CONFIG_VALUE_1", "0")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
