@@ -40,12 +40,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-latest
             target: aarch64-apple-darwin
             native: true
-          # GitHub has no x86_64 macOS runner left on the macos-13 image, so
-          # the arm64 runner builds this target. The binary cannot run there.
-          - runner: macos-14
+          # GitHub retired the macos-13 and macos-14 images, so the arm64
+          # macos-latest runner builds this target. The binary cannot run there.
+          - runner: macos-latest
             target: x86_64-apple-darwin
             native: false
           - runner: ubuntu-24.04
