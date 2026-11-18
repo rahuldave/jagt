@@ -53,9 +53,9 @@ website:
         contents:
           - auto: "api/**"
 
-# Folio, from https://github.com/rahuldave/smalldocs-folio, in _extensions/folio.
-# Update it with: uvx smalldocs==0.5.10 add rahuldave/smalldocs-folio --force
-theme: folio
+# Atelier, from https://github.com/rahuldave/smalldocs-atelier, in _extensions/atelier.
+# Update it with: uvx smalldocs==0.5.10 add rahuldave/smalldocs-atelier --force
+theme: atelier
 css: styles.css
 toc: true
 search: true

@@ -1,4 +1,4 @@
-:root, [data-bs-theme] { --e-heading: "Source Serif 4",Georgia,serif; --e-body: "Source Serif 4", Georgia, serif; }
+:root, [data-bs-theme] { --e-heading: "DM Sans", system-ui, sans-serif; --e-body: "DM Sans", system-ui, sans-serif; }
 /* Structural SmallDocs/Quarto integration. Foundation job variables are generated. */
 html:root, html.quarto-dark:root {
   --sd-root-font-size: 16px;
@@ -39,8 +39,7 @@ html .sidebar-item-section:first-child { margin-top:0; }
 html .sidebar-item-section>.sidebar-item-container .sidebar-link { padding-bottom:var(--f-space-12); }
 html .sidebar-link { color:var(--f-muted); opacity:1; padding:var(--f-space-8) var(--f-space-12); border-left:1px solid transparent; }
 html .sidebar-item .sidebar-item-toggle { color:var(--f-muted); }
-html #TOC .nav-link { color:var(--f-muted); overflow-wrap:anywhere; }
-html main.content > #TOC a, html #TOC-body a, html .quarto-listing-category .category { overflow-wrap:anywhere; }
+html #TOC .nav-link { color:var(--f-muted); }
 html #TOC .nav-link.active { color:var(--f-accent-text); border-left-color:var(--f-accent-text); text-decoration:underline; }
 html #TOC .nav-link:hover { color:var(--f-link-hover); }
 html .callout { border:1px solid var(--f-decorative-line); border-left-width:2px; }
@@ -56,18 +55,21 @@ html .form-check-input[type=radio]:checked { --bs-form-check-bg-image:var(--e-ra
 html .form-check-input[type=checkbox]:indeterminate { --bs-form-check-bg-image:var(--e-dash-image); }
 html .form-select { --bs-form-select-bg-img:var(--e-select-image); }
 @media(max-width:575.98px) { html #quarto-header .navbar { padding-inline:var(--f-reading-space-narrowOuter); } }
-html .quarto-title-block { border-bottom:1px solid var(--f-decorative-line); }
-html .quarto-title .subtitle { max-width:44ch; }
+html main.content { border-left:1px solid var(--f-decorative-line); padding-left:var(--f-space-32); }
+html main.content h2,html main.content h3,html .navbar-title { font-weight:600; }
+html div.sourceCode { border:0; border-left:2px solid var(--f-accent-text); }
+html main.content blockquote { font-style:normal; font-weight:400; }
+@media(max-width:991.98px) { html main.content { border-left:0; padding-left:0; } }
 /* Quarto controls may inherit their own dark navbar marker; retain page roles. */
 html #quarto-header .navbar { background:var(--f-paper); border-bottom:1px solid var(--f-decorative-line); }
 html .navbar .navbar-brand,html .navbar .navbar-title { color:var(--f-accent-text); }
 html .navbar .nav-link { color:var(--f-ink); }
 html .sidebar nav[role=doc-toc]>h2,html .nav-footer { font-family:var(--f-font-ui); font-size:var(--f-reading-metadata); }
 :root, [data-bs-theme] {
-  --f-font-body: "Source Serif 4", Georgia, serif;
-  --f-font-heading: "Source Serif 4",Georgia,serif;
+  --f-font-body: "DM Sans", system-ui, sans-serif;
+  --f-font-heading: "DM Sans", system-ui, sans-serif;
   --f-font-ui: "DM Sans",system-ui,sans-serif;
-  --f-font-display: "Libre Caslon Display", Georgia, serif;
+  --f-font-display: "DM Sans", system-ui, sans-serif;
   --f-font-code: "IBM Plex Mono", ui-monospace, monospace;
   --f-size-12: 0.75rem;
   --f-size-14: 0.875rem;
@@ -91,7 +93,7 @@ html .sidebar nav[role=doc-toc]>h2,html .nav-footer { font-family:var(--f-font-u
   --f-space-64: 4rem;
   --f-space-96: 6rem;
   --f-space-128: 8rem;
-  --f-reading-body: 1.25rem;
+  --f-reading-body: 1.125rem;
   --f-reading-ui: 1rem;
   --f-reading-metadata: 0.875rem;
   --f-reading-heading: 1.875rem;
@@ -111,7 +113,7 @@ html .sidebar nav[role=doc-toc]>h2,html .nav-footer { font-family:var(--f-font-u
   --f-reading-space-group: 3rem;
   --f-reading-space-withinGroup: 1rem;
   --f-reading-space-columns: 2rem;
-  --f-reading-space-panel: 1.5rem; --bs-border-radius:0.125rem; --bs-border-radius-sm:0.125rem; --bs-border-radius-lg:0.125rem; --bs-font-sans-serif:var(--f-font-ui); --bs-body-font-family:var(--f-font-body); --bs-body-font-size:var(--f-reading-body); --bs-body-line-height:var(--f-line-reading);
+  --f-reading-space-panel: 1.5rem; --bs-border-radius:0rem; --bs-border-radius-sm:0rem; --bs-border-radius-lg:0rem; --bs-font-sans-serif:var(--f-font-ui); --bs-body-font-family:var(--f-font-body); --bs-body-font-size:var(--f-reading-body); --bs-body-line-height:var(--f-line-reading);
 }
 
 html:root, html.quarto-dark:root { font-size:100%; --sd-root-font-size:16px; --sd-body-width:640px; --sd-inline-code:var(--f-code-ink); --sd-code-bg:var(--f-code); }
