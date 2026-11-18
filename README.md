@@ -83,9 +83,13 @@ Or install it from a clone of this repository:
 cargo install --path .
 ```
 
-Each version tag starts the Release workflow. It builds the four binaries and
-attaches each one to the GitHub release as `jagt-<target>.tar.gz`, with its
-hash in `jagt-<target>.tar.gz.sha256`.
+CI makes each release. On a push to `main`, after the checks pass, the job
+`release` runs `just release`, which tags `v` and the version of `Cargo.toml`.
+The jobs `binaries` and `publish` then build the four binaries and attach
+each one to the GitHub release as `jagt-<target>.tar.gz`, with its hash in
+`jagt-<target>.tar.gz.sha256`. So a pull request that needs a release raises
+the version of `Cargo.toml`, and `just release-check` fails when it is too
+low for the commits since the last tag.
 
 Check the install with `jagt --version`. The commit gates are checks, from the
 commit gates spec of agent_gest_git_skills, that stop a commit when they fail.

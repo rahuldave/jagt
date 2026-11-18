@@ -15,6 +15,22 @@ A nonce, in the entries below, is a random value of 32 lowercase hex digits
 that `jagt render` puts in a packet when it saves the packet file. The agent
 must return the same nonce in its result.
 
+## 0.6.4
+
+### Package
+
+- Each release has binaries for macOS on arm64 and x86_64, and for Linux on
+  arm64 and x86_64, as `jagt-<target>.tar.gz` with a `.sha256` file. The
+  Linux binaries link musl statically. The release v0.6.3 got its binaries
+  later, from a run by hand. 0.6.4 is the first release that CI builds
+  itself.
+- `scripts/install.sh` installs a release binary with no Rust. It checks the
+  hash and puts `jagt` in `~/.local/bin`, or in the folder of `--dir`.
+- CI tags each release. On a push to `main`, after the checks pass,
+  `just release` tags `v` and the version of `Cargo.toml`, and CI builds and
+  attaches the binaries. `just release-check` fails when the version is lower
+  than the commits since the last tag ask for.
+
 ## 0.6.3
 
 ### Fixes

@@ -244,6 +244,9 @@ just smoke
 just docs
 just diff-check
 just verify
+just release-check
+just check
+just release
 git diff --check
 ```
 
@@ -266,6 +269,35 @@ Current command mappings:
 - Diff hygiene: `just diff-check`, which runs `git diff --check`.
 - Full local verification: `just verify`, which depends on `fmt-check`, `lint`,
   `typecheck`, `build`, `test`, `smoke`, and `diff-check`.
+- Release check: `just release-check` fails when the version of `Cargo.toml`
+  is lower than the last tag `vX.Y.Z`, or lower than the bump that the
+  conventional commits since that tag ask for. It needs no network.
+- Every check: `just check`, which runs `release-check`, then `verify`.
+- Release: `just release` tags HEAD with `v` and the version of `Cargo.toml`,
+  pushes the tag and checks it. `just release --dry-run` prints the tag and
+  changes nothing. On each push to `main`, the job `release` of
+  `.github/workflows/ci.yml` runs it after the job `verify` passes, and the
+  jobs `binaries` and `publish` build and attach the release binaries. Only
+  `release` and `publish` can write to the repository. So a PR that needs a
+  release raises the version of `Cargo.toml` and adds its CHANGELOG section,
+  and nobody tags by hand. Write each commit subject as a conventional
+  commit, such as `fix: ...` or `docs: ...`, because the bump comes from them.
+- The script is `scripts/release_tag.py`, a copy of the script of the gpa
+  skill of agent_gest_git_skills, byte for byte the same as in cx.
+  `tests/release.rs` checks its blob. The script reads the profile `rust`
+  from `.agents/stack.json`, and runs `just rust::version` of
+  `scripts/rust.just`.
+- **Do not run `just install` as it stands.** Because `.agents/stack.json`
+  names the profile `rust`, the installer adds the rust profile of
+  jnterfaces, which defines the module `rust` again. The newer role of
+  agent_gest_git_skills also defines `release` and `release-check`. just
+  stops on a module or recipe defined twice, and the failed install leaves
+  `.agents/just/index.just` without its imports, so `just verify` fails.
+  Before the next `just install`, take out of the `Justfile` the line
+  `mod rust` and the recipes `release_tag`, `release` and `release-check`,
+  and delete `scripts/rust.just`, `scripts/cargo_version.py`,
+  `scripts/release_tag.py` and the tests of `tests/release.rs` that read
+  them. The installed profile and role then give the same recipes.
 
 When changing Just recipes, consult the Just manual rather than treating it like
 Make. The key reference for recipe ordering is:

@@ -12,10 +12,143 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      # The whole history and the tags, for just release-check.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # rust-toolchain.toml names the toolchain, and rustup installs it on the first cargo call.
       - name: Install rustfmt and clippy
         run: rustup component add rustfmt clippy
       - uses: extractions/setup-just@v2
+      # uv runs scripts/release_tag.py and scripts/cargo_version.py, also in the tests.
+      - uses: astral-sh/setup-uv@v6
+      - name: Check the release version against the tags and the commits
+        run: just release-check
       - name: Verify
         run: just verify
+
+  # On a push to main, after the job verify passed, tag the next release with just release. No agent runs here.
+  release:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # One release at a time. A run on an older commit after a newer release prints no release.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - uses: extractions/setup-just@v2
+      - name: Name the author of the tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Tag the release
+        run: just release
+
+  # After the job release, build jagt for four targets when HEAD has a release tag. A tag that the job release pushes
+  # with the GITHUB_TOKEN starts no other workflow, so the build runs here. With no tag, each step after the tag step
+  # is skipped, and the job passes. The Linux builds use musl, so the binary is static and runs on any distribution.
+  binaries:
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          # GitHub retired macos-13 and macos-14, so the Intel build is a cross build on the arm64 runner.
+          - runner: macos-15
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Find the release tag of HEAD
+        id: tag
+        run: echo "tag=$(git tag --points-at HEAD --sort=-v:refname --list 'v*' | head -n 1)" >> "$GITHUB_OUTPUT"
+      - if: steps.tag.outputs.tag != ''
+        uses: extractions/setup-just@v2
+      - name: Install musl
+        if: steps.tag.outputs.tag != '' && runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+      - name: Build and pack the binary
+        if: steps.tag.outputs.tag != ''
+        run: just dist ${{ matrix.target }}
+      - name: Run the binary
+        if: steps.tag.outputs.tag != '' && matrix.target != 'x86_64-apple-darwin'
+        run: target/${{ matrix.target }}/release/jagt --version
+      # The runner cannot run the Intel binary, so check its architecture.
+      - name: Check the Intel binary
+        if: steps.tag.outputs.tag != '' && matrix.target == 'x86_64-apple-darwin'
+        run: lipo -archs target/x86_64-apple-darwin/release/jagt | grep -qx x86_64
+      # file says "static-pie linked" for the x86_64 musl binary and "statically linked" for the arm64 one.
+      - name: Check that the Linux binary is static
+        if: steps.tag.outputs.tag != '' && runner.os == 'Linux'
+        run: |
+          file target/${{ matrix.target }}/release/jagt
+          file target/${{ matrix.target }}/release/jagt | grep -Eq 'statically linked|static-pie linked'
+      - if: steps.tag.outputs.tag != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: jagt-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  # Put the archives and their hashes on the GitHub release of the tag. This is the only job besides release that
+  # can write. It makes the release with the notes of the CHANGELOG, or uploads to the release of the same tag.
+  publish:
+    needs: binaries
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Find the release tag of HEAD
+        id: tag
+        run: echo "tag=$(git tag --points-at HEAD --sort=-v:refname --list 'v*' | head -n 1)" >> "$GITHUB_OUTPUT"
+      - if: steps.tag.outputs.tag != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jagt-*
+          path: dist
+          merge-multiple: true
+      - name: Make the release or upload to it
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          test "$(ls dist | wc -l)" -eq 8
+          (cd dist && shasum -a 256 -c ./*.sha256)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            exit 0
+          fi
+          version=${TAG#v}
+          awk -v head="## $version" '$0 == head { found = 1; next } /^## / { if (found) exit } found' \
+            CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$TAG" dist/* --verify-tag --title "jagt $version" --notes-file notes.md
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "jagt $version" --notes-from-tag
+          fi
