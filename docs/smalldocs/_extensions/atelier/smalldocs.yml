@@ -1,0 +1,4 @@
+css:
+  light: atelier.css
+  dark: atelier-dark.css
+favicon: logo.svg
