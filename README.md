@@ -56,10 +56,25 @@ Justfile.
 
 ## Install
 
-jagt is a Rust program. Install it with Cargo, from GitHub:
+Install a release binary with `scripts/install.sh`. It needs no Rust:
 
 ```bash
-cargo install --git https://github.com/rahuldave/jagt jagt
+curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/main/scripts/install.sh | sh
+```
+
+- **The binary:** the script picks the binary of your platform, checks its
+  SHA-256 hash, and puts `jagt` in `~/.local/bin`.
+- **Options:** pass `--tag vX.Y.Z` for one version, and `--dir DIR` for
+  another folder. Through the pipe, put them after `sh -s --`, as in
+  `curl -fsSL <url> | sh -s -- --tag v0.6.3 --dir /usr/local/bin`.
+- **Platforms:** macOS on arm64 and x86_64, and Linux on arm64 and x86_64.
+  The Linux binaries link musl statically, so they run on any distribution.
+  On another platform the script stops with an error.
+
+To build from source, install with Cargo, from a tag on GitHub:
+
+```bash
+cargo install --git https://github.com/rahuldave/jagt --tag v0.6.3 jagt
 ```
 
 Or install it from a clone of this repository:
@@ -68,10 +83,15 @@ Or install it from a clone of this repository:
 cargo install --path .
 ```
 
+Each version tag starts the Release workflow. It builds the four binaries and
+attaches each one to the GitHub release as `jagt-<target>.tar.gz`, with its
+hash in `jagt-<target>.tar.gz.sha256`.
+
 Check the install with `jagt --version`. The commit gates are checks, from the
 commit gates spec of agent_gest_git_skills, that stop a commit when they fail.
 A hook of the gates turns the result of an agent into a record. The gates need
-jagt 0.3.0 or later, for the nonce of a packet.
+jagt 0.6.3 or later. From 0.6.3, jagt computes the input tree as the gate
+does, and saves each packet file in a folder that the gate reads.
 
 ## The actors
 
