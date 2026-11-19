@@ -280,8 +280,11 @@ merge commits. Each message is a conventional commit, such as
 
 A bullet line of the body with a conventional subject, such as
 `* feat!: drop the flag`, asks for its bump too. A squash commit of GitHub
-lists the commits of its PR that way. The largest bump of the commits gives
-the next number. With no tag yet, the next tag is `v0.1.0`.
+lists the commits of its PR that way. The bullet counts only when its type is
+`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`,
+`style` or `revert`, in lower case. A labelled bullet, such as
+`- Removed: the old copies`, is not a commit and asks for no bump. The largest
+bump of the commits gives the next number. With no tag yet, the next tag is `v0.1.0`.
 
 A language profile gives the version of its manifest with the recipe
 `<profile>::version`. The recipe prints `X.Y.Z`, or nothing when the manifest

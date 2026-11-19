@@ -479,6 +479,71 @@ def load_records(folders: List[Path]) -> List[dict]:
     return found
 
 
+def refusal_notes(folders: List[Path], missing: List[str], tree: str, root: Path) -> List[str]:
+    """Why each missing target has no record, from the refusal files that the record hook wrote: the latest refusal
+    of each target, with its nonce and reason. A refusal counts here when its input tree is TREE, or, for a target
+    that changes files, when its packet is of this worktree. A record of the same target and input tree that is newer
+    than the refusal, whatever its status, or a record with the nonce of the refusal, makes the refusal old news. A
+    record of another tree, as from another worktree, does not. A refusal of a target that changes files, which counts
+    by its worktree, is also old news after a newer record of that target from the same worktree. The worktree of a
+    record is in the packet of its nonce. A file that the gate cannot read is
+    left out, so a bad refusal file never stops the gate with a fault of its own."""
+    newest_record: Dict[Tuple[str, str], float] = {}
+    # The newest record of each target that changes files, by the worktree of its packet.
+    newest_changer: Dict[Tuple[str, str], float] = {}
+    record_nonces: Set[str] = set()
+    for folder in folders:
+        for path in (folder / "records").glob("*.json") if (folder / "records").is_dir() else []:
+            try:
+                record, when = json.loads(path.read_text()), path.stat().st_mtime
+                record_nonces.add(path.stem)
+                if (isinstance(record, dict) and record.get("version") == 1 and isinstance(record.get("target"), str)
+                        and isinstance(record.get("status"), str) and is_tree(record.get("input_tree"))):
+                    key = (record["target"], record["input_tree"])
+                    newest_record[key] = max(when, newest_record.get(key, 0.0))
+                    if record["target"] in CHANGERS and isinstance(record.get("nonce"), str):
+                        packet = json.loads((folder / "packets" / f"{path.stem}.json").read_text())
+                        if isinstance(packet, dict) and isinstance(packet.get("worktree"), str):
+                            place = (record["target"], str(Path(packet["worktree"]).resolve()))
+                            newest_changer[place] = max(when, newest_changer.get(place, 0.0))
+            except Exception:
+                continue
+    latest: Dict[str, Tuple[float, dict]] = {}
+    for folder in folders:
+        for path in (folder / "refusals").glob("*.json") if (folder / "refusals").is_dir() else []:
+            try:
+                refusal, when = json.loads(path.read_text()), path.stat().st_mtime
+                if not (isinstance(refusal, dict) and refusal.get("version") == 1
+                        and isinstance(refusal.get("target"), str) and refusal["target"] in missing
+                        and isinstance(refusal.get("nonce"), str) and isinstance(refusal.get("reason"), str)):
+                    continue
+                target = refusal["target"]
+                key = (target, refusal.get("input_tree"))
+                if refusal["nonce"] in record_nonces or newest_record.get(key, -1.0) >= when:  # type: ignore[arg-type]
+                    continue
+                if refusal.get("input_tree") != tree:
+                    worktree = refusal.get("worktree")
+                    if target not in CHANGERS or not isinstance(worktree, str):
+                        continue
+                    if Path(worktree).resolve() != root.resolve():
+                        continue
+                    if newest_changer.get((target, str(root.resolve())), -1.0) >= when:
+                        continue
+                if target not in latest or when > latest[target][0]:
+                    latest[target] = (when, refusal)
+            except Exception:
+                continue
+    notes = []
+    for target in missing:
+        if target in latest:
+            refusal = latest[target][1]
+            # The reason comes from the fresh agent, so it loses each control character.
+            reason = "".join(c if c.isprintable() else " " for c in refusal["reason"]).strip()[:600]
+            nonce = "".join(c for c in refusal["nonce"] if c.isalnum())[:64]
+            notes.append(f"The record hook refused the result of `just {target}` with the nonce {nonce}: {reason}")
+    return notes
+
+
 def missing_targets(required: List[str], records: List[dict], tree: str) -> List[str]:
     """The required targets with no record in a chain that ends at TREE, in the order to run them."""
     by_target: Dict[str, List[Tuple[str, str]]] = {}
@@ -596,8 +661,9 @@ def gate(root: Path) -> None:
     if is_agent():
         missing = missing_targets(required, load_records(folders), tree)
         if missing:
+            notes = refusal_notes(folders, missing, tree, root)
             raise Stop("no record for this tree of " + ", ".join(f"`just {t}`" for t in missing)
-                       + ": run them in this order")
+                       + ": run them in this order" + "".join(f". {note}" for note in notes))
 
 
 TRAILER = "Commit-Gate"

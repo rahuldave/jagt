@@ -13,6 +13,9 @@ The prompt of the packet has three layers, in this order:
    profile of the language ships it.
 3. The repository text: `.agents/targets/TARGET.md`, when the repository has it.
 
+After the layers, the script adds the form of the result, with each field that `jagt result lint` needs, such as
+`follow_up`. A result without one of these fields gives no record.
+
 The input is the diff of the worktree against HEAD, with the files that git does not track yet and does not
 ignore. The tree of the worktree comes from a copy of the index, as in the gate, so a file that the index holds
 counts even when `.gitignore` names it. The diff is in `diffs/HEAD-TREE.diff` of the shared log folder, where HEAD
@@ -54,6 +57,27 @@ TARGETS: Dict[str, Tuple[str, ...]] = {
     "visual-check": ("screenshots", "steps"),
     "visualize": ("files",),
 }
+
+# The form of the result, after the layers of the prompt. jagt result lint refuses a block that has no `follow_up`,
+# and a base task can leave it out, so the script adds the form to each packet.
+RESULT_FORM = """## The form of the result
+
+End with one `AGENT_RESULT v1` block, in this form. The block must have each of the fields `target`, `nonce`,
+`status`, `outputs`, `verification` and `follow_up`. `jagt result lint` refuses a block that does not have one of
+these fields, and then the result gives no record. `follow_up` is a list of the work that is left for later, for
+example `- Rename the helper in a later change.` When no work is left, it is `[]`.
+
+    <<<AGENT_RESULT v1>>>
+    target: {target}
+    nonce: <the nonce of this packet>
+    status: success
+    outputs:
+{outputs}
+    verification: []
+    notes: none
+    follow_up: []
+    <<<END_AGENT_RESULT>>>
+"""
 
 STACK = ".agents/stack.json"
 # The install of jagt that the hint gives: the release binary first, the build from source second.
@@ -180,6 +204,8 @@ def prompt(root: Path, target: str) -> Tuple[str, List[str]]:
             parts.append(path.read_text().strip())
         except (OSError, UnicodeDecodeError) as exc:
             raise Stop(f"cannot read {path}: {exc}")
+    outputs = "\n".join(f"      {name}: []" for name in TARGETS[target])
+    parts.append(RESULT_FORM.format(target=target, outputs=outputs).strip())
     return "\n\n".join(parts) + "\n", [str(path.relative_to(root)) for path in layers]
 
 

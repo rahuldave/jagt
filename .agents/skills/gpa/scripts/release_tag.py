@@ -13,7 +13,9 @@ since that tag, and skips the merge commits:
 - `docs`, `test`, `ci`, `chore` and `style` give no release.
 - Any other type, and a message that is not a conventional commit, raises PATCH.
 - A conventional subject in a bullet line of the body, such as `* feat!: drop the flag`, counts too. A squash commit
-  of GitHub lists the commits of its PR that way.
+  of GitHub lists the commits of its PR that way. The bullet counts only when its type is feat, fix, perf, refactor,
+  docs, test, chore, ci, build, style or revert, in lower case. A labelled bullet such as `- Removed: the old copies`
+  is not a commit, and asks for no bump.
 
 With no tag yet, the next tag is v0.1.0.
 
@@ -52,8 +54,11 @@ TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 PLAIN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SUBJECT = re.compile(r"^(?P<type>[A-Za-z]+)(\([^()]*\))?(?P<bang>!)?: \S")
 BREAKING = re.compile(r"^[ \t]*(?:[*-][ \t]+)?BREAKING[ -]CHANGE:", re.MULTILINE)
-# A line of the body such as "* feat!: drop the flag", as GitHub lists the commits of a PR in a squash commit.
-BULLET = re.compile(r"^[ \t]*[*-][ \t]+(?P<subject>\S.*)$", re.MULTILINE)
+# A line of the body such as "* feat!: drop the flag", as GitHub lists the commits of a PR in a squash commit. Only a
+# known type in lower case counts, so a labelled bullet such as "- Removed: the old copies" asks for no bump.
+BULLET_TYPES = ("feat", "fix", "perf", "refactor", "docs", "test", "chore", "ci", "build", "style", "revert")
+BULLET = re.compile(r"^[ \t]*[*-][ \t]+(?P<subject>(?:%s)(?:\([^()\n]*\))?!?: \S.*)$" % "|".join(BULLET_TYPES),
+                    re.MULTILINE)
 NO_RELEASE = {"docs", "test", "ci", "chore", "style"}
 PATCH_TYPES = {"fix", "perf", "refactor"}
 LEVELS = ("none", "patch", "minor", "major")

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "package": "jnterfaces",
   "source_repository": "https://github.com/rahuldave/jnterfaces",
-  "source_revision": "58f0a9f91127062e33d498a204ab5d5851c0e6ba",
-  "source_version": "v0.2.2-2-g58f0a9f",
+  "source_revision": "ec1e8fb5500341ab560c0b0fcedaf8137decbe61",
+  "source_version": "v0.2.4",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [

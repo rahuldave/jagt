@@ -2,8 +2,8 @@
   "schema_version": 1,
   "package": "nossaifd",
   "source_repository": "https://github.com/rahuldave/nossaifd",
-  "source_revision": "7ab9e940bfdfad994008c1b00234572547ceaf9a",
-  "source_version": "v0.1.0",
+  "source_revision": "b127b35e0b497652fc1fbd88e0ef3bb2229d7b59",
+  "source_version": "v0.1.0-2-gb127b35",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [
@@ -60,7 +60,7 @@
     ".agents/skills/nossaifd/references/GUIDE.md": "5efd836f480d9eb0b6e679d3c37f4bfd46d5018acd56f5e1cf15ef8c1561bd7a",
     ".agents/skills/nossaifd/references/targets/prose.md": "c30a3d97a2ec51a9e3780de39c145536712f00ce27e95e5588a8ef05a561282d",
     ".agents/skills/nossaifd/scripts/check.py": "70c7dd49ec20bdc3531d380cd5bac02d5a3b960b9e99f388522550b82ba7d6b9",
-    ".agents/skills/nossaifd/scripts/prose_gate.py": "d726e3c01b33cce5a88674e364cca7ce4631d92ccbb316fec1453d6d8254e00a"
+    ".agents/skills/nossaifd/scripts/prose_gate.py": "59e2201befa3a23d2b4ece5969563ea39573d1e58284bf4fafd0ab6753c803c0"
   },
   "claude_links": [
     "declaude",

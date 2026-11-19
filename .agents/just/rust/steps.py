@@ -13,6 +13,7 @@ HEAD:./PATH, so a commit cannot exempt its own code. With no parent, or a parent
 git matches their patterns, as pathspecs with the magic word glob. Every path is relative to the current folder, the top
 of the project, which can be a subfolder of the git repository.
 """
+import glob
 import importlib.util
 import json
 import os
@@ -464,6 +465,28 @@ def changed_code():
     return sorted(set(filter(None, (tracked.stdout + '\0' + untracked.stdout).split('\0'))))
 
 
+def unreadable_untracked():
+    """The untracked paths that are not regular files, which diff-cover cannot open, in order.
+
+    diff-cover --include-untracked opens each untracked path to count its lines. A link to a folder, such as
+    the one that the jnterfaces installer makes in .claude/skills, a broken link or a nested repository stops
+    it with an error. The names are read as bytes and decoded as the file system does, so a name that is not
+    UTF-8 or that holds a carriage return stays as it is.
+    """
+    listed = subprocess.run(['git', 'ls-files', '-z', '--others', '--exclude-standard'], capture_output=True)
+    paths = (os.fsdecode(name) for name in listed.stdout.split(b'\0') if name)
+    return sorted(path for path in paths if not os.path.isfile(path))
+
+
+def exclude_patterns(paths):
+    """The --exclude patterns of diff-cover for PATHS: each absolute path, with its wildcards escaped.
+
+    diff-cover matches a pattern against the absolute path before it opens the file. Each pattern holds a /, so
+    it never matches a basename.
+    """
+    return [glob.escape(os.path.abspath(path)) for path in paths]
+
+
 def reported(text, root):
     """The paths of the source files of the LCOV report TEXT, relative to ROOT."""
     return {relative(line[3:].strip(), root) for line in text.splitlines() if line.startswith('SF:')}
@@ -525,12 +548,22 @@ def coverage():
             print('coverage-check: write tests for the lines that no test runs', file=sys.stderr)
             return 1
         return 0
+    skipped = unreadable_untracked()
+    slashed = [path for path in skipped if '\\' in path]
+    for path in slashed:
+        print(f'{path}: an untracked path that is not a file, and its name holds a \\', file=sys.stderr)
+    if slashed:
+        print('coverage-check: diff-cover cannot open these paths, and it reads each \\ as a /, so it cannot skip '
+              'them without skipping other files too. Rename them, remove them or add them to .gitignore',
+              file=sys.stderr)
+        return 1
     excluded = matcher(parent_list(GENERATED) + parent_list(COVERAGE_EXCLUDE))
     WORK.mkdir(parents=True, exist_ok=True)
     kept = WORK / 'lcov.info'
     kept.write_text(filter_lcov(merge_lcov(texts), root, excluded))
     code = subprocess.run([*UV_RUN, '--with', DIFF_COVER, 'diff-cover', str(kept),
-                           '--compare-branch', 'HEAD', '--include-untracked', '--fail-under', '100']).returncode
+                           '--compare-branch', 'HEAD', '--include-untracked', '--fail-under', '100',
+                           *(['--exclude', *exclude_patterns(skipped)] if skipped else [])]).returncode
     lines = set().union(*(reported(text, root) for text in texts))
     missing = unreported(changed_code(), lines, excluded)
     for path in missing:
