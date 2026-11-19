@@ -264,7 +264,8 @@ commit. A `fix:` commit with the tagged version would pass `just check`, and
 commit gate runs `just release-check` again. The variable
 `JN_RELEASE_MESSAGE` names the message file, and the check counts that
 message as one more commit. For an amend, the new message replaces the
-message of HEAD. The hook skips the check for a merge and during a rebase.
+message of HEAD. The hook skips the check for a merge, for an amend of a
+merge, during a rebase, and when the Justfile has no recipe `release-check`.
 
 The check cleans up the message as git does. The gate reads the option
 `--cleanup` of the git command and puts it in `JN_RELEASE_CLEANUP`. Without

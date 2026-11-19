@@ -81,10 +81,10 @@ https://github.com/rahuldave/cx. This line installs the release binary in
 `~/.local/bin`, so that folder must be on PATH.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rahuldave/cx/v0.2.2/scripts/install.sh | sh -s -- --tag v0.2.2
+curl -fsSL https://raw.githubusercontent.com/rahuldave/cx/v0.2.3/scripts/install.sh | sh -s -- --tag v0.2.3
 ```
 
-To build `cx` from source instead, run `cargo install --locked --git https://github.com/rahuldave/cx --tag v0.2.2 cx`.
+To build `cx` from source instead, run `cargo install --locked --git https://github.com/rahuldave/cx --tag v0.2.3 cx`.
 
 Read `references/incremental_pipelines.md` for worked examples and a review
 checklist.

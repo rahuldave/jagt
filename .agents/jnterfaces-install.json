@@ -2,8 +2,8 @@
   "schema_version": 1,
   "package": "jnterfaces",
   "source_repository": "https://github.com/rahuldave/jnterfaces",
-  "source_revision": "f2994f0447362fc6a2734324c981cba46262f6f2",
-  "source_version": "v0.3.2",
+  "source_revision": "96e1519a1ad06f104dccc763d81418fce0f35e94",
+  "source_version": "v0.3.3-2-g96e1519",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [
@@ -25,10 +25,10 @@
   "seeds": {},
   "managed_files": {
     ".agents/install.just": "43d0f8bac0bc134a81fe5eafbe468192d6c63c1c5388065f2d5b6fbaba302fe1",
-    ".agents/skills/cx/SKILL.md": "04bb2177488bc85a3e8bb63fd2de3840bbb98f8a6745d658de9ee7ab2f444dc8",
+    ".agents/skills/cx/SKILL.md": "5c9da9d5b9d3957bb126eedce91eb167838befabc98f96bfba9d71cd1870fdfb",
     ".agents/skills/cx/agents/openai.yaml": "e9c8e7091a1da09d70d0d8cb3461c217b0dd3787f5a57713fd7c63c34f8da263",
     ".agents/skills/cx/references/incremental_pipelines.md": "60df1943d55fb0c71855c28addfcff3f5a4b4cc917181670394d5c6662d40dcb",
-    ".agents/skills/jagt-protocol/SKILL.md": "97510dfba135a5786b69877d755591e20568081add3160e152bd3d5a979cbcf6",
+    ".agents/skills/jagt-protocol/SKILL.md": "ca4fa1986a135098850ffbe7c1cb4c7788df19d5e0e5f290c50d3d3de4cfd0ee",
     ".agents/skills/jagt-protocol/agents/openai.yaml": "122d8c03ab98fd31c858765f7ec80d7db8932c447ce720d2011f3c9912f55b01",
     ".agents/skills/jagt-protocol/assets/fixtures/local_recursion.agent-result.txt": "da1e5519801bca421e3e9d4b558a7d52a4f9ef38cb2419ff99887ba9c2c00876",
     ".agents/skills/jagt-protocol/assets/fixtures/proposed_tasks.agent-result.txt": "10853e05eea39f6409cdc4fa00688e1caa3e2c8d49bdebbec8f9e4f911dbb0f4",
