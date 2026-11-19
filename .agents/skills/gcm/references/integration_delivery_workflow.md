@@ -258,6 +258,14 @@ The step `release-check` of `just check` runs the script with `--check`. So a
 commit or a PR that needs a higher version fails before the merge, and CI
 checks it through `just check`.
 
+`just check` runs before the commit, so it cannot read the message of that
+commit. A `fix:` commit with the tagged version would pass `just check`, and
+`just release` would fail after the push. So the `commit-msg` hook of the
+commit gate runs `just release-check` again. The variable
+`JN_RELEASE_MESSAGE` names the message file, and the check counts that
+message as one more commit. For an amend, the new message replaces the
+message of HEAD. The hook skips the check for a merge and during a rebase.
+
 The step needs no network and no remote. It fails on the errors of the
 version that the rules below list. In a shallow checkout, or in a checkout
 with no release tag, it says so and passes. So CI fetches the whole history
@@ -280,8 +288,11 @@ merge commits. Each message is a conventional commit, such as
 
 A bullet line of the body with a conventional subject, such as
 `* feat!: drop the flag`, asks for its bump too. A squash commit of GitHub
-lists the commits of its PR that way. The largest bump of the commits gives
-the next number. With no tag yet, the next tag is `v0.1.0`.
+lists the commits of its PR that way. The bullet counts only when its type is
+`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`,
+`style` or `revert`, in lower case. A labelled bullet, such as
+`- Removed: the old copies`, is not a commit and asks for no bump. The largest
+bump of the commits gives the next number. With no tag yet, the next tag is `v0.1.0`.
 
 A language profile gives the version of its manifest with the recipe
 `<profile>::version`. The recipe prints `X.Y.Z`, or nothing when the manifest

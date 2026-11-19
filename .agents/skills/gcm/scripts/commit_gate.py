@@ -1,6 +1,6 @@
 """The commit gate: the git pre-commit and pre-merge-commit hooks run it before each commit.
 
-The gate never runs a step. It reads what `just check` and the agentic targets wrote, and stops the commit when
+The gate runs one step only, `release-check`, at the commit-msg hook. It reads what `just check` and the agentic targets wrote, and stops the commit when
 something is missing:
 
 1. The steps of `.agents/stack.json` and the required targets must be recipes of the Justfile.
@@ -47,6 +47,14 @@ from `git patch-id --verbatim` on a diff with no lines of context, so a rebase w
 context, a line that moves within one part of a file keeps the ID too. The trailer is a claim, so that is a fair
 price. `git commit -n` skips the commit-msg hook too, so a commit that went around the gate has no trailer. For what looks like an amend, the trailer names the patch IDs
 against both possible parents, and the tree too when HEAD is a merge.
+
+The release check: before it adds the trailer, the commit-msg hook runs `just release-check` with the path of the
+message file in `JN_RELEASE_MESSAGE`. `just check` ran before the message was written, so it could not count it. With
+the message, `release_tag.py --check` fails when the type of the commit, such as `fix:`, asks for a release and the
+version of the manifest is not raised. For an amend, it sets `JN_RELEASE_AMEND=1`, so the new message replaces the
+message of HEAD. The hook skips the check for a merge and for an amend of a merge, since the release skips merge
+commits, during a rebase, and when the Justfile has no recipe `release-check`. The check stops the commit when it runs longer than
+120 seconds.
 
 `--trailers BASE HEAD` is the check of CI, which `just ci-gate` runs. With no BASE and HEAD, it reads them from CI,
 from the pre-push hook, or from the upstream of the branch, as `ci_range` says. Each commit in BASE..HEAD must have a
@@ -479,6 +487,71 @@ def load_records(folders: List[Path]) -> List[dict]:
     return found
 
 
+def refusal_notes(folders: List[Path], missing: List[str], tree: str, root: Path) -> List[str]:
+    """Why each missing target has no record, from the refusal files that the record hook wrote: the latest refusal
+    of each target, with its nonce and reason. A refusal counts here when its input tree is TREE, or, for a target
+    that changes files, when its packet is of this worktree. A record of the same target and input tree that is newer
+    than the refusal, whatever its status, or a record with the nonce of the refusal, makes the refusal old news. A
+    record of another tree, as from another worktree, does not. A refusal of a target that changes files, which counts
+    by its worktree, is also old news after a newer record of that target from the same worktree. The worktree of a
+    record is in the packet of its nonce. A file that the gate cannot read is
+    left out, so a bad refusal file never stops the gate with a fault of its own."""
+    newest_record: Dict[Tuple[str, str], float] = {}
+    # The newest record of each target that changes files, by the worktree of its packet.
+    newest_changer: Dict[Tuple[str, str], float] = {}
+    record_nonces: Set[str] = set()
+    for folder in folders:
+        for path in (folder / "records").glob("*.json") if (folder / "records").is_dir() else []:
+            try:
+                record, when = json.loads(path.read_text()), path.stat().st_mtime
+                record_nonces.add(path.stem)
+                if (isinstance(record, dict) and record.get("version") == 1 and isinstance(record.get("target"), str)
+                        and isinstance(record.get("status"), str) and is_tree(record.get("input_tree"))):
+                    key = (record["target"], record["input_tree"])
+                    newest_record[key] = max(when, newest_record.get(key, 0.0))
+                    if record["target"] in CHANGERS and isinstance(record.get("nonce"), str):
+                        packet = json.loads((folder / "packets" / f"{path.stem}.json").read_text())
+                        if isinstance(packet, dict) and isinstance(packet.get("worktree"), str):
+                            place = (record["target"], str(Path(packet["worktree"]).resolve()))
+                            newest_changer[place] = max(when, newest_changer.get(place, 0.0))
+            except Exception:
+                continue
+    latest: Dict[str, Tuple[float, dict]] = {}
+    for folder in folders:
+        for path in (folder / "refusals").glob("*.json") if (folder / "refusals").is_dir() else []:
+            try:
+                refusal, when = json.loads(path.read_text()), path.stat().st_mtime
+                if not (isinstance(refusal, dict) and refusal.get("version") == 1
+                        and isinstance(refusal.get("target"), str) and refusal["target"] in missing
+                        and isinstance(refusal.get("nonce"), str) and isinstance(refusal.get("reason"), str)):
+                    continue
+                target = refusal["target"]
+                key = (target, refusal.get("input_tree"))
+                if refusal["nonce"] in record_nonces or newest_record.get(key, -1.0) >= when:  # type: ignore[arg-type]
+                    continue
+                if refusal.get("input_tree") != tree:
+                    worktree = refusal.get("worktree")
+                    if target not in CHANGERS or not isinstance(worktree, str):
+                        continue
+                    if Path(worktree).resolve() != root.resolve():
+                        continue
+                    if newest_changer.get((target, str(root.resolve())), -1.0) >= when:
+                        continue
+                if target not in latest or when > latest[target][0]:
+                    latest[target] = (when, refusal)
+            except Exception:
+                continue
+    notes = []
+    for target in missing:
+        if target in latest:
+            refusal = latest[target][1]
+            # The reason comes from the fresh agent, so it loses each control character.
+            reason = "".join(c if c.isprintable() else " " for c in refusal["reason"]).strip()[:600]
+            nonce = "".join(c for c in refusal["nonce"] if c.isalnum())[:64]
+            notes.append(f"The record hook refused the result of `just {target}` with the nonce {nonce}: {reason}")
+    return notes
+
+
 def missing_targets(required: List[str], records: List[dict], tree: str) -> List[str]:
     """The required targets with no record in a chain that ends at TREE, in the order to run them."""
     by_target: Dict[str, List[Tuple[str, str]]] = {}
@@ -596,8 +669,9 @@ def gate(root: Path) -> None:
     if is_agent():
         missing = missing_targets(required, load_records(folders), tree)
         if missing:
+            notes = refusal_notes(folders, missing, tree, root)
             raise Stop("no record for this tree of " + ", ".join(f"`just {t}`" for t in missing)
-                       + ": run them in this order")
+                       + ": run them in this order" + "".join(f". {note}" for note in notes))
 
 
 TRAILER = "Commit-Gate"
@@ -648,6 +722,40 @@ def trailer_value(root: Path) -> str:
                                                              plain_env()).split()) > 2:
         words.append(f"tree:{commit_tree(root)}")
     return " ".join(words)
+
+
+RELEASE_CHECK = "release-check"
+RELEASE_TIMEOUT = 120
+
+
+def rebasing(root: Path) -> bool:
+    """True during a rebase. A reword replays an old commit on a HEAD that may lack the later raise of the version,
+    and the release sees only the HEAD at the end."""
+    return any((root / git(["rev-parse", "--git-path", name], root, plain_env()).strip()).exists()
+               for name in ("rebase-merge", "rebase-apply"))
+
+
+def release_check(root: Path, message: Path) -> None:
+    """Run `just release-check` with the message of the commit, so that a commit whose type asks for a release
+    with an old manifest version stops here, not at the release after the push."""
+    if resolve(root, "MERGE_HEAD") is not None or rebasing(root) or RELEASE_CHECK not in recipes(root):
+        return
+    env = plain_env()
+    env["JN_RELEASE_MESSAGE"] = str(message.resolve())
+    head = resolve(root, "HEAD")
+    if head is not None and is_amend(git_argv()):
+        if len(git(["rev-list", "--parents", "-n", "1", head], root, plain_env()).split()) > 2:
+            return  # An amend of a merge is a merge, and the release skips merge commits.
+        env["JN_RELEASE_AMEND"] = "1"
+    try:
+        run = subprocess.run(["just", RELEASE_CHECK], cwd=root, env=env, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, errors="replace", timeout=RELEASE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise Stop(f"`just {RELEASE_CHECK}` did not end in {RELEASE_TIMEOUT} seconds") from None
+    if run.returncode != 0:
+        lines = [line for line in run.stderr.splitlines() if line.startswith("release: ")] or run.stderr.splitlines()
+        reason = " ".join(line.strip() for line in lines[-3:]) or f"exit {run.returncode}"
+        raise Stop(f"`just {RELEASE_CHECK}` fails with the message of this commit: {reason}")
 
 
 def add_trailer(root: Path, message: Path) -> None:
@@ -895,6 +1003,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.hook == "commit-msg":
                 if args.message is None:
                     raise Stop("the commit-msg hook needs the message file")
+                release_check(root, Path(args.message))
                 add_trailer(root, Path(args.message))
     except Stop as stop:
         problems = [str(stop)]

@@ -11,6 +11,10 @@ Three commands write a record in `records/` of the shared log folder:
 - `record_result.py skip TARGET REASON` lets the worktree tree through without the record of TARGET. `just
   record-skip` runs it, after the agent hooks asked the person. The record has `"source": "skip"`.
 
+When the hook gives no record of a result whose nonce names a packet, it writes the reason in
+`refusals/NONCE.json` of the shared log folder. The harness does not show the output of the hook, so the gate reads
+that file and says why the record is missing. A refusal never counts as a record.
+
 A result counts only when `jagt result lint --expect-target TARGET --expect-nonce NONCE` accepts it. The nonce names
 the packet file in `packets/`, which gives the target, the input tree and the worktree. The output tree is the
 worktree tree of that worktree now, after the changes of the fresh agent.
@@ -45,8 +49,10 @@ CLAUDE_VARIABLES = ("CLAUDE_CODE_SESSION_ID", "CLAUDECODE")
 def result_block(text: str) -> dict:
     """The mapping of the one AGENT_RESULT v1 block in TEXT."""
     lines = text.splitlines()
-    starts = [i for i, line in enumerate(lines) if line.strip() == START]
-    ends = [i for i, line in enumerate(lines) if line.strip() == END]
+    # As in jagt, a marker counts only at the start of a line. The form of the result in a packet is indented, so a
+    # message that quotes the packet has one block.
+    starts = [i for i, line in enumerate(lines) if line.rstrip() == START]
+    ends = [i for i, line in enumerate(lines) if line.rstrip() == END]
     if len(starts) != 1 or len(ends) != 1 or ends[0] < starts[0]:
         raise Stop("the text needs exactly one AGENT_RESULT v1 block")
     try:
@@ -106,8 +112,8 @@ def findings_of(block: dict) -> List[dict]:
     return findings
 
 
-def write_record(root: Path, record: dict, name: str, once: bool = False) -> Path:
-    """Write the record as records/NAME.json of the shared log folder. It writes a temporary file and then links or
+def write_record(root: Path, record: dict, name: str, once: bool = False, sub: str = "records") -> Path:
+    """Write the record as SUB/NAME.json of the shared log folder. It writes a temporary file and then links or
     renames it, so the gate never reads half a record. The folders are opened as in agentic_target.py, with no link
     followed. With ONCE, a record of that name must not exist yet: one result of a packet gives one record."""
     try:
@@ -115,9 +121,9 @@ def write_record(root: Path, record: dict, name: str, once: bool = False) -> Pat
         text = json.dumps(record, indent=2, default=str) + "\n"
     except (TypeError, ValueError) as error:
         raise Stop(f"the result has a value that a record cannot hold: {error}")
-    log, fd = prepare_log(root, "records")
+    log, fd = prepare_log(root, sub)
     temp, final = f".{name}.{os.getpid()}.{secrets.token_hex(8)}.tmp", f"{name}.json"
-    path = log / "records" / final
+    path = log / sub / final
     try:
         try:
             out = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=fd)
@@ -221,8 +227,36 @@ def handback_message(path: Optional[str]) -> Optional[str]:
     return None
 
 
+def write_refusal(root: Path, text: str, reason: str) -> None:
+    """Write refusals/NONCE.json, the reason that the result in TEXT gives no record, for the gate to read. A result
+    with no nonce, or whose nonce names no packet, gives no refusal, since the gate could not tie it to a target. A
+    failure here only prints why."""
+    try:
+        nonce = nonce_of(text)
+        packet = packet_of(shared_log(root), nonce)
+        if (shared_log(root) / "records" / f"{nonce}.json").exists():
+            return  # The packet has its record, so this result is a second one and the gate needs no reason.
+        refusal = {"version": 1, "nonce": nonce, "target": packet["target"], "input_tree": packet["input_tree"],
+                   "worktree": packet["worktree"], "reason": reason[:2000]}
+        path = write_record(root, refusal, nonce, sub="refusals")
+        print(f"record: wrote the reason in {path}", file=sys.stderr)
+    except Stop as stop:
+        print(f"record: no refusal file: {stop}", file=sys.stderr)
+    except Exception as error:  # The hook never stops the fresh agent.
+        print(f"record: no refusal file: {error!r}", file=sys.stderr)
+
+
+def has_block(message: object) -> bool:
+    """True when MESSAGE is text with a start line of an AGENT_RESULT v1 block, at the start of a line as jagt reads
+    it. A message that only quotes a packet, with its indented form of the result, has none."""
+    return isinstance(message, str) and any(line.rstrip() == START for line in message.splitlines())
+
+
 def hook(stdin: bytes) -> int:
-    """The SubagentStop hook. It never blocks the fresh agent: a result that gives no record only prints why."""
+    """The SubagentStop hook. It never blocks the fresh agent: a result that gives no record prints why, and writes
+    why in a refusal file when its nonce names a packet."""
+    root: Optional[Path] = None
+    message: Optional[str] = None
     try:
         event = json.loads(stdin.decode(errors="replace"))
         if not isinstance(event, dict):
@@ -230,21 +264,29 @@ def hook(stdin: bytes) -> int:
         transcript = event.get("agent_transcript_path")
         transcript = transcript if isinstance(transcript, str) else None
         message = event.get("last_assistant_message")
-        if not isinstance(message, str) or START not in message:
+        if not has_block(message):
             message = handback_message(transcript)
-        if not isinstance(message, str) or START not in message:
+        if not has_block(message):
             return 0
         cwd = event.get("cwd")
         cwd = Path(cwd if isinstance(cwd, str) and cwd else os.getcwd())
         root = Path(git(["rev-parse", "--show-toplevel"], cwd, plain_env()).strip())
         path = record_from(message, root, "hook", transcript_model(transcript))
         print(f"record: wrote {path}", file=sys.stderr)
-    except ValueError:
+    except ValueError as error:
+        # The input of the hook is not JSON. A ValueError after that is a fault of the record, as below.
+        if root is not None and message is not None:
+            print(f"record: no record of this result: {error!r}", file=sys.stderr)
+            write_refusal(root, message, repr(error))
         return 0
     except Stop as stop:
         print(f"record: no record of this result: {stop}", file=sys.stderr)
+        if root is not None and message is not None:
+            write_refusal(root, message, str(stop))
     except Exception as error:  # The hook never stops the fresh agent, also on a fault of its own.
         print(f"record: no record of this result: {error!r}", file=sys.stderr)
+        if root is not None and message is not None:
+            write_refusal(root, message, repr(error))
     return 0
 
 

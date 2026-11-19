@@ -16,9 +16,10 @@ After step 8 of the nossaifd skill, the agent records each page:
 
     uv run --no-project --quiet python .agents/skills/nossaifd/scripts/prose_gate.py record page.md
 
-`record` refuses a page that has a hard problem. The record lives in the folder of git (.git/nossaifd),
-so every worktree of the repository shares it, and it never shows in git status. The snapshots live in the
-folder of git of each worktree. The record is a
+`record` refuses a page that has a hard problem. The record lives in .agents/log/nossaifd of the main checkout,
+so every worktree of the repository shares it. The snapshots live in .agents/log/nossaifd of each worktree.
+Nothing goes in the folder of git. The gate gives .agents/log a .gitignore with the line *, as the commit gate
+does, so the folder never shows in git status. The record is a
 promise of the agent, not a proof: the hook cannot see whether the declaude pass ran.
 
 With the commit gates of agent_gest_git_skills, this turn gate stays and asks early, and the gate of the commit
@@ -61,6 +62,7 @@ SKIP = re.compile(r'(^|/)(AGENTS|CLAUDE|GEMINI)\.md$|^\.agents/|^\.claude/|^\.co
                   r'|(^|/)(node_modules|_site|\.quarto)/|(^|/)CHANGELOG\.md$')
 LISTED = 20                           # the most pages that a block message names
 CREDIT = 'the declaude skill, by Oskar Austegard'
+LOG = '.agents/log'                   # the log folder of a worktree, as the commit gate has it
 MAP = '.agents/nossaifd-checkers.json'  # the map of checkers, read only from the root of the project
 DEFAULT = 'check.py of the skill'     # the checker of a page that no glob of the map matches. No path of the map ends so
 TIMEOUT = 30                          # the most seconds that a checker of the map may take for one page
@@ -280,12 +282,18 @@ def git_root(cwd):
 
 
 def state(root, shared=False):
-    "The folder of the gate inside the folder of git: of this worktree, or shared by every worktree."
+    """The folder of the gate in the log folder .agents/log, never in the folder of git: the log folder of this
+    worktree, or with shared the log folder of the main checkout, which every worktree shares. The main checkout
+    is the folder that holds the common folder of git when that folder is named .git. Otherwise, as in a bare
+    repository or a submodule, the shared folder is the log folder of this worktree."""
+    folder = root / LOG
     if shared:
-        path = Path(git(root, 'rev-parse', '--git-common-dir').stdout.strip()) / 'nossaifd'
-    else:
-        path = Path(git(root, 'rev-parse', '--git-path', 'nossaifd').stdout.strip())
-    return path if path.is_absolute() else root / path
+        out = git(root, 'rev-parse', '--git-common-dir')
+        if out.returncode == 0 and out.stdout.strip():
+            common = (root / out.stdout.strip()).resolve()
+            if common.name == '.git':
+                folder = common.parent / LOG
+    return folder / 'nossaifd'
 
 
 def head(root):
@@ -320,7 +328,16 @@ def snapshot_file(root, session):
 
 
 def save(path, value):
+    "Write a file of the gate. The log folder above it gets a .gitignore with the line *, unless it has one."
     path.parent.mkdir(parents=True, exist_ok=True)
+    for folder in path.parents:
+        if folder.name == 'log' and folder.parent.name == '.agents':
+            try:
+                with open(folder / '.gitignore', 'x') as out:
+                    out.write('*\n')
+            except OSError:     # it exists, also as a link to nowhere: the file of the commit gate or of a person
+                pass
+            break
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
 
 
@@ -512,7 +529,12 @@ def record(names):
             continue
         saved[rel] = pass_id(blob(path), by)
         print(f'{rel}: recorded, checked by {by}')
-    save(state(root, shared=True) / 'passes.json', dict(sorted(saved.items())))
+    where = state(root, shared=True) / 'passes.json'
+    try:
+        save(where, dict(sorted(saved.items())))
+    except OSError as exc:
+        print(f'prose_gate.py record: no page recorded, cannot write {where}: {exc.strerror or exc}', file=sys.stderr)
+        return 1
     return status
 
 

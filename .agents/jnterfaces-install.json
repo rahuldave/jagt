@@ -2,8 +2,8 @@
   "schema_version": 1,
   "package": "jnterfaces",
   "source_repository": "https://github.com/rahuldave/jnterfaces",
-  "source_revision": "58f0a9f91127062e33d498a204ab5d5851c0e6ba",
-  "source_version": "v0.2.2-2-g58f0a9f",
+  "source_revision": "ff8a379e93b3fae27c9cb4df94fa4bb7af7abb2a",
+  "source_version": "v0.3.1",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [
@@ -50,7 +50,7 @@
     ".agents/skills/just/assets/templates/rust-cargo.just": "c34885624e63e42d5699dcbbf730d6ecb77639a4aabaef4a76e4238bd5324120",
     ".agents/skills/just/assets/templates/typescript-npm.just": "bea190d495b633430a21f59fa9859769154d37b9c0254ab3c4aa32d76c14a3cd",
     ".agents/skills/just/references/command_contract.md": "990e482968d7e22a22db402debecf4f417c928a50963e1563356809f0fd7c596",
-    ".agents/tools_check.py": "540065d3c007b343f99ad338bfb3c79015c96f70c5ab23ff5f514358e793861d"
+    ".agents/tools_check.py": "0c1c01321303c81979785a0be75f430b823105cc2a80823e602587e5d1053bbb"
   },
   "claude_links": [
     "cx",
