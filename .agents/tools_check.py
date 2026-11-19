@@ -117,6 +117,8 @@ def problem(name, program, run=None, which=shutil.which):
         # The check of a setup of each clone says why it fails, such as a config without the hooks of a role.
         said = ((errors or '').strip() or (output or '').strip()).splitlines()[-3:] if program.get('each_clone') else []
         why = (' It said: ' + ' / '.join(line.strip() for line in said)) if said else ''
+        # The words of the check may end without a full stop, and the next sentence follows them.
+        why += '.' if why and why[-1] not in '.!?' else ''
         return f'{needs}, but {program["check"]} failed with exit {code}{at}.{late}{why}'
     if program.get('expect') and program['expect'] not in output:
         return f'{needs}, but {program["check"]} did not print {program["expect"]}{at}.'

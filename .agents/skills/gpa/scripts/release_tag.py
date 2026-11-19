@@ -34,12 +34,29 @@ In a shallow checkout, a checkout with no release tag, or a repository with no c
 `just check` runs before the commit, so the message of the commit is not known yet. A `fix:` commit on a tree with
 the tagged version would pass the check and fail the release after the push. So the commit-msg hook of the commit
 gate runs `just release-check` once more, with the path of the message file in the variable `JN_RELEASE_MESSAGE`.
-The check then counts that message as one more commit after HEAD. The lines after the scissors line of
-`git commit -v` are not part of the message. After an editor, which adds its help line "Please enter the commit
-message", the comment lines are not part of it either. Without an editor, as for `git commit -m "#12 fix login"`,
-git keeps them, so they count. The comment character is the one of `core.commentString` or `core.commentChar`, `#`
-by default. For an amend, the gate sets `JN_RELEASE_AMEND=1`, and the new message
-replaces the message of HEAD.
+The check then counts that message as one more commit after HEAD, cleaned up as git does:
+
+- After an editor, git cuts the message at the scissors line for `git commit -v`, whose diff follows that line,
+  and for the mode scissors. Else the lines after the scissors line stay.
+- The cleanup mode is the one of `JN_RELEASE_CLEANUP`, which the gate takes from the option `--cleanup` of git,
+  else the one of `commit.cleanup`, else default. The modes strip, and default after an editor, remove the comment
+  lines. The modes whitespace, verbatim and scissors, and default without an editor, as for
+  `git commit -m "#12 fix login"`, keep them, so they count.
+- In a hook, git sets `GIT_EDITOR` to `:` when it runs no editor. Any other value, or none, means an editor. A person
+  can set `GIT_EDITOR=:` too, so `JN_RELEASE_EDITOR=1`, which the gate sets when the command shows an editor, also
+  means an editor. With `JN_RELEASE_EDITOR=unknown`, both may apply.
+- `JN_RELEASE_CLEANUP=unknown` says that the gate cannot read the option. Then each mode may apply.
+- The comment character is the one of `core.commentString` or `core.commentChar`, `#` by default. With `auto`, git
+  picks one for each commit, so each one that git may pick may apply.
+
+When more than one reading may apply, the reading that asks for the biggest bump counts. So the check can stop a
+commit that the release would pass, but it does not pass a commit that the release would fail.
+
+A merge gives no commit to count, since the release skips merge commits: git merge writes `MERGE_HEAD`. For an
+amend, the gate sets `JN_RELEASE_AMEND=1`, and the new message replaces the message of HEAD. An amend of a merge is
+a merge. An amend of a commit with a release tag stops, since the tag stays on the old commit. With
+`JN_RELEASE_AMEND=maybe`, the gate cannot tell an amend from a word `--amend` of the message. HEAD then counts, and
+a release tag on HEAD stops the commit too.
 
 `--dry-run` prints the next tag and the reason, and changes nothing. Without it, the script makes an annotated tag on
 HEAD, pushes it, and checks with `git ls-remote` that the remote tag points at HEAD. It never moves or deletes a tag.
@@ -77,6 +94,11 @@ FIRST: Version = (0, 1, 0)
 STACK = ".agents/stack.json"
 MESSAGE_VARIABLE = "JN_RELEASE_MESSAGE"
 AMEND_VARIABLE = "JN_RELEASE_AMEND"
+CLEANUP_VARIABLE = "JN_RELEASE_CLEANUP"
+CLEANUP_MODES = ("default", "strip", "whitespace", "verbatim", "scissors")
+EDITOR_VARIABLE = "JN_RELEASE_EDITOR"
+# The characters that git picks from for core.commentChar=auto.
+AUTO_COMMENT_CHARS = "#;@!$%^&|:"
 
 
 class ReleaseError(Exception):
@@ -261,21 +283,41 @@ def newer_release(root: Path, version: Version, head: str) -> Optional[str]:
     return None
 
 
-def comment_char(root: Path) -> str:
-    """The comment string of the commit message, from core.commentString or core.commentChar. `auto` picks a
-    character per commit, which the check cannot know, so it reads as `#`."""
+def config_value(root: Path, key: str) -> str:
+    result = subprocess.run(["git", "config", "--get", key], cwd=root, capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def comment_chars(root: Path) -> List[str]:
+    """The comment strings that git may use, from core.commentString or core.commentChar, `#` by default. With `auto`,
+    git picks a character for each commit that the check cannot know, so each one that git may pick counts."""
     for key in ("core.commentString", "core.commentChar"):
-        result = subprocess.run(["git", "config", "--get", key], cwd=root, capture_output=True, text=True)
-        value = result.stdout.strip() if result.returncode == 0 else ""
+        value = config_value(root, key)
         if value:
-            return value if value != "auto" else "#"
-    return "#"
+            return [value] if value != "auto" else list(AUTO_COMMENT_CHARS)
+    return ["#"]
+
+
+def cleanup_modes(root: Path) -> List[str]:
+    """The cleanup modes that git may use for the commit: the one of JN_RELEASE_CLEANUP, which the gate takes from
+    the option --cleanup of git, else the one of commit.cleanup, else default. With `unknown`, or a value that is not
+    a mode, each mode may apply."""
+    given = os.environ.get(CLEANUP_VARIABLE, "").strip()
+    if not given:
+        given = config_value(root, "commit.cleanup") or "default"
+    return [given] if given in CLEANUP_MODES else list(CLEANUP_MODES)
+
+
+def strips_comments(mode: str, editor: bool) -> bool:
+    """True when git removes the comment lines of the message. The mode scissors keeps the comment lines above the
+    scissors line, and without an editor the modes default and scissors are whitespace."""
+    return mode == "strip" or (mode == "default" and editor)
 
 
 def pending_message(root: Path) -> Optional[str]:
-    """The message of the commit being made, from the file that JN_RELEASE_MESSAGE names, up to the scissors line of
-    `git commit -v`. After an editor, git strips the comment lines, so they do not count. None when the variable is
-    not set or the message is empty."""
+    """The message of the commit being made, from the file that JN_RELEASE_MESSAGE names, as git cleans it up. None
+    when the variable is not set, or the message is empty, so git makes no commit. When git may clean it up in more
+    than one way, the reading that asks for the biggest bump counts."""
     path = os.environ.get(MESSAGE_VARIABLE)
     if not path:
         return None
@@ -283,24 +325,49 @@ def pending_message(root: Path) -> Optional[str]:
         text = Path(path).read_text(errors="replace")
     except OSError as error:
         raise ReleaseError(f"{MESSAGE_VARIABLE} names {path}, which cannot be read: {error}") from error
-    char = comment_char(root)
+    lines = text.splitlines()
     # Any short prefix, since with core.commentChar=auto git may pick another character.
     scissors = re.compile(r"^\S{1,8} -+ >8 -+$")
-    kept = []
-    edited = False
-    for line in text.splitlines():
-        if scissors.match(line):
-            edited = True
-            break
-        kept.append(line)
-    whole = "\n".join(kept).strip()
-    # Git strips the comment lines only after an editor, which adds its help line. Without an editor, as for
-    # git commit -m "#12 login", git keeps them, so the whole message counts.
-    edited = edited or any(line.startswith(char) and "Please enter the commit message" in line for line in kept)
-    if not edited:
-        return whole or None
-    stripped = "\n".join(line for line in kept if not line.startswith(char)).strip()
-    return stripped or None
+    cut = next((index for index, line in enumerate(lines) if scissors.match(line)), None)
+    chars = comment_chars(root)
+    # git commit -v puts the diff after the scissors line and its comment lines.
+    after = [line for line in lines[cut + 1:] if not line.startswith(tuple(chars))] if cut is not None else []
+    verbose = bool(after) and after[0].startswith("diff --git ")
+    # In a hook, git sets GIT_EDITOR to ":" when it runs no editor, as for git commit -m. A person can set it too, so
+    # the gate sets JN_RELEASE_EDITOR=1 when the command shows that git runs the editor, and unknown when an option
+    # after the text of the message can hide it.
+    given = os.environ.get(EDITOR_VARIABLE)
+    if os.environ.get("GIT_EDITOR") != ":" or given == "1":
+        editors = [True]
+    else:
+        editors = [False, True] if given == "unknown" else [False]
+    readings = []
+    for editor in editors:
+        for mode in cleanup_modes(root):
+            # Git cuts at the scissors line for -v and for the mode scissors, both only after an editor. Else the
+            # line is text, or a comment line, and the lines after it stay.
+            part = lines[:cut] if cut is not None and editor and (verbose or mode == "scissors") else lines
+            strip = strips_comments(mode, editor)
+            for char in chars if strip else [""]:
+                kept = [line for line in part if not (strip and line.startswith(char))]
+                reading = "\n".join(kept).strip()
+                if reading and reading not in readings:
+                    readings.append(reading)
+    return max(readings, key=lambda message: LEVELS.index(commit_level(message)), default=None)
+
+
+def tag_on_head(root: Path) -> Optional[str]:
+    """A release tag on HEAD, or None."""
+    names = [name for name in git(root, "tag", "--points-at", "HEAD", "--list", "v*").split() if parse_tag(name)]
+    return max(names, key=parse_tag) if names else None
+
+
+def is_merge(root: Path, amend: bool) -> bool:
+    """True when the commit being made is a merge: git merge writes MERGE_HEAD, and an amend of a merge is a merge."""
+    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "MERGE_HEAD"], cwd=root,
+                      capture_output=True).returncode == 0:
+        return True
+    return amend and len(git(root, "rev-list", "--parents", "-n", "1", "HEAD").split()) > 2
 
 
 def plan(root: Path, pending: Optional[str] = None, amend: bool = False) -> Tuple[Optional[Version], str]:
@@ -382,7 +449,21 @@ def check(root: Path) -> str:
     if not git(root, "tag", "--list", "v*").split():
         return ("release-check: no release tag in this checkout, so there is no version to compare with. Passed. "
                 "If the remote has tags, fetch them with git fetch --tags to check the version")
-    version, reason = plan(root, pending_message(root), os.environ.get(AMEND_VARIABLE) == "1")
+    given = os.environ.get(AMEND_VARIABLE)
+    amend = given == "1"
+    pending = None
+    if os.environ.get(MESSAGE_VARIABLE) and not is_merge(root, amend):
+        pending = pending_message(root)
+        tagged = tag_on_head(root) if given in ("1", "maybe") else None
+        if tagged is not None and amend:
+            raise ReleaseError(f"HEAD is the release {tagged}, and an amend makes a new commit without the tag. A "
+                               "pushed tag never moves, so the release would fail. Make a new commit instead")
+        if tagged is not None:
+            raise ReleaseError(f"HEAD is the release {tagged}, and the git command has the word --amend after the "
+                               "message, so it may be an amend, which makes a new commit without the tag. Make a new "
+                               "commit instead. If the word is part of the message, give the message with -F, or "
+                               "put --amend out of it")
+    version, reason = plan(root, pending, amend)
     if version is None:
         return f"release-check: no release ({reason})"
     return f"release-check: the next tag is {tag_name(version)} ({reason})"

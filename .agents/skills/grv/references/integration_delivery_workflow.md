@@ -266,6 +266,25 @@ commit gate runs `just release-check` again. The variable
 message as one more commit. For an amend, the new message replaces the
 message of HEAD. The hook skips the check for a merge and during a rebase.
 
+The check cleans up the message as git does. The gate reads the option
+`--cleanup` of the git command and puts it in `JN_RELEASE_CLEANUP`. Without
+the option, the check reads `commit.cleanup`. In a hook, git sets
+`GIT_EDITOR` to `:` when it runs no editor. So the check knows if git
+strips the comment lines.
+
+A person can set `GIT_EDITOR` to `:` too, so the
+gate sets `JN_RELEASE_EDITOR=1` when the options show an editor. When git
+may clean up the message in more than one way, the reading with the
+biggest bump counts.
+
+The gate sets `JN_RELEASE_AMEND=1` only when `--amend` comes before the
+message in the git command. After the message, the word may be text, so
+HEAD counts too. On HEAD with a release tag, that commit stops too. Give
+such a message with `-F`.
+
+An amend of a commit with a release tag stops, because the tag stays on the
+old commit. Make a new commit instead.
+
 The step needs no network and no remote. It fails on the errors of the
 version that the rules below list. In a shallow checkout, or in a checkout
 with no release tag, it says so and passes. So CI fetches the whole history
