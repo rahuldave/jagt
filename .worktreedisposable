@@ -1,0 +1,9 @@
+# begin lines of jnterfaces, the installer, from jnterfaces at a0cb68d.
+# Last written to .worktreedisposable by `just install --update --without docs --answer issues=top --answer integration=check --answer review-model=strongest`. The record is parts.".worktreedisposable" in .agents/stack.json.
+.agents/log/
+# end lines of jnterfaces. They stay while the project keeps .agents/stack.json.
+# begin lines of rust, the rust profile, from jnprofile-rust at 3dedba9.
+# Last written to .worktreedisposable by `just install --update --without docs --answer issues=top --answer integration=check --answer review-model=strongest`. The record is parts.".worktreedisposable" in .agents/stack.json.
+# cargo build makes target/ again from the code and Cargo.lock.
+/target/
+# end lines of rust. `just uninstall rust` removes them.

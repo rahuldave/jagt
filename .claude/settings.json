@@ -21,6 +21,10 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-context.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh"
           }
         ]
       },
@@ -30,6 +34,47 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-edit-context.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/record-result.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'",
+            "timeout": 60
           }
         ]
       }

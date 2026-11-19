@@ -17,13 +17,13 @@ Session-mode work does not auto-commit every small leaf. Prefer committing when
 the user asks, when a coherent checkpoint would help, or when a long-lived
 parent/subtree reaches a stable point.
 
-Session-mode work must still use `gcm` for commit-required checkpoints:
+Session-mode work must still use `gcm` for each commit-required checkpoint, such as
 deployment/runtime configuration, persistence, migrations, schemas, public APIs,
 user-visible UI, reusable workflow material, publishable docs/templates, and
 non-trivial multi-file verified changes. Do not treat "session leaf" as a
 standalone no-commit reason.
 
-Development-mode work should be committed at durable checkpoints: after a
+Development-mode work should be committed at durable checkpoints, such as after a
 verified depth-1 workstream or coherent depth-2 implementation subtree, before
 switching product areas, before handoff, after risky bug/migration work, or
 before GitHub issue/PR sync.
@@ -35,18 +35,19 @@ continuing when the slice changes schema, persistence, query semantics, public
 APIs, user-visible UI, or non-trivial verification. Keep the unit small enough
 that `git bisect` would land on a useful layer.
 
-Use completed Gest task notes to draft copious but focused commit bodies:
-include what changed from `Done`, the exact checks from `Verification`, and any
+Use completed Gest task notes to draft copious but focused commit bodies. Include what changed from `Done`, the exact checks from `Verification`, and any
 real `Follow-up`. Never include Gest IDs.
 
 After creating a commit, run checkpoint hygiene. Gest maintains its graphs
-automatically; no separate export is required. For any code commit, ensure `grv` has happened after the
-code change or run it immediately. Also make and verify a push/sync decision:
-`git push` is separate from GitHub issue promotion. For development depth-1
-parents or development iterations, run the explicit `gpr` decision: create/sync
-the GitHub issue and record metadata, or record why promotion was skipped.
-Report the selected PR base, commit hash, final branch relationship, push status,
-review status, and the GitHub issue decision.
+automatically, so no separate export is required. The review of the commit is
+`grv`, which the gate needs before the commit.
+
+Also make and verify a push/sync decision. `git push` is separate from GitHub
+issue promotion. For development depth-1 parents or development iterations, run
+the explicit `gpr` decision. It creates or syncs the GitHub issue and records
+the metadata, or records why promotion was skipped. Report the selected PR
+base, commit hash, final branch relationship, push status, review status, and
+the GitHub issue decision.
 
 ## Integration and delivery policy
 
@@ -94,6 +95,86 @@ user has asked you to manage commits or the workflow clearly says the verified
 development slice should be committed, proceed. Stage explicit files rather
 than using `git add .`.
 
+## The commit gate
+
+Commit after the pass and the records, not before. The commit gate checks
+both, so a commit without them stops.
+
+1. Run each agentic target that the change needs. The order is
+   `just update-docs`, `just prose`, `just review` and `just test-review`.
+   Each one writes a packet for a fresh agent, and the hook of the harness
+   writes a record from the result. The gate needs `review` for every commit,
+   and the others when the change touches their files.
+2. Run `just check` last, on the tree that you commit. The gate needs a pass
+   for that tree, and `update-docs` and the fixes of findings change the tree.
+3. Commit with plain git. The hooks do the rest:
+   - The pre-commit hook runs the gate on the tree.
+   - The commit-msg hook adds the trailer `Commit-Gate: patch:<id>` to the
+     message.
+   - The pre-push hook runs `just ci`, which checks that each pushed commit has
+     the trailer.
+
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes and the hooks.
+
+### When the gate stops
+
+The message of the gate names what is missing. Do what it says, then commit
+again:
+
+- **No pass for this tree.** Run `just check`, and fix what fails. A change
+  after the pass makes a new tree, so run it again after each change. Under
+  pre-commit, an unstaged edit of a tracked file gives this stop too, because
+  pre-commit puts it aside. The stop then also gives the stash fix below.
+- **No record of a target.** Run the targets in the order that the message
+  gives. A record counts only when its status is a pass and each finding is
+  fixed.
+- **Only part of the changes is staged.** The gate checks the whole worktree.
+  Stage all the changes, or put the rest aside:
+  1. Run `git stash --keep-index -u`. The worktree now has a new tree.
+  2. Run the targets that the new tree needs, then `just check`.
+  3. Commit, then run `git stash pop`.
+- **A finding that is not fixed.** Fix it with a test, and run the target again
+  on the new tree.
+- **In Codex, a write to `.agents` or `.git` is denied.** The
+  `workspace-write` sandbox of Codex keeps both folders read-only, and a
+  writable root of the folder above them does not help. `just check` writes
+  its run log in `.agents/log` of the worktree. The targets write their
+  packets in `.agents/log` of the main checkout. `git commit` writes in the
+  git folder. Ask the person to approve the command outside the sandbox. Or
+  ask them to start Codex with each of these folders as a writable root:
+  - `<main>/.agents` and `<main>/.git`, where `<main>` is the main checkout.
+  - In a worktree, also `<worktree>/.agents`, and the git folder of the
+    worktree, which `git rev-parse --git-dir` prints.
+
+  For the main checkout, the command is:
+
+  ```bash
+  codex -s workspace-write -c 'sandbox_workspace_write.writable_roots=["<main>/.agents","<main>/.git"]'
+  ```
+
+  In a worktree, it is:
+
+  ```bash
+  codex -s workspace-write -c "sandbox_workspace_write.writable_roots=[\"<main>/.agents\",\"<main>/.git\",\"$PWD/.agents\",\"$(git rev-parse --git-dir)\"]"
+  ```
+
+Do not go around the gate. `--no-verify`, `core.hooksPath`, `git commit-tree`
+and `git update-ref` are stopped by the guard of the hooks, and a commit
+without the trailer fails `just ci`.
+
+### A skip
+
+`just record-skip <target> <reason>` lets one tree through without the record
+of that target. Use it only when the person agrees:
+
+1. Ask the person first. Give the target, the tree and the reason, for example
+   "a typo in a comment".
+2. Run it only after a clear yes. In Claude Code the hook asks the person
+   again. In Codex the hook stops the command, so ask the person to run it.
+
+The run log keeps the reason of each skip.
+
 ## Stacked PRs With Plain Git
 
 Commit with plain git, such as `git add <file>` and `git commit`. No hook
@@ -113,7 +194,10 @@ gh pr create --base <parent-branch> --head <child-branch>
 
 1. Start each branch from the branch below it.
 2. Open the PR of each branch with `gh pr create --base <parent-branch>`, from
-   the bottom branch up.
+   the bottom branch up. `just stack-prs <base> <bottom-branch> ... <top-branch>`
+   does this for the whole stack. It first checks that each branch contains the
+   branch below it, and it pushes each branch that has no upstream. Run it with
+   `--dry-run` first to see each step.
 3. Commit review feedback to the branch where it belongs, and not to the top of
    the stack by default.
 4. After a change to a lower branch, switch to the top branch and run

@@ -1,7 +1,8 @@
-# begin lines of jnterfaces, the installer, from jnterfaces at 2cfb176.
-# Last written to .gitignore by `install_stack.py --target . tasker`. The record is parts.".gitignore" in .agents/stack.json.
+# begin lines of jnterfaces, the installer, from jnterfaces at a0cb68d.
+# Last written to .gitignore by `just install --update --without docs --answer issues=top --answer integration=check --answer review-model=strongest`. The record is parts.".gitignore" in .agents/stack.json.
 .agents/stack-log.jsonl
 .agents/stack-pending.json
+.agents/log/
 # end lines of jnterfaces. They stay while the project keeps .agents/stack.json.
 
 /target/
@@ -43,3 +44,6 @@ htmlcov/
 
 # The release archives of just dist.
 /dist/
+
+# Python caches of the scripts of the stack, such as the record hook of the tasker role
+__pycache__/

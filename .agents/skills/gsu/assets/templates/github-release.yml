@@ -1,0 +1,61 @@
+# The tasker role wrote this file once, when the project had none. It is yours from then on.
+# It runs on each push to main. The job check runs just check on the pushed commit. When it passes, the job release
+# runs just release, which makes the next tag vX.Y.Z by semver, pushes it and checks it. A push that needs no release,
+# such as a change of only the docs, makes no tag. Nobody tags by hand.
+# just release takes the number from the commits since the last tag, or from the version of the manifest that the
+# language profiles give. It fails when that version is lower than the bump that the commits ask for, so a pull
+# request that needs a bump also raises the version of the manifest.
+# No agent runs here. The checkout has fetch-depth: 0, so the script sees each tag and each commit.
+# Only the job release can write to the repository, to push the tag. A tag that the GITHUB_TOKEN pushes starts no
+# other workflow. If a publish job must run on the tag, use a token that can start it.
+# Add the setup of the tools of your languages before the step "Check", if just check needs them.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history and the tags, for the step release-check of just check.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+      - name: Install jlog
+        # The tag v0.3.0 of jlog is the commit d4b712b, as in the CI of jnterfaces. install.sh comes from the tag. It
+        # downloads the release binary, checks its SHA-256 and puts it in ~/.local/bin. setup-uv comes first, so
+        # install.sh makes the environments of the plugins. The step shell bash has pipefail, so a failed download fails.
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rahuldave/jlog/v0.3.0/scripts/install.sh | sh -s -- --tag v0.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check
+        run: just check
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One release at a time. A run on an older commit after a newer release prints no release.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+      - name: Name the author of the tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Release
+        run: just release

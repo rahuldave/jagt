@@ -6,8 +6,9 @@ license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE fil
 
 # GRV: Gest Review
 
-Use for code-review stance. Run `grv` after every code change before completing
-the task, even during quick local development without a pull request.
+Use for code-review stance. Run `grv`, which is `just review`, after every code
+change before completing the task, even during quick local development without
+a pull request.
 
 ## Integration and delivery policy
 
@@ -18,7 +19,31 @@ throughout this skill; the repository default is not an implicit PR target.
 
 ## Workflow
 
-Inspect:
+To run `grv` by hand is to run `just review`:
+
+1. Run `just review`. It is an agentic target, which writes a task packet for a
+   fresh agent, with the diff of the change and the base task of this skill.
+2. Give the packet to a fresh agent, such as a subagent. The agent that wrote
+   the change does not review it, because it cannot see what it missed.
+3. The fresh agent returns its findings. The hook of the harness writes the
+   record of the review, and the commit gate needs that record for each
+   commit.
+4. Fix each finding with a test, and run `just review` again on the new tree.
+
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes.
+
+The base task is `references/targets/review.md`. It holds the five lenses of
+the review, which are correctness, regressions, tests, safety and docs. The docs lens checks
+that each new or changed doc says what its item is for. A doc that only
+repeats the name of its item is a finding. A profile adds the lens of its
+language in `.agents/targets/<language>/review.md`, and the repository adds
+its own text in `.agents/targets/review.md`.
+
+## The diff
+
+`just review` takes the diff against the parent commit. To look at more of
+the change yourself, use git:
 
 ```bash
 git diff
@@ -28,11 +53,8 @@ git diff --staged
 If the branch is part of a stack, diff it against the branch below it:
 
 ```bash
-git branch --list
 git diff <parent-branch>...HEAD
 ```
-
-If reviewing a commit, diff that commit directly.
 
 Search Gest for prior regressions, review findings, and browser/test notes in
 the touched area:
@@ -43,29 +65,16 @@ gest search "<module/feature> review" --all --json --limit 20
 gest search "Follow-up <module/feature>" --all --json --limit 20
 ```
 
-Report findings first, ordered by severity, with file/line references. Focus on
-bugs, behavioral regressions, safety, error handling, and missing tests. Treat
+## The findings
+
+Report findings first, ordered by severity, with file/line references. Treat
 `Findings: None` as a precise statement about blocking or actionable code-review
 findings, not as the whole review.
 
-For non-trivial changes, act as an adversarial review aggregator. Default to
-independent read-only review sub-agents when sub-agents are available,
-authorized, and the lenses can be checked independently; skip sub-agents only
-when they are unavailable, unsafe, or overkill for a tiny change. Apply distinct
-review lenses:
-
-- correctness and regression risk
-- test adequacy and missing edge cases
-- Git workflow safety
-- docs, setup, and command-contract drift
-- security, privacy, or data safety when relevant
-- browser/UI behavior when relevant
-- language/runtime idioms when the project profile is known
-
-If sub-agents are not used, run the lenses explicitly yourself. Writable
-sub-agents still require separate physical git worktrees. Gest mutations, task
-completion, commits, pushes, and PR decisions should remain centralized unless
-deliberately assigned.
+For a large change, more than one fresh agent can review it, each with some of
+the lenses. Writable sub-agents still require separate physical git
+worktrees. Gest mutations, task completion, commits, pushes, and PR decisions
+should remain centralized unless deliberately assigned.
 
 Test review should ask:
 
@@ -75,15 +84,15 @@ Test review should ask:
 - Does the test scope match the workflow kind, blast radius, and
   `test.strategy`?
 
-After findings, add reviewer judgment when it would help the user: call out
+After findings, add reviewer judgment when it would help the user. Call out
 non-blocking opinions about clarity, maintainability, UX, naming, fit with local
 patterns, or tradeoffs. Label these separately from findings so taste-level
 feedback does not look like a merge blocker. If no issues are found, say so,
 then still mention residual risk, test gaps, and any useful non-blocking
 observations.
 
-Missing focused tests for changed callable code or APIs are review findings, not
-just nice-to-have follow-ups.
+Missing focused tests for changed callable code or APIs are review findings.
+They are not follow-ups for later.
 
 For workflow changes, review VCS safety as behavior. Flag each of these:
 

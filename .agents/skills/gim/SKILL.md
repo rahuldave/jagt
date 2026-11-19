@@ -11,7 +11,7 @@ Use for one concrete implementable Gest task.
 ## Workflow
 
 1. `gest task show <id> --json`
-2. Inspect Gest memory for the task area: `gest task note list <id> --json`,
+2. Inspect Gest memory for the task area, with `gest task note list <id> --json`,
    targeted `gest search "<feature/module/symptom>" --all --json --limit 20`,
    and related iteration notes. Carry forward real `Follow-up` items and prior
    verification constraints.
@@ -40,22 +40,29 @@ Use for one concrete implementable Gest task.
    - `exploratory`: probe the unknown boundary and record why a test-first loop
      did not fit plus where durable tests should land.
    - `no-test-needed`: record the docs/planning/prose-only reason.
-10. Make scoped edits when the chosen loop calls for production changes.
-11. Run `gfm` for formatting, linting, typechecking, compile/static checks, and
-   diff hygiene.
-12. Run `gte` for focused unit/API regression tests, smoke checks, and
-   integration/browser checks appropriate to the changed behavior. Any changed
-   callable code needs tests; smoke checks alone are not enough.
-13. For frontend/browser UI changes, run a browser spot check before handoff:
-   inspect the actual page, exercise the changed interaction, and record what
-   was checked. If the flow should be repeated, add or capture a follow-up for a
-   durable integration test.
-14. Run `gdo` when user docs, developer docs, workflow docs, examples, or command
-   references are affected.
-15. Run `grv` after every code change, even for quick development without a pull
-   request. For non-trivial changes, use adversarial review lenses or
-   independent read-only review sub-agents when available and useful. Fix or
-   record findings before completion.
+10. Make scoped edits when the chosen loop calls for production changes. Write
+    the tests and the docs in the same change. Each changed callable needs a
+    test, and each new item needs a doc. `gte` says how to write a good test,
+    and `gdo` says which docs a change needs.
+11. For frontend or browser UI changes, run `just visual-check`, and give its
+    packet to a fresh agent. If the flow should be repeated, add or capture a
+    follow-up for a durable integration test.
+12. Run `just check`. It runs each step of the profiles, and the run log keeps
+    the pass for the tree. Fix each failure and run it again. `gfm` fixes the
+    format and the static steps.
+13. Run the targets that the gate needs for the change, in this order, and
+    give each packet to a fresh agent:
+    1. `just update-docs`, when the change touches a page
+    2. `just prose`, when the change touches a page
+    3. `just review`, for every change
+    4. `just test-review`, when the change touches code
+    `.agents/targets/required.txt` says which targets each path needs. Fix
+    what their findings say, with a test for each fix, and run the targets
+    again until they give no open finding. Then run `just check` last, on the
+    tree that you commit, because the gate needs a pass for that tree.
+14. Run no check of your own beside these. A check outside the recipes leaves
+    no trace in the run log, so the gate cannot count it.
+15. Commit with `gcm`. The commit gate checks the pass and the records.
 16. For non-trivial leaf tasks, add a completion note before completion. Preserve
    the task description as intent; record what actually happened in the note:
 
@@ -80,8 +87,9 @@ parents unless the full subtree is done.
 ## VCS Execution Guardrails
 
 Use plain git for every write, such as `git switch`, `git commit` and
-`git push`. No hook blocks plain git. In the `gitwt` variant, a commit in the
-main checkout gets a warning, so commit in the worktree of the task.
+`git push`. The commit gate runs in the git hooks, so a commit needs a pass of
+`just check` and the records of its targets. In the `gitwt` variant, a commit
+in the main checkout gets a warning, so commit in the worktree of the task.
 
 Do not run parallel write work in one checkout. If the task is one branch of a
 stack, it is sequential. Start the branch from the branch below it, and see
@@ -91,35 +99,21 @@ for each task.
 
 ## Checks
 
-Use the project command contract in `AGENTS.md`. Prefer `just` targets when the
-project maps workflow concepts to them. For the reusable Just contract shape,
-read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
-contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
-is not installed, use the project's `AGENTS.md` and `just --list`; the source
-is https://github.com/rahuldave/jnterfaces. Typical concepts include:
+Every check goes through a recipe, so the run log has it:
 
 ```bash
-just fmt [path]
-just lint [path]
-just typecheck
-just static
-just test [target]
-just smoke
-just dev [port]
-just browser [url-or-flow]
-git diff --check
+just check            # every step, and the pass for the tree
+just fmt [path]       # changes the format of the files
+just test [target]    # one step of just check, while you work
+just dev [port]       # the app, for a visual check
+just visual-check     # a packet for a fresh agent, which checks a flow in a browser
 ```
 
-If the project has no command contract yet, route to `gsu` before assuming
-language-specific tools.
-
-Use browser spot checks for frontend, UI, and interaction changes even before a
-durable integration test exists. Before a browser check, ensure the app is
-served through the project run-app contract, commonly `just dev [port]`, or
-confirm that an existing server is already running. Use `integration_tests/`
-scripts for repeated browser flows; if no durable script exists yet, record that
-follow-up.
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes. The contract of the recipes is in the `just` skill of jnterfaces,
+`.agents/skills/just/references/command_contract.md`. If the just skill is not
+installed, use `just --list` and the `AGENTS.md` of the project.
 
 ## Tag And Dependency Pass
 
-Before editing code contracts, re-run the tag/dependency workflow from `references/tag_dependency_workflow.md`: confirm selected tags still fit, add missing semantic tags, and run `ast-grep` searches for callers, imports, components, selectors, routes, schemas, or other dependers. If a selected tag or depender search reveals coupled surfaces, expand the task or create/link a child task before implementation is complete. Completion notes for code-facing work should include `Tag classification:` and `Dependency impact:` lines.
+Before editing code contracts, re-run the tag/dependency workflow from `references/tag_dependency_workflow.md`. Confirm selected tags still fit, add missing semantic tags, and run `ast-grep` searches for callers, imports, components, selectors, routes, schemas, or other dependers. If a selected tag or depender search reveals coupled surfaces, expand the task or create/link a child task before implementation is complete. Completion notes for code-facing work should include `Tag classification:` and `Dependency impact:` lines.

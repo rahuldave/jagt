@@ -6,50 +6,48 @@ license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE fil
 
 # GFM: Gest Format
 
-Use to mechanically clean and statically check a changeset. `gfm` does not own
-runtime tests or documentation checks; route those to `gte` and `gdo`.
+Use to fix the format of a change and to run its static checks. `gfm` does not
+run the tests or check the docs. `gte` and `gdo` do that.
 
 ## Workflow
 
-1. Identify project and changed files.
-2. Read the project command contract in `AGENTS.md`, especially any `just`
-   target mappings and focused-argument guidance.
-3. Run formatting, linting, typechecking, compile/static checks, and diff
-   hygiene appropriate to the project.
-4. Fix mechanical issues.
-5. Re-run failing checks.
-6. Report every command run and whether it passed.
+1. Run `just fmt`. It changes the files to the format of each profile.
+2. Run the static steps of `just check`:
 
-Use the target repository's project-specific command contract. Prefer `just`
-targets when `AGENTS.md` maps them. For the reusable Just command-contract
-model, read the `just` skill of jnterfaces, `.agents/skills/just/SKILL.md`, and its
-contract, `.agents/skills/just/references/command_contract.md`. If jnterfaces
-is not installed, use the project's `AGENTS.md` and `just --list`; the source
-is https://github.com/rahuldave/jnterfaces. Common concepts include:
+   ```bash
+   just fmt-check
+   just lint
+   just typecheck
+   just diff-check
+   ```
 
-```bash
-just fmt [path]
-just lint [path]
-just typecheck
-just static
-just build
-git diff --check
-```
+3. Fix what they find, and run the failing step again.
+4. Report each step that you ran, and whether it passed.
 
-If no command contract exists yet, inspect the project manifests and propose or
-route to `gsu` to establish one. Do not substitute smoke checks for `gte`.
+Each step is a recipe, so the run log has it. Do not call the tools of a
+language directly, because each profile owns its tools and their settings. A step that
+a profile does not have is a recipe that passes and says so.
 
-If the project uses `cx` in its Justfile, run `cx lint` or the mapped
-`just cx-lint` target as a static declaration check. `cx lint` validates
-incremental build/pipeline lines; it is not a test runner and should not be
-used as a substitute for `gte`. For `cx` rules, read the `cx` skill of
-jnterfaces, `.agents/skills/cx/SKILL.md`, when it is installed. If the cx
-skill is not installed, `cx lint` and `cx --help` are the reference.
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes.
 
-Use `git status` and `git diff` to find the changes of the branch before you
-run the mechanical checks. In a stack of branches, compare each branch with the
-branch below it, for example `git diff <parent-branch>...HEAD`.
+## The files of the change
+
+Use `git status` and `git diff` to find the changed files. In a stack of
+branches, compare each branch with the branch below it, for example
+`git diff <parent-branch>...HEAD`. `just lint PATH` and `just fmt PATH` take
+paths, so you can check one file.
+
+## cx
+
+If the project uses `cx` in its Justfile, run `just cx-lint`, or `cx lint`,
+as a static check of the declarations. `cx lint` checks the build and
+pipeline lines. It is not a test runner, so it does not replace `gte`. The
+rules are in the `cx` skill of jnterfaces, `.agents/skills/cx/SKILL.md`. If the
+cx skill is not installed, use `cx --help`.
 
 ## Tag And Dependency Checks
 
-For code-facing changes, `gfm` may include lightweight `ast-grep` syntax or pattern checks from `references/tag_dependency_workflow.md` when those checks are part of the mechanical contract.
+For code-facing changes, `gfm` may include lightweight `ast-grep` syntax or
+pattern checks from `references/tag_dependency_workflow.md` when those checks
+are part of the mechanical contract.

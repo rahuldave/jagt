@@ -5,17 +5,66 @@
   ],
   "choices": {
     "cx": true,
+    "docs": false,
     "jagt-protocol": true,
-    "prose": false,
+    "prose": true,
     "reporter": false,
     "tasker": true
   },
-  "tools": [],
+  "tools": [
+    "rust:lint",
+    "rust:typecheck",
+    "rust:test",
+    "rust:integration"
+  ],
   "variants": {
     "tasker": "git"
   },
+  "answers": {
+    "integration": "check",
+    "issues": "top",
+    "review-model": "strongest",
+    "tasker": "git"
+  },
+  "code": {
+    "rust": [
+      "**/*.rs"
+    ]
+  },
+  "tests": {
+    "rust": [
+      "tests/**"
+    ]
+  },
+  "steps": [
+    "tools-check",
+    "release-check",
+    "fmt-check",
+    "lint",
+    "typecheck",
+    "test",
+    "integration",
+    "coverage-check",
+    "docstring-check",
+    "docs-check",
+    "prose-check",
+    "diff-check"
+  ],
+  "provided_steps": [
+    "tools-check",
+    "release-check",
+    "fmt-check",
+    "lint",
+    "typecheck",
+    "test",
+    "integration",
+    "coverage-check",
+    "prose-check",
+    "diff-check"
+  ],
   "generated": {
-    ".agents/just/index.just": "af81d3c856367dab82e138a4565cc617a64ca46ff868ba0967d30f9ae28ca6dc"
+    ".agents/just/index.just": "b97968416be5969b3c8d4190691b3b4468fa0adc5d8204d2203b3a441320e924",
+    ".agents/just/rust.just": "0b441786d1c1308386de923aa286b819cb977bc35f210e8f27d200c02e4355da"
   },
   "parts": {
     ".gitignore": {
@@ -32,6 +81,57 @@
           "jnterfaces"
         ],
         "holder": "jnterfaces"
+      },
+      ".agents/log": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
+      },
+      "/target": {
+        "state": "present",
+        "needs": [
+          "rust"
+        ]
+      },
+      "*.profraw": {
+        "state": "present",
+        "needs": [
+          "rust"
+        ]
+      }
+    },
+    ".worktreedisposable": {
+      ".agents/log": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
+      },
+      "/target": {
+        "state": "added",
+        "needs": [
+          "rust"
+        ],
+        "holder": "rust"
+      }
+    },
+    "Justfile": {
+      "import? '.agents/install.just'": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
+      },
+      "export JLOG_RUN := env(\"JLOG_RUN\", uuid())": {
+        "state": "added",
+        "needs": [
+          "jnterfaces"
+        ],
+        "holder": "jnterfaces"
       }
     },
     "AGENTS.md": {
@@ -41,6 +141,13 @@
           "tasker"
         ],
         "holder": "tasker"
+      },
+      "Read and follow @.agents/instructions/prose.md": {
+        "state": "added",
+        "needs": [
+          "prose"
+        ],
+        "holder": "prose"
       }
     },
     ".claude/settings.json": {
@@ -49,6 +156,23 @@
         "needs": [
           "tasker"
         ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Bash\"} $CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "event": "PreToolUse",
+          "group": {
+            "matcher": "Bash"
+          },
+          "hook": {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh"
+          }
+        }
       },
       "hooks.PreToolUse {\"matcher\": \"Bash\"} $CLAUDE_PROJECT_DIR/.claude/hooks/raw-git-write-guard.sh": {
         "state": "present",
@@ -67,6 +191,70 @@
         "needs": [
           "tasker"
         ]
+      },
+      "hooks.PreToolUse {\"matcher\": \"Write|Edit|MultiEdit|NotebookEdit\"} $CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "event": "PreToolUse",
+          "group": {
+            "matcher": "Write|Edit|MultiEdit|NotebookEdit"
+          },
+          "hook": {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-guard.sh"
+          }
+        }
+      },
+      "hooks.SubagentStop {} $CLAUDE_PROJECT_DIR/.claude/hooks/record-result.sh": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "event": "SubagentStop",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/record-result.sh"
+          }
+        }
+      },
+      "hooks.UserPromptSubmit {} sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'": {
+        "state": "added",
+        "needs": [
+          "prose"
+        ],
+        "holder": "prose",
+        "value": {
+          "event": "UserPromptSubmit",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'",
+            "timeout": 30
+          }
+        }
+      },
+      "hooks.Stop {} sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'": {
+        "state": "added",
+        "needs": [
+          "prose"
+        ],
+        "holder": "prose",
+        "value": {
+          "event": "Stop",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'",
+            "timeout": 60
+          }
+        }
       }
     },
     ".codex/hooks.json": {
@@ -76,11 +264,175 @@
           "tasker"
         ]
       },
+      "hooks.PreToolUse {\"matcher\": \"Bash\"} sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/gate-guard.sh\"'": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "event": "PreToolUse",
+          "group": {
+            "matcher": "Bash"
+          },
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/gate-guard.sh\"'",
+            "statusMessage": "Checking for commands that go around the commit gate"
+          }
+        }
+      },
       "hooks.PreToolUse {\"matcher\": \"Bash\"} sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/raw-git-write-guard.sh\"'": {
         "state": "present",
         "needs": [
           "tasker"
         ]
+      },
+      "hooks.SubagentStop {} sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/record-result.sh\"'": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "event": "SubagentStop",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$ROOT/.codex/hooks/record-result.sh\"'",
+            "statusMessage": "Writing the record of the result for the commit gate"
+          }
+        }
+      },
+      "hooks.UserPromptSubmit {} sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'": {
+        "state": "added",
+        "needs": [
+          "prose"
+        ],
+        "holder": "prose",
+        "value": {
+          "event": "UserPromptSubmit",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'",
+            "timeout": 30
+          }
+        }
+      },
+      "hooks.Stop {} sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'": {
+        "state": "added",
+        "needs": [
+          "prose"
+        ],
+        "holder": "prose",
+        "value": {
+          "event": "Stop",
+          "group": {},
+          "hook": {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'",
+            "timeout": 60
+          }
+        }
+      }
+    },
+    ".pre-commit-config.yaml": {
+      "repos[repo=local]": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "repo": "local",
+          "hooks": [
+            {
+              "id": "commit-gate",
+              "name": "commit gate",
+              "entry": "uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py",
+              "language": "system",
+              "pass_filenames": false,
+              "always_run": true,
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            },
+            {
+              "id": "commit-gate-trailer",
+              "name": "commit gate trailer",
+              "entry": "uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py --hook commit-msg",
+              "language": "system",
+              "always_run": true,
+              "stages": [
+                "commit-msg"
+              ]
+            },
+            {
+              "id": "just-ci",
+              "name": "just ci",
+              "entry": "just ci",
+              "language": "system",
+              "pass_filenames": false,
+              "always_run": true,
+              "stages": [
+                "pre-push"
+              ]
+            }
+          ]
+        }
+      },
+      "repos[repo=https://github.com/pre-commit/pre-commit-hooks]": {
+        "state": "added",
+        "needs": [
+          "tasker"
+        ],
+        "holder": "tasker",
+        "value": {
+          "repo": "https://github.com/pre-commit/pre-commit-hooks",
+          "rev": "v6.0.0",
+          "hooks": [
+            {
+              "id": "check-yaml",
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            },
+            {
+              "id": "check-json",
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            },
+            {
+              "id": "check-added-large-files",
+              "args": [
+                "--maxkb=1000"
+              ],
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            },
+            {
+              "id": "check-merge-conflict",
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            },
+            {
+              "id": "detect-private-key",
+              "stages": [
+                "pre-commit",
+                "pre-merge-commit"
+              ]
+            }
+          ]
+        }
       }
     },
     ".agents/instructions/tasker.md": {
@@ -90,9 +442,118 @@
         "needs": [
           "tasker"
         ],
-        "hash": "735e5646d8880c87add07b958a5bfd6259cbe987c2f10da112213ea8cd5cc3d0"
+        "hash": "30e5aeeeb7f72c44108368f10af79a9b62aef2c965ad40a9f8830e5412e8a6a5"
+      }
+    },
+    ".agents/instructions/prose.md": {
+      "(own file)": {
+        "state": "added",
+        "holder": "prose",
+        "needs": [
+          "prose"
+        ],
+        "hash": "0624e89ba5da98ba0d790fb2a6e6f0b015e8fba19eea93829bed69d38d64a26d"
+      }
+    },
+    ".github/workflows/check.yml": {
+      "(starter)": {
+        "state": "seeded",
+        "holder": "tasker",
+        "needs": [
+          "tasker"
+        ],
+        "hash": "49ff3ac01db43890b1e697c34435323c8e019766f8930b7080a0a18229cf0ce2"
+      }
+    },
+    ".github/workflows/release.yml": {
+      "(starter)": {
+        "state": "seeded",
+        "holder": "tasker",
+        "needs": [
+          "tasker"
+        ],
+        "hash": "cc278476b0e571f56f8a7a30faafedd0370ea68d03e94558f53827b17fd83c69"
       }
     }
   },
-  "parts_version": 1
+  "parts_version": 1,
+  "programs": {
+    "cargo": {
+      "check": "cargo --version",
+      "owners": {
+        "jnprofile-rust": null
+      }
+    },
+    "cx": {
+      "check": "cx --help",
+      "version": ">=0.1.0",
+      "owners": {
+        "the cx skill": ">=0.1.0"
+      }
+    },
+    "gest": {
+      "check": "gest --version",
+      "expect": "(rahuldave)",
+      "version": ">=0.6.0",
+      "owners": {
+        "agent_gest_git_skills": ">=0.6.0"
+      }
+    },
+    "gh": {
+      "check": "gh --version",
+      "version": ">=2.40",
+      "owners": {
+        "jnterfaces": ">=2.40"
+      }
+    },
+    "git": {
+      "check": "git --version",
+      "version": ">=2.40",
+      "owners": {
+        "jnterfaces": ">=2.40",
+        "agent_gest_git_skills": null
+      }
+    },
+    "jagt": {
+      "check": "jagt --version",
+      "version": ">=0.6.3",
+      "owners": {
+        "the jagt-protocol skill": ">=0.3.0",
+        "agent_gest_git_skills": ">=0.6.3"
+      }
+    },
+    "jlog": {
+      "check": "jlog --version",
+      "version": ">=0.2.0",
+      "owners": {
+        "jnterfaces": ">=0.2.0"
+      }
+    },
+    "just": {
+      "check": "just --version",
+      "version": ">=1.50.0",
+      "owners": {
+        "jnterfaces": ">=1.50.0",
+        "agent_gest_git_skills": null,
+        "jnprofile-rust": null
+      }
+    },
+    "rustup": {
+      "check": "rustup --version",
+      "version": ">=1.28.0",
+      "owners": {
+        "the rust profile": ">=1.28.0"
+      }
+    },
+    "uv": {
+      "check": "uv --version",
+      "version": ">=0.12.13",
+      "owners": {
+        "jnterfaces": ">=0.12.13",
+        "agent_gest_git_skills": null,
+        "nossaifd": null,
+        "jnprofile-rust": null
+      }
+    }
+  }
 }

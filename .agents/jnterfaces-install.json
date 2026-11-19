@@ -1,8 +1,9 @@
 {
   "schema_version": 1,
   "package": "jnterfaces",
-  "source_repository": "git@github.com:rahuldave/jnterfaces.git",
-  "source_revision": "9677628f792a6beda34a2253a5d6be9ea6ebcd3b",
+  "source_repository": "https://github.com/rahuldave/jnterfaces",
+  "source_revision": "58f0a9f91127062e33d498a204ab5d5851c0e6ba",
+  "source_version": "v0.2.2-2-g58f0a9f",
   "source_worktree_dirty": false,
   "source_requested_commit": null,
   "skills": [
@@ -16,37 +17,40 @@
     "just"
   ],
   "extras": [
-    ".agents/install.just"
+    ".agents/install.just",
+    ".agents/tools_check.py"
   ],
   "merged_hooks": {},
   "created_settings": [],
   "seeds": {},
   "managed_files": {
-    ".agents/install.just": "0ee41c4ec1fef3f071bf32f62ab18e969ea872a63924999ee66c6130a53503fc",
-    ".agents/skills/cx/SKILL.md": "af7f66590635c2f42d7f03bb2fb4b49aec31124f3dbb35ec0c6beef695896db4",
+    ".agents/install.just": "43d0f8bac0bc134a81fe5eafbe468192d6c63c1c5388065f2d5b6fbaba302fe1",
+    ".agents/skills/cx/SKILL.md": "04bb2177488bc85a3e8bb63fd2de3840bbb98f8a6745d658de9ee7ab2f444dc8",
     ".agents/skills/cx/agents/openai.yaml": "e9c8e7091a1da09d70d0d8cb3461c217b0dd3787f5a57713fd7c63c34f8da263",
     ".agents/skills/cx/references/incremental_pipelines.md": "60df1943d55fb0c71855c28addfcff3f5a4b4cc917181670394d5c6662d40dcb",
-    ".agents/skills/jagt-protocol/SKILL.md": "5e07e6916cbfda3c58b795f7fd6167b1244e05abb057a246750087536c9e5d67",
+    ".agents/skills/jagt-protocol/SKILL.md": "97510dfba135a5786b69877d755591e20568081add3160e152bd3d5a979cbcf6",
     ".agents/skills/jagt-protocol/agents/openai.yaml": "122d8c03ab98fd31c858765f7ec80d7db8932c447ce720d2011f3c9912f55b01",
     ".agents/skills/jagt-protocol/assets/fixtures/local_recursion.agent-result.txt": "da1e5519801bca421e3e9d4b558a7d52a4f9ef38cb2419ff99887ba9c2c00876",
     ".agents/skills/jagt-protocol/assets/fixtures/proposed_tasks.agent-result.txt": "10853e05eea39f6409cdc4fa00688e1caa3e2c8d49bdebbec8f9e4f911dbb0f4",
     ".agents/skills/jagt-protocol/assets/fixtures/result_pair.agent-task-draft.txt": "158637a71614798945acfaa2cffb01d284e4f4a985aa391bf1a5bcee1a938b61",
-    ".agents/skills/jagt-protocol/references/protocol_contract.md": "6e633f22d3d80e6f81eda907626b91ef528b6b50d6327da10ec01cd06b1f041a",
+    ".agents/skills/jagt-protocol/references/agent_result_v1_spec.md": "e63a6344eaa02742c28b655da737f62ba3408e135446c635c3ece9de7fd4793e",
+    ".agents/skills/jagt-protocol/references/protocol_contract.md": "a000f54fea8ec025600e93991fcfffb1a3b01f61939e9612d08bbc9c1fcf81fb",
     ".agents/skills/jagt-protocol/scripts/jagt_lint_agent_result.sh": "bab585d2d3f93fb2af92f423f4c2082f9fd5ea127c594761a54a52058caf3212",
     ".agents/skills/jagt-protocol/scripts/jagt_lint_agent_task.sh": "f9ac837059230397c2a1de0311668b24f61135102000dd0646144c6cb138b95d",
     ".agents/skills/jagt-protocol/scripts/jagt_lint_agent_task_draft.sh": "d86cbaf6bc77ee2f70f5a14237eb9bdc0db2ee734e963266357a0e9e8ffd3233",
     ".agents/skills/jagt-protocol/scripts/run_protocol_demo.sh": "8f7883a20ae041357d54e74459cff72d77a89af7f5da9ff437302b74ad753dc6",
-    ".agents/skills/just/SKILL.md": "04d76d95213e1e77e291161025b35701d91762b028ded592092bdf86b8f39e66",
+    ".agents/skills/just/SKILL.md": "7ada3ee76619604045de5daad13b055881be934330f31b5a79fce0c72c23c35b",
     ".agents/skills/just/agents/openai.yaml": "c7ce3f44bded5f34dd32feb8fb1ce2d05b032cb31c7e8ceb74849e31bf4ab0fa",
     ".agents/skills/just/assets/templates/agent-contract.just": "0d7bc8e190e4da64a1c3d59f06e9d7c990ba265272c97c051844b6df88a77f85",
     ".agents/skills/just/assets/templates/browser-agent.just": "edfa2c9c7790ed0325dd573677ce0aba347a5b21af827911c5564f8a5157720a",
     ".agents/skills/just/assets/templates/go.just": "1a032632727803acf2f6739ec3aa80acfca1cca62cdbac9fec7d31fd699bce32",
     ".agents/skills/just/assets/templates/house-style.just": "463dd689459f1a890105943e1f0dd0cab9bbbd7c19a24af6a9924ba6dacd3db2",
     ".agents/skills/just/assets/templates/npm-local-cache.just": "104b57b6f7492ab1c632e98cfa30e18d62e3f70c897858f0683784cba6a2dda1",
-    ".agents/skills/just/assets/templates/python-uv.just": "7f4aad7a621c1c97c4ed293ec597deb4812bc9d414fc5805d15626230fbc19c2",
-    ".agents/skills/just/assets/templates/rust-cargo.just": "3eee2681548083b3614344592c24273797de70808d0fb9c34671698f7eb9a474",
-    ".agents/skills/just/assets/templates/typescript-npm.just": "f4615bba7fa1c66524fca2749f97b80802ada836ba37afe41e7b46e614df0044",
-    ".agents/skills/just/references/command_contract.md": "05b9e344a736580c69238fe7fa0d4161d9fcdb4dd29d910138f0908ae9cbb566"
+    ".agents/skills/just/assets/templates/python-uv.just": "8d16f54021042bcdca4d7ba5b7532165f5525e9fd264cfc8fa564134ec7dd402",
+    ".agents/skills/just/assets/templates/rust-cargo.just": "c34885624e63e42d5699dcbbf730d6ecb77639a4aabaef4a76e4238bd5324120",
+    ".agents/skills/just/assets/templates/typescript-npm.just": "bea190d495b633430a21f59fa9859769154d37b9c0254ab3c4aa32d76c14a3cd",
+    ".agents/skills/just/references/command_contract.md": "990e482968d7e22a22db402debecf4f417c928a50963e1563356809f0fd7c596",
+    ".agents/tools_check.py": "540065d3c007b343f99ad338bfb3c79015c96f70c5ab23ff5f514358e793861d"
   },
   "claude_links": [
     "cx",

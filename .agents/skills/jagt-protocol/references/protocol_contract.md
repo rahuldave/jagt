@@ -224,11 +224,15 @@ follow_up: []
 The required fields are `target`, `status`, `outputs`, `verification` and
 `follow_up`. When the task packet has a `nonce` field, the result also needs
 the top-level field `nonce` with the same value. The status is one of
-`success`, `partial`, `blocked`, `failed` and `cancelled`. A `blocked` or `failed` result must have an `error:` field with a
-`code` and a `message`.
+`success`, `partial`, `blocked`, `failed` and `cancelled`. A `blocked` or
+`failed` result must have an `error:` field with a `code` and a `message`.
 
 Use `partial` when some work or output exists but something required is still
-missing. The missing item can be a file, a value or a check.
+missing. The missing item can be a file, a value or a check. Use `blocked`
+only when the subagent made no output.
+
+[The spec of AGENT_RESULT v1](agent_result_v1_spec.md) gives each field and
+status in full, and what `jagt result lint` checks.
 
 #### Proposed tasks
 

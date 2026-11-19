@@ -1,4 +1,4 @@
-# jagt Testing Strategy
+# jagt testing strategy
 
 Status: proposed test plan for MVP implementation.
 
@@ -12,11 +12,11 @@ Status: proposed test plan for MVP implementation.
 The first kind belongs in normal `cargo test` / `just test` / `just verify`.
 The second kind belongs in explicit integration labs with saved transcripts.
 
-## Deterministic Test Layers
+## Deterministic test layers
 
 These tests should run without network access and without an LLM.
 
-### Unit Tests
+### Unit tests
 
 Add Rust unit tests near the modules they exercise:
 
@@ -40,7 +40,7 @@ Prefer test-first for each new callable surface. If a red test is awkward for a
 new parser boundary, write the smallest CLI integration test first and then add
 inner unit coverage as soon as the internal shape exists.
 
-### CLI Integration Tests
+### CLI integration tests
 
 Use `assert_cmd`, `predicates`, and `tempfile` under `tests/`.
 
@@ -57,7 +57,7 @@ Required deterministic CLI flows:
   target mismatch, status mismatch, report-only rejection, and required-file
   checks.
 
-### Contract Fixture Parity
+### Contract fixture parity
 
 Keep canonical fixtures derived from jagt's standalone protocol skill:
 
@@ -72,14 +72,14 @@ explicit fixture and a short note explaining why.
 The shell validators may be used as test oracles during development, but the
 Rust implementation must not shell out to them.
 
-## Live Agent Integration Labs
+## Live agent integration labs
 
 Live labs are not ordinary unit tests. They exercise the host LLM behavior that
 the Rust process cannot simulate. They should be explicit, slower, transcript
 based, and opt-in outside `just verify` unless a stable local agent runner is
 available.
 
-### Fresh AGENTS Lab
+### Fresh AGENTS lab
 
 Create a fresh temporary folder for each live lab. The lab bootstrap should
 write an `AGENTS.md` that copies the relevant agentic Just language from:
@@ -105,11 +105,12 @@ The fresh folder should also contain:
 - an expected transcript layout;
 - a validator script that checks saved artifacts after the LLM run.
 
-This lab catches the behavior the deterministic tests cannot: whether the LLM
-sees a packet emitted by a command, treats it as a handoff boundary, and does
-not silently execute the delegated work inline.
+This lab catches the behavior that the deterministic tests cannot. It checks
+whether the LLM sees a packet that a command emits, and treats the packet as a
+handoff boundary. It also checks that the LLM does not silently execute the
+delegated work inline.
 
-### Agent Reaction Lab
+### Agent reaction lab
 
 The first live lab lives in `integration_tests/live_agent_reaction/` and checks
 the single-hop handoff boundary:
@@ -127,7 +128,7 @@ the single-hop handoff boundary:
 The validator should reject transcripts where the parent computes the answer
 inline after seeing `AGENT_TASK v1`.
 
-### Sequential Recursive Lab
+### Sequential recursive lab
 
 The recursive lab lives in
 `integration_tests/live_agent_result_recursive/`. It is sequential in the test
@@ -167,13 +168,17 @@ Rust integration test exercises the bootstrap and validator with representative
 saved transcript artifacts; running a real LLM agent through the lab remains
 opt-in.
 
-## Command Contract Implications
+## Command contract implications
 
-The normal gate remains:
+The normal gate remains deterministic. `just test` runs the unit tests, and
+`just integration` runs the tests in `tests/`. `just verify` is the quick
+local check, and `just check` runs every step of the commit gate:
 
 ```bash
 just test
+just integration
 just verify
+just check
 ```
 
 When live labs are added, expose them separately so they never surprise normal

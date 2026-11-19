@@ -16,12 +16,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # rust-toolchain.toml names the toolchain, and rustup installs it on the first cargo call.
-      - name: Install rustfmt and clippy
-        run: rustup component add rustfmt clippy
-      - uses: extractions/setup-just@v2
-      # uv runs scripts/release_tag.py and scripts/cargo_version.py, also in the tests.
+      # rust-toolchain.toml names the toolchain, and rustup installs it on the first cargo call. The steps test and
+      # integration of the rust profile run the tests under cargo llvm-cov, which needs llvm-tools.
+      - name: Install rustfmt, clippy and llvm-tools
+        run: rustup component add rustfmt clippy llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: extractions/setup-just@v3
+      # uv runs the release script of the tasker role and the steps of the rust profile, also in the tests.
       - uses: astral-sh/setup-uv@v6
+      - name: Install jlog
+        # The index of jnterfaces sets jlog as the shell of each recipe, so each job that runs just needs jlog. The tag
+        # v0.3.0 of jlog is the commit d4b712b, as in the CI of jnterfaces. install.sh comes from the tag. It downloads
+        # the release binary, checks its SHA-256 and puts it in ~/.local/bin. setup-uv comes first, so install.sh makes
+        # the environments of the plugins. The step shell bash has pipefail, so a failed download fails.
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rahuldave/jlog/v0.3.0/scripts/install.sh | sh -s -- --tag v0.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Check the release version against the tags and the commits
         run: just release-check
       - name: Verify
@@ -44,7 +57,16 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v3
+      - name: Install jlog
+        # The index of jnterfaces sets jlog as the shell of each recipe, so each job that runs just needs jlog. The tag
+        # v0.3.0 of jlog is the commit d4b712b, as in the CI of jnterfaces. install.sh comes from the tag. It downloads
+        # the release binary, checks its SHA-256 and puts it in ~/.local/bin. setup-uv comes first, so install.sh makes
+        # the environments of the plugins. The step shell bash has pipefail, so a failed download fails.
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rahuldave/jlog/v0.3.0/scripts/install.sh | sh -s -- --tag v0.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Name the author of the tag
         run: |
           git config user.name "github-actions[bot]"
@@ -82,7 +104,19 @@ jobs:
         id: tag
         run: echo "tag=$(git tag --points-at HEAD --sort=-v:refname --list 'v*' | head -n 1)" >> "$GITHUB_OUTPUT"
       - if: steps.tag.outputs.tag != ''
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v3
+      - if: steps.tag.outputs.tag != ''
+        uses: astral-sh/setup-uv@v6
+      - name: Install jlog
+        if: steps.tag.outputs.tag != ''
+        # The index of jnterfaces sets jlog as the shell of each recipe, so each job that runs just needs jlog. The tag
+        # v0.3.0 of jlog is the commit d4b712b, as in the CI of jnterfaces. install.sh comes from the tag. It downloads
+        # the release binary, checks its SHA-256 and puts it in ~/.local/bin. setup-uv comes first, so install.sh makes
+        # the environments of the plugins. The step shell bash has pipefail, so a failed download fails.
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rahuldave/jlog/v0.3.0/scripts/install.sh | sh -s -- --tag v0.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install musl
         if: steps.tag.outputs.tag != '' && runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools

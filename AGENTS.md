@@ -2,6 +2,10 @@
 <!-- Last written to AGENTS.md by `install_stack.py --target . tasker`. The record is parts."AGENTS.md" in .agents/stack.json. -->
 Read and follow @.agents/instructions/tasker.md
 <!-- end lines of tasker. `just uninstall tasker` removes them. -->
+<!-- begin lines of prose, the prose role, from nossaifd at 7ab9e94. -->
+<!-- Last written to AGENTS.md by `just install --update`. The record is parts."AGENTS.md" in .agents/stack.json. -->
+Read and follow @.agents/instructions/prose.md
+<!-- end lines of prose. `just uninstall prose` removes them. -->
 
 # Agent Instructions
 
@@ -229,50 +233,79 @@ At every durable checkpoint, run these steps of hygiene:
 
 ## Project Command Contract
 
-The stable command interface is the repo-root `Justfile`.
+The stable command interface is the repo-root `Justfile`. `just install` of
+jnterfaces gives most of the recipes. They come from the rust profile of
+jnprofile-rust in `.agents/just/rust.just` and `.agents/just/rust/`, the
+tasker role of agent_gest_git_skills and the prose role of nossaifd in
+`.agents/just/roles/`, and the index `.agents/just/index.just`. The `Justfile` keeps only the recipes of jagt.
+Do not define in the `Justfile` a recipe that the installer gives, because
+just stops on a recipe defined twice. The index sets the shell of every recipe
+to `jlog sh -cu`, so the machine needs `jlog`, and each CI job that runs `just`
+installs it first.
 
 ```bash
+just install [--update]
 just setup
-just fmt [path]
+just fmt
 just fmt-check
 just lint
 just typecheck
 just static
 just build
-just test [target]
+just test
+just integration
+just coverage-check
 just smoke
+just protocol-demo
 just docs
 just diff-check
 just verify
 just release-check
 just check
-just release
-git diff --check
+just release [--dry-run]
 ```
 
 Current command mappings:
 
-- Setup: `just setup`, which runs `cargo fetch`.
-- Format: `just fmt [path]`, which runs `cargo fmt --all`. The optional path is
-  accepted for interface consistency but Cargo formatting is crate-wide.
-- Format check: `just fmt-check`, which runs `cargo fmt --all --check`.
-- Lint: `just lint`, which runs
-  `cargo clippy --all-targets --all-features -- -D warnings`.
-- Typecheck: `just typecheck`, which runs
-  `cargo check --all-targets --all-features`.
-- Static/compile check: `just static`, which currently depends on `typecheck`.
-- Build: `just build`, which runs `cargo build --all-targets --all-features`.
-- Tests: `just test [target]`, which runs
-  `cargo test --all-targets --all-features [target]`.
+- Install: `just install` installs again the set that `.agents/stack.json`
+  records. `--update` first pulls the jnterfaces clone in
+  `~/.local/share/skill-packages`. `just install --check` checks that the
+  record and the files agree.
+- Setup, format, lint, typecheck and build come from the rust profile, which
+  runs `cargo fetch`,
+  `cargo fmt --all`, `cargo clippy --workspace --all-targets --all-features
+  --locked -- -D warnings`, `cargo check --workspace --all-targets
+  --all-features --locked` and `cargo build --workspace`.
+- Tests: `just test` runs the unit tests and `just integration` the tests in
+  `tests/`, both under `cargo llvm-cov`. `just test-paths tests/x.rs` runs
+  some test files without coverage.
+- Coverage: `just coverage-check` fails on each changed line of code that no
+  test runs.
+- Static/compile check: `just static`, an alias of `typecheck`.
 - Smoke: `just smoke`, which runs `cargo run -- --help`.
+- Protocol demo: `just protocol-demo` runs the demo of the jagt-protocol
+  skill against `target/debug/jagt`.
+- Installed recipes: `just installed-recipes` checks that git tracks the
+  installed recipe files and that their recipes load.
 - Docs: `just docs`, which runs `cargo doc --no-deps`.
-- Diff hygiene: `just diff-check`, which runs `git diff --check`.
-- Full local verification: `just verify`, which depends on `fmt-check`, `lint`,
-  `typecheck`, `build`, `test`, `smoke`, and `diff-check`.
+- Diff hygiene: `just diff-check`, which runs `git diff --check` against
+  `HEAD`.
+- Quick local verification: `just verify`, which depends on `fmt-check`,
+  `lint`, `typecheck`, `build`, `test`, `integration`, `smoke`,
+  `protocol-demo`, `installed-recipes` and `diff-check`. The job `verify` of
+  `ci.yml` runs `just release-check`, then `just verify`.
+- Every check: `just check`, the check of the index, runs `tools-check`,
+  `release-check`, `fmt-check`, `lint`, `typecheck`, `test`, `integration`,
+  `coverage-check`, the skipped steps `docstring-check` and `docs-check`,
+  then `prose-check` and `diff-check`, and logs a pass with `jlog pass`. The
+  commit gate needs that pass.
+- Prose: the prose role of nossaifd gives `just prose-check`, which checks the
+  changed Markdown pages against the writing guide. `just prose` is the
+  agentic target of the tasker role, which the commit gate runs when a change
+  edits Markdown.
 - Release check: `just release-check` fails when the version of `Cargo.toml`
   is lower than the last tag `vX.Y.Z`, or lower than the bump that the
   conventional commits since that tag ask for. It needs no network.
-- Every check: `just check`, which runs `release-check`, then `verify`.
 - Release: `just release` tags HEAD with `v` and the version of `Cargo.toml`,
   pushes the tag and checks it. `just release --dry-run` prints the tag and
   changes nothing. On each push to `main`, the job `release` of
@@ -282,22 +315,14 @@ Current command mappings:
   release raises the version of `Cargo.toml` and adds its CHANGELOG section,
   and nobody tags by hand. Write each commit subject as a conventional
   commit, such as `fix: ...` or `docs: ...`, because the bump comes from them.
-- The script is `scripts/release_tag.py`, a copy of the script of the gpa
-  skill of agent_gest_git_skills, byte for byte the same as in cx.
-  `tests/release.rs` checks its blob. The script reads the profile `rust`
-  from `.agents/stack.json`, and runs `just rust::version` of
-  `scripts/rust.just`.
-- **Do not run `just install` as it stands.** Because `.agents/stack.json`
-  names the profile `rust`, the installer adds the rust profile of
-  jnterfaces, which defines the module `rust` again. The newer role of
-  agent_gest_git_skills also defines `release` and `release-check`. just
-  stops on a module or recipe defined twice, and the failed install leaves
-  `.agents/just/index.just` without its imports, so `just verify` fails.
-  Before the next `just install`, take out of the `Justfile` the line
-  `mod rust` and the recipes `release_tag`, `release` and `release-check`,
-  and delete `scripts/rust.just`, `scripts/cargo_version.py`,
-  `scripts/release_tag.py` and the tests of `tests/release.rs` that read
-  them. The installed profile and role then give the same recipes.
+- The script of `release` is `.agents/skills/gpa/scripts/release_tag.py` of
+  the tasker role. It reads the profile `rust` from `.agents/stack.json`, and
+  runs `just rust::version` of the rust profile. `tests/release.rs` checks
+  that the script is the file that the install recorded. The tasker role also
+  writes a starter `release.yml`; jagt deletes it, because `ci.yml` already
+  has the job that tags.
+- Pull requests: `.github/workflows/check.yml`, from the tasker role, runs
+  `just ci`, which checks the trailer of the commit gate on each commit.
 
 When changing Just recipes, consult the Just manual rather than treating it like
 Make. The key reference for recipe ordering is:

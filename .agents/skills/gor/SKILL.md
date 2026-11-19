@@ -19,7 +19,7 @@ gest iteration graph <id>
 gest project --json
 ```
 
-2. Read Gest memory for the iteration's area: inspect notes on current tasks
+2. Read Gest memory for the iteration's area. Inspect notes on current tasks
    and targeted `gest search "<area/topic>" --all --json --limit 20` hits,
    especially unresolved follow-ups and previous verification notes.
 3. Group tasks by phase.
@@ -29,7 +29,7 @@ gest project --json
    - independent code-touching tasks: use physical git worktrees/subagents
    - the branches of a stack run in order, from the bottom branch up, unless
      each task has its own physical worktree
-   - read-only review, test-design, and reconnaissance tasks: may use
+   - read-only review, test-design, and reconnaissance tasks can use
      sub-agents without separate worktrees when they do not write files or
      mutate Gest
 5. Claim with:
@@ -55,6 +55,9 @@ Exit code 75 means no task is currently available.
 Do not parallelize just because there are multiple tasks. Parallelize only when
 task independence and file ownership make it useful.
 
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes that each task of the iteration needs.
+
 ## Sub-Agent Roles
 
 Distinguish sub-agent roles before dispatch:
@@ -73,11 +76,25 @@ remain centralized unless a role is explicitly assigned those responsibilities.
 Writable sub-agents must have disjoint write scopes. Concurrent writable work
 uses physical git worktrees, one for each agent.
 
-Agentic Just targets add a mandatory delegation case: an emitted `AGENT_TASK v1`
+Agentic Just targets add a mandatory delegation case. An emitted `AGENT_TASK v1`
 block is a subagent handoff packet. The current agent validates the packet and
 delegates the parsed task rather than running it inline. Nested agentic Just
 calls, agentic dependencies, hook-triggered packets, and agentic verification
 targets inherit the same recursive subagent boundary.
+
+## The Shared Log And Worktree Records
+
+Each worktree of a repository writes to one log folder, `.agents/log/` of the
+main checkout. That folder holds the run log, the packets of the agentic
+targets and their records. So a fresh agent can review a change in another
+worktree, and the gate of the worktree that commits finds its record.
+
+- Each record names its tree. The gate counts a record only for the tree that
+  it commits, so the records of two worktrees do not mix.
+- Do not copy, move or write the files of the log folder. The hooks write them,
+  and the guard of the hooks stops a write to that folder.
+- A worktree commits on its own, with its own `just check` and records. Merge
+  its branch after the commit, in a separate step.
 
 ## Stacks With Plain Git
 

@@ -1,0 +1,42 @@
+repos:
+  # repos[repo=local] is a part of tasker, the tasker role, from agent_gest_git_skills at 58cfdba. The record is parts.".pre-commit-config.yaml" in .agents/stack.json.
+  - repo: local
+    hooks:
+      - id: commit-gate
+        name: commit gate
+        entry: uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]
+      # The gate runs once more on the message, and stamps the commit with the trailer that just ci-gate checks
+      - id: commit-gate-trailer
+        name: commit gate trailer
+        entry: uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py --hook commit-msg
+        language: system
+        always_run: true
+        stages: [commit-msg]
+      # What CI checks, on your machine before a push: the trailers, then the steps of the list ci
+      - id: just-ci
+        name: just ci
+        entry: just ci
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # repos[repo=https://github.com/pre-commit/pre-commit-hooks] is a part of tasker, the tasker role, from agent_gest_git_skills at 58cfdba. The record is parts.".pre-commit-config.yaml" in .agents/stack.json.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-json
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit, pre-merge-commit]
+      - id: detect-private-key
+        stages: [pre-commit, pre-merge-commit]

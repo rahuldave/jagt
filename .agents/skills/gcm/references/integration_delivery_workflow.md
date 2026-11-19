@@ -175,6 +175,165 @@ A project can use a protected tag or a manual release job. Protect its
 credentials, and verify the artifacts that it makes. Do not call a delivery of
 source only a package release.
 
+### Push a topic that has merged its PR base
+
+This procedure requires the tasker pre-push hook, which runs `just ci` and its
+`ci-gate` trailer check. Use the project's `just install` composition to install
+or refresh the tasker role. Commit through its hooks to generate the
+`Commit-Gate` trailers; this push command only checks them.
+
+Verify the PR's target branch on GitHub, then read its current remote tip with
+`git ls-remote origin refs/heads/<PR-target>`. Pin that tip's full commit SHA as
+the base. For a topic branch that already exists on the remote, set
+`JN_CI_BASE` to that verified SHA for the normal push:
+
+```bash
+JN_CI_BASE=<verified-PR-target-tip-SHA> git push origin <topic>
+```
+
+The gate checks every commit in `BASE..HEAD`. The range contains commits
+reachable from the pushed head, excluding those reachable from the selected
+base. This includes original feature commits and the local integration merge.
+
+The gate checks that the supplied base resolves to a commit and is an ancestor
+of the pushed head. It also checks that each commit of the base is already on
+the remote of the push. Fetch the PR target before the push, so that the
+remote-tracking branch holds its tip. A base of the topic, or of a commit that is
+new in this push, stops the push. The gate prints the number of commits that the
+base selects.
+
+Give `JN_CI_BASE` on the command line of the push only, and do not export it in
+the shell. The operator must verify that it is the PR target's tip; the gate
+does not validate PR acceptance. The hook supplies the pushed head, and a
+conflicting `JN_CI_HEAD` fails. Inspect the complete range with
+`git log <verified-PR-target-tip-SHA>..<topic>` before pushing. Do not select a
+topic commit as the base to omit unaccepted feature work. Never give the
+remote-tracking branch of the topic, such as `origin/<topic>`, as the base.
+
+Without an explicit base, the hook checks the ordinary push range, from the
+remote topic's old tip to its pushed head. For a new-history push, the pre-commit
+framework finds no shared history on the remote and supplies only the local
+branch. In that case, the gate checks all commits, even with `JN_CI_BASE` set.
+This setting does not establish independent review, CI success or acceptance.
+
+## Release tags
+
+Every repository gets semantic version tags. A semantic version is a number
+`X.Y.Z` with three parts, MAJOR, MINOR and PATCH. A release tag is an
+annotated Git tag `vX.Y.Z`. An annotated tag is a Git object with its own
+message, which you make with `git tag -a`. Follow these rules:
+
+- **Tag each release.** A merge to the integration branch that changes what a
+  project installs or runs gets a release tag. Push the tag to the remote. A
+  merge that changes only docs or only CI can wait for the next release, and
+  share its tag. The integration branch here is the branch that the project
+  releases from, usually the mainline. A merge to an experimental branch gets
+  no release tag.
+- **The merge authorization covers the tag.** The tag is part of the merge, so
+  you do not ask again before you push it. But if the push of a tag starts a
+  job that publishes a package, follow the delivery policy above, and ask
+  before you push when nobody authorized that publication.
+- **Choose the number by semver.** Raise MAJOR for a change that breaks an
+  installed project, MINOR for a new feature and PATCH for a fix. Below
+  `1.0.0`, a breaking change raises MINOR.
+- **Match the manifest.** A manifest is the file that names the package and its
+  version, such as `Cargo.toml`, `pyproject.toml` or `package.json`. When a
+  manifest has a version, the tag is that version with a `v` in front. Put the
+  tag on the commit that has that version. A version of a file format, such as
+  `"version": 1` in `skill-package.json`, is not a release version.
+- **Tag after the merge and the post-merge CI.** The post-merge CI is the CI
+  run on the integration branch after the merge. Tag only when it passes.
+- **Never move or delete a pushed tag.** Other projects and installs can pin
+  it. When a tagged release is wrong, release a new version.
+
+### Tag with `just release`
+
+Nobody tags by hand. `just release` makes the tag. It runs
+`.agents/skills/gpa/scripts/release_tag.py`, which needs only Python 3.9 and
+Git. The CI starter `.github/workflows/release.yml` runs `just check` on each
+push to `main`. When the check passes, it runs `just release`. The job has
+`contents: write`, to push the tag, and it runs no agent.
+
+The step `release-check` of `just check` runs the script with `--check`. So a
+commit or a PR that needs a higher version fails before the merge, and CI
+checks it through `just check`.
+
+The step needs no network and no remote. It fails on the errors of the
+version that the rules below list. In a shallow checkout, or in a checkout
+with no release tag, it says so and passes. So CI fetches the whole history
+and the tags first, with `fetch-depth: 0`.
+
+Where the gpa skill is not installed, `release-check` is a step that does nothing. jnterfaces adds the
+step to `just check`. Until it does, `just check` does not run it.
+
+The last tag is the newest tag `vX.Y.Z` that is an ancestor of HEAD. The
+script reads the messages of the commits since the last tag, and skips the
+merge commits. Each message is a conventional commit, such as
+`fix(cli): stop a crash`, and asks for a bump:
+
+| Message | Bump |
+|---|---|
+| A `!` after the type, as in `feat!:`, or a line `BREAKING CHANGE:` in the body | MAJOR, or MINOR below `1.0.0` |
+| `feat` | MINOR |
+| `fix`, `perf`, `refactor`, any other type, or a message that is not a conventional commit | PATCH |
+| `docs`, `test`, `ci`, `chore`, `style` | No release |
+
+A bullet line of the body with a conventional subject, such as
+`* feat!: drop the flag`, asks for its bump too. A squash commit of GitHub
+lists the commits of its PR that way. The largest bump of the commits gives
+the next number. With no tag yet, the next tag is `v0.1.0`.
+
+A language profile gives the version of its manifest with the recipe
+`<profile>::version`. The recipe prints `X.Y.Z`, or nothing when the manifest
+has no version, and it exits 2 when it cannot read the manifest. The Python
+profile reads `pyproject.toml`, the TypeScript profile `package.json`, and the
+Rust profile `Cargo.toml`. The recipe reads only the local file, and needs no
+network, because the step `release-check` runs it.
+
+The script runs the recipe of each profile in the key
+`profiles` of `.agents/stack.json`. A profile without the recipe, such as a
+profile from before the recipe came, gives no version. When a profile gives a version, these rules apply:
+
+- The tag is `v<version>`. The script makes it only when that tag does not exist
+  yet.
+- The script fails when two profiles give different versions.
+- The script fails when the version is lower than the last tag, or lower than
+  the bump that the commits ask for. So a PR that needs a bump also raises the
+  version of the manifest.
+- A version higher than the bump that the commits ask for is allowed.
+- With no tag yet, the tag is the version.
+
+These cases stop the script with an error:
+
+- The checkout is shallow, so the script cannot see the last tag.
+- The remote has a release tag that the checkout does not have, or has on
+  another commit. Then the next number can be wrong. Run
+  `git fetch --tags origin`, then run the script again.
+- A tag of the next number exists on another commit. The script does not move
+  it.
+
+When there is nothing to tag, the script prints `no release` and exits 0. So a
+second run on the same commit is safe. A tag at or above the next number on a
+later commit also gives `no release`. That case occurs when the CI of an older
+push ends after the CI of a newer push.
+
+When a project has no CI release job, run the release by hand after the
+post-merge CI passes, in a clean checkout of the integration branch:
+
+```bash
+just release --dry-run
+just release
+```
+
+The dry run prints the next tag and the reason, and changes nothing. Without
+it, the script makes an annotated tag on HEAD, pushes it and checks with
+`git ls-remote` that the remote tag points at HEAD.
+
+A tag is a release of the source. It is not a published package. If the
+project also publishes a package, follow the delivery policy above for that
+step.
+
+
 ## Issues and task completion
 
 Promote to GitHub each durable initiative and each feature that can ship on its
@@ -348,3 +507,10 @@ check ownership, so an agent runs it only when the user asks, after
 - [GitHub issue linking and non-default targets](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
 - [Required checks and skipped workflows](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
 - [GitHub approval restrictions](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews)
+
+## Recommendations
+
+Before pushing a topic that merged its base, verify the current remote PR-target
+tip and inspect the complete range from that tip to the topic. Set `JN_CI_BASE`
+to that tip's full SHA for the push. Check the PR's required CI results on
+GitHub for the exact published head, as the CI and delivery contract requires.

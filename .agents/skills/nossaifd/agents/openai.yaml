@@ -1,0 +1,3 @@
+interface:
+  display_name: "nossaifd"
+  short_description: "Write plain English docs and check them with the nossaifd checker"

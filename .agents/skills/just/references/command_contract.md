@@ -23,6 +23,9 @@ The page uses these terms:
 |---|---|
 | Recipe | A named command in a `Justfile`. |
 | Lab | A recipe in agent_gest_git_skills that runs a scenario and checks the result. |
+| Step | One recipe that `just check` runs, for example `lint`. |
+| jlog | The shell of each recipe that `just install` writes. It logs each line of a recipe. |
+| Run log | The file `.agents/log/just.jsonl`, with one line for each line of a recipe that ran. Git ignores it. |
 
 ## Standard concepts
 
@@ -47,7 +50,62 @@ Full local verification: just verify
 ```
 
 A project does not need every recipe. Keep a small contract with recipes that
-work. Do not add recipes that do nothing.
+work. A step with no tool is a no-op step that logs the skip.
+
+## The steps of just check
+
+`just check` runs the same steps in every project, for any language. Each
+step only checks. It never changes a file that git tracks, or a file that git
+does not ignore.
+
+| Step | What it checks |
+|---|---|
+| `tools-check` | That each program of `.agents/stack.json` is there, at its version floor. It installs and downloads nothing. |
+| `release-check` | That the next release tag will be valid. The tasker role (agent_gest_git_skills) gives it, and it needs no network. Without that role, the step logs a skip. |
+| `fmt-check` | The format of the code. `fmt` changes the format, and it stays outside `just check`. |
+| `lint` | The rules of the linter. |
+| `typecheck` | The types. |
+| `test` | The unit tests. |
+| `coverage-check` | That the tests run each changed line of code. |
+| `integration` | The integration tests. |
+| `docstring-check` | That each class, function and method has a doc. |
+| `docs-check` | The docs site, for example its links. |
+| `prose-check` | The prose of the changed pages, with the checker of nossaifd. |
+| `diff-check` | The changes against the last commit, for whitespace errors. |
+
+`just install` writes these recipes in the index, `.agents/just/index.just`:
+
+- **A combined step** runs the step of each language, and ends with the line
+  `jlog step NAME`. jlog runs the line only when each line before it passed,
+  and it logs the step in the run log.
+- **A no-op step** is a step that no profile, role or recipe of the Justfile
+  has. Its one line logs the skip, for example:
+
+  ```just
+  typecheck:
+    jlog skip typecheck "no type checker in this repository"
+  ```
+
+- **`check`** depends on each step, and its last line is `jlog pass`. jlog
+  then records a pass for the worktree.
+
+`.agents/stack.json` lists the steps under `steps`, and the steps that an
+installed profile or role provides under `provided_steps`. A skip counts for
+the pass only for a step that is not in `provided_steps`.
+
+A recipe of the Justfile with the name of a step takes the place of the step
+of the index. End it with `jlog step NAME`. The lint of steps finds a step
+that the run log cannot see. `just install` and `just install --check` run
+it. It names each step that has one of these:
+
+- **A shebang line or the attribute `[script]`.** The lines of such a recipe
+  do not run through jlog.
+- **A line with the prefix `-`.** just goes on when such a line fails.
+- **The attribute `[no-cd]` or `[working-directory]`.** jlog then looks for
+  the log folder in another folder. The setting `set working-directory` that
+  the installer writes into each module is allowed.
+- **No `jlog step NAME` or `jlog skip NAME` as the last line,** or no
+  `jlog pass` as the last line of `check`.
 
 ## Arguments
 
