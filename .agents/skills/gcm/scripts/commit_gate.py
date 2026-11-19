@@ -52,7 +52,12 @@ The release check: before it adds the trailer, the commit-msg hook runs `just re
 message file in `JN_RELEASE_MESSAGE`. `just check` ran before the message was written, so it could not count it. With
 the message, `release_tag.py --check` fails when the type of the commit, such as `fix:`, asks for a release and the
 version of the manifest is not raised. For an amend, it sets `JN_RELEASE_AMEND=1`, so the new message replaces the
-message of HEAD. The hook skips the check for a merge and for an amend of a merge, since the release skips merge
+message of HEAD, but only when `--amend` comes before any text of the message in the command that ps shows. A word
+`--amend` after the text sets `JN_RELEASE_AMEND=maybe`, and HEAD counts too. It puts
+the option `--cleanup` of git in `JN_RELEASE_CLEANUP`, or `unknown` when ps cannot tell it, and sets
+`JN_RELEASE_EDITOR=1` when the options show that git runs the editor, or `unknown` when an option after the text
+can hide it, so the check cleans up the message as git
+does. The hook skips the check for a merge and for an amend of a merge, since the release skips merge
 commits, during a rebase, and when the Justfile has no recipe `release-check`. The check stops the commit when it runs longer than
 120 seconds.
 
@@ -77,6 +82,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -201,6 +207,93 @@ def is_amend(argv: Sequence[str]) -> bool:
     """True for `git commit --amend`, also with an abbreviation of the option that git accepts, such as `--am`. A
     message can hold the same word, so the gate then applies the rules of both possible parents."""
     return any(len(word) >= 4 and "--amend".startswith(word) for word in argv)
+
+
+# The long options of git commit whose value can be text with spaces, so that ps shows its words as more words.
+TEXT_OPTIONS = ("--message", "--file", "--reuse-message", "--reedit-message", "--template", "--author", "--date",
+                "--trailer", "--fixup", "--squash", "--pathspec-from-file")
+# The short options of git commit that take a value: -m, -F, -C, -c and -t.
+TEXT_SHORT = "mFCct"
+
+
+def option_words(argv: Sequence[str]) -> Tuple[List[str], bool]:
+    """The options of `git commit` in ARGV up to the first word that may be text, such as the value of -m, and True
+    when no such word follows. Ps joins the words of each argument with spaces, so a message such as "docs: drop
+    --amend" gives the word --amend, which only the words before the message can tell apart."""
+    if "commit" not in argv:
+        return [], False
+    words = list(argv[argv.index("commit") + 1:])
+    sure = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if not word.startswith("-") or word == "--":
+            return sure, False
+        name = word.partition("=")[0]
+        if word.startswith("--"):
+            if len(name) >= 3 and any(option.startswith(name) for option in TEXT_OPTIONS):
+                return sure, False
+            sure.append(word)
+            if len(name) >= 3 and "--cleanup".startswith(name) and "=" not in word:
+                if index + 1 < len(words):
+                    sure.append(words[index + 1])
+                index += 1
+        elif any(letter in TEXT_SHORT for letter in word[1:]):
+            return sure, False
+        else:
+            sure.append(word)
+        index += 1
+    return sure, True
+
+
+def is_sure_amend(argv: Sequence[str]) -> bool:
+    """True when an option before any text of the command is --amend, so the commit is an amend."""
+    return is_amend(option_words(argv)[0])
+
+
+def cleanup_of(argv: Sequence[str]) -> Optional[str]:
+    """The value of the option --cleanup of git, also abbreviated as git accepts, such as `--cl=strip`. None when the
+    command has no such option, and `unknown` when ps cannot tell the command, or when a word that may be text of the
+    message looks like the option."""
+    if not argv:
+        return "unknown"
+    sure, complete = option_words(argv)
+
+    def values(words: Sequence[str]) -> List[str]:
+        found = []
+        for index, word in enumerate(words):
+            name, equals, value = word.partition("=")
+            negated = name.startswith("--no-")
+            bare = "--" + name[len("--no-"):] if negated else name
+            if len(bare) < 3 or not "--cleanup".startswith(bare):
+                continue
+            if negated:
+                found.append("default")
+            elif equals:
+                found.append(value)
+            else:
+                found.append(words[index + 1] if index + 1 < len(words) else "")
+        return found
+
+    if "commit" not in argv or (not complete and values(argv[argv.index("commit") + 1 + len(sure):])):
+        return "unknown"
+    given = values(sure)
+    return given[-1] if given else None
+
+
+def runs_editor(argv: Sequence[str]) -> bool:
+    """True when the options before any text of the command show that git runs the editor: -e or --edit, or no
+    option that gives the message."""
+    sure, complete = option_words(argv)
+    def short_letters(word: str) -> str:
+        # -S and -u take a value in the same word, such as -Skey, so the letters after them are no options.
+        letters = word[1:] if word.startswith("-") and not word.startswith("--") else ""
+        return re.split("[Su]", letters)[0]
+
+    if any(word == "--edit" or "e" in short_letters(word) for word in sure):
+        return True
+    gives = ("--no-edit", "--no-e", "--no-ed", "--no-edi")
+    return complete and bool(argv) and not any(word.startswith(gives) for word in sure)
 
 
 def resolve(root: Path, revision: str) -> Optional[str]:
@@ -742,11 +835,26 @@ def release_check(root: Path, message: Path) -> None:
         return
     env = plain_env()
     env["JN_RELEASE_MESSAGE"] = str(message.resolve())
+    argv = git_argv()
+    for name in ("JN_RELEASE_CLEANUP", "JN_RELEASE_EDITOR", "JN_RELEASE_AMEND"):
+        env.pop(name, None)
+    cleanup = cleanup_of(argv)
+    if cleanup is not None:
+        env["JN_RELEASE_CLEANUP"] = cleanup
+    # Git sets GIT_EDITOR=: only when it runs no editor, but a person may have set it too. An option such as -e can
+    # come after the text of -m or -F, where the gate cannot tell it from the text.
+    if runs_editor(argv):
+        env["JN_RELEASE_EDITOR"] = "1"
+    elif not option_words(argv)[1]:
+        env["JN_RELEASE_EDITOR"] = "unknown"
     head = resolve(root, "HEAD")
-    if head is not None and is_amend(git_argv()):
-        if len(git(["rev-list", "--parents", "-n", "1", head], root, plain_env()).split()) > 2:
+    if head is not None and is_amend(argv):
+        # Only a sure amend replaces the message of HEAD. A word --amend in the text of the message leaves HEAD
+        # counted, which asks for the same bump or a bigger one, and the check still stops on a tag on HEAD.
+        sure = is_sure_amend(argv)
+        if sure and len(git(["rev-list", "--parents", "-n", "1", head], root, plain_env()).split()) > 2:
             return  # An amend of a merge is a merge, and the release skips merge commits.
-        env["JN_RELEASE_AMEND"] = "1"
+        env["JN_RELEASE_AMEND"] = "1" if sure else "maybe"
     try:
         run = subprocess.run(["just", RELEASE_CHECK], cwd=root, env=env, stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, errors="replace", timeout=RELEASE_TIMEOUT)

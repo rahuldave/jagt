@@ -5,16 +5,20 @@
 the packet, with a nonce, and saves the packet file in `packets/` of the shared log folder. The record of the result
 comes later, from the `SubagentStop` hook or from `just record`.
 
-The prompt of the packet has three layers, in this order:
+The prompt of the packet has these parts, in this order:
 
 1. The base task: `references/targets/TARGET.md` in the one installed skill that has it, for example the `grv`
    skill for `review` or the `nossaifd` skill for `prose`.
-2. A language layer for each language of `.agents/stack.json`: `.agents/targets/LANGUAGE/TARGET.md`, when the
-   profile of the language ships it.
-3. The repository text: `.agents/targets/TARGET.md`, when the repository has it.
+2. A language layer, `.agents/targets/LANGUAGE/TARGET.md`, for each key of `code` in `.agents/stack.json` that
+   `profiles` does not name, when the file exists.
+3. The form of the result, with each field that `jagt result lint` needs, such as `follow_up`. A result without
+   one of these fields gives no record.
+4. A language layer for each name in `profiles`, when the profile of the language ships it.
+5. The repository text: `.agents/targets/TARGET.md`, when the repository has it.
 
-After the layers, the script adds the form of the result, with each field that `jagt result lint` needs, such as
-`follow_up`. A result without one of these fields gives no record.
+The script gives parts 1 to 3. jagt reads parts 4 and 5 itself and adds them after the prompt of the script, so the
+script leaves them out, and each layer is in the packet once. The script compares the layer files and not their
+names, so a second name of a file that jagt reads adds no layer.
 
 The input is the diff of the worktree against HEAD, with the files that git does not track yet and does not
 ignore. The tree of the worktree comes from a copy of the index, as in the gate, so a file that the index holds
@@ -30,6 +34,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -58,14 +63,15 @@ TARGETS: Dict[str, Tuple[str, ...]] = {
     "visualize": ("files",),
 }
 
-# The form of the result, after the layers of the prompt. jagt result lint refuses a block that has no `follow_up`,
-# and a base task can leave it out, so the script adds the form to each packet.
+# The form of the result, after the layers that the script gives. jagt result lint refuses a block that has no
+# `follow_up`, and a base task can leave it out, so the script adds the form to each packet.
 RESULT_FORM = """## The form of the result
 
 End with one `AGENT_RESULT v1` block, in this form. The block must have each of the fields `target`, `nonce`,
 `status`, `outputs`, `verification` and `follow_up`. `jagt result lint` refuses a block that does not have one of
 these fields, and then the result gives no record. `follow_up` is a list of the work that is left for later, for
-example `- Rename the helper in a later change.` When no work is left, it is `[]`.
+example `- Rename the helper in a later change.` When no work is left, it is `[]`. The rules that follow
+this form, when there are any, add to the task. The result keeps this form.
 
     <<<AGENT_RESULT v1>>>
     target: {target}
@@ -80,6 +86,8 @@ example `- Rename the helper in a later change.` When no work is left, it is `[]
 """
 
 STACK = ".agents/stack.json"
+# A plain language name, as jagt reads it: a letter or a digit, then letters, digits, `_`, `.` and `-`.
+LANGUAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 # The install of jagt that the hint gives: the release binary first, the build from source second.
 JAGT_INSTALL = ("`curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/7ea80a99492fe5eed5d7fa9b9a4e1ba08599463a/scripts/install.sh | sh -s -- --tag v0.6.3`, "
                 "then put ~/.local/bin on PATH. To build it from source instead, run `cargo install --locked --git "
@@ -181,23 +189,84 @@ def base_task(root: Path, target: str) -> Path:
     return found[0]
 
 
-def languages(root: Path) -> List[str]:
-    """The languages of the project: the keys of `code` in `.agents/stack.json`, in their order."""
+def stack(root: Path) -> Dict[str, object]:
+    """The content of `.agents/stack.json`, or an empty dict when the file is missing or is not a JSON object."""
     try:
-        code = json.loads((root / STACK).read_text()).get("code", {})
-    except (OSError, ValueError, AttributeError):
-        return []
-    return [name for name in code if isinstance(name, str) and "/" not in name] if isinstance(code, dict) else []
+        content = json.loads((root / STACK).read_text())
+    except (OSError, ValueError):
+        return {}
+    return content if isinstance(content, dict) else {}
+
+
+def plain_names(names: object) -> List[str]:
+    """The plain language names of a list or of the keys of a dict, in their order, each name once."""
+    found: List[str] = []
+    for name in names if isinstance(names, (list, dict)) else ():
+        if isinstance(name, str) and LANGUAGE_NAME.fullmatch(name) and name not in found:
+            found.append(name)
+    return found
+
+
+def languages(root: Path) -> Tuple[List[str], List[str]]:
+    """The languages of the project, from `.agents/stack.json`: the names in `profiles`, which jagt reads, and the
+    keys of `code` that `profiles` does not name, which only this script reads."""
+    content = stack(root)
+    profiles = plain_names(content.get("profiles"))
+    code = content.get("code")
+    # A key of code keeps the rule that the script had before: any name that is one folder, such as c++. jagt reads
+    # no key of code, so a stricter rule would drop its layer.
+    keys = [name for name in code if isinstance(name, str) and "/" not in name and "\\" not in name
+            and name not in ("", ".", "..")] if isinstance(code, dict) else plain_names(code)
+    others: List[str] = []
+    for name in keys:
+        if name not in profiles and name not in others:
+            others.append(name)
+    return profiles, others
+
+
+def layer_file(root: Path, relative: str) -> Optional[Path]:
+    """The layer file `root/relative` when it has text, or None when it is missing or holds only blank lines, as jagt
+    reads a layer. A file whose real path is outside `.agents/targets` stops the render, as in jagt, so a link cannot
+    put another file into the packet."""
+    path = root / relative
+    if not path.exists():
+        return None
+    # As in jagt, only the root is a real path, so a link at .agents/targets leads outside it too.
+    targets = root.resolve() / ".agents/targets"
+    try:
+        path.resolve().relative_to(targets)
+    except ValueError:
+        raise Stop(f"{relative} leads outside .agents/targets, so the packet does not hold it")
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Stop(f"cannot read {path}: {exc}")
+    return path if text.strip() else None
+
+
+def file_id(path: Path) -> Tuple[int, int]:
+    """The device and the inode of the file that path leads to, the same for each name of one file."""
+    info = path.stat()
+    return info.st_dev, info.st_ino
 
 
 def prompt(root: Path, target: str) -> Tuple[str, List[str]]:
-    """The text of the prompt, from the layers, and the paths of the layers, relative to the root."""
+    """The text of the prompt, and the paths of its layers, relative to the root. jagt adds the language layers of
+    `profiles` and the repository text itself, after this text, so the prompt leaves them out."""
+    profiles, others = languages(root)
+    # The files that jagt reads itself. A name that differs only in case, on a disk that ignores case, or a link
+    # can give the same file a second name, so the script compares the files and not the names.
+    seen = set()
+    for relative in [f".agents/targets/{name}/{target}.md" for name in profiles] + [f".agents/targets/{target}.md"]:
+        path = layer_file(root, relative)
+        if path is not None:
+            seen.add(file_id(path))
     layers = [base_task(root, target)]
-    layers += [path for path in (root / f".agents/targets/{name}/{target}.md" for name in languages(root))
-               if path.is_file()]
-    own = root / f".agents/targets/{target}.md"
-    if own.is_file():
-        layers.append(own)
+    for name in others:
+        path = layer_file(root, f".agents/targets/{name}/{target}.md")
+        if path is not None and file_id(path) not in seen:
+            seen.add(file_id(path))
+            layers.append(path)
     parts = []
     for path in layers:
         try:
@@ -314,6 +383,8 @@ def render(root: Path, target: str, args: Sequence[str]) -> int:
     command += [f"--allowed-action={action}" for action in ALLOWED[target]]
     command += [f"--required-output={output}" for output in TARGETS[target]]
     print("The layers of the prompt: " + ", ".join(layers), file=sys.stderr)
+    print("jagt adds the language layers of profiles and the repository text; the provenance of the packet names "
+          "them", file=sys.stderr)
     run = subprocess.run(command, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
                          errors="replace")
     sys.stdout.write(run.stdout)
