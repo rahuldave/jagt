@@ -89,9 +89,9 @@ STACK = ".agents/stack.json"
 # A plain language name, as jagt reads it: a letter or a digit, then letters, digits, `_`, `.` and `-`.
 LANGUAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 # The install of jagt that the hint gives: the release binary first, the build from source second.
-JAGT_INSTALL = ("`curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/7ea80a99492fe5eed5d7fa9b9a4e1ba08599463a/scripts/install.sh | sh -s -- --tag v0.6.3`, "
+JAGT_INSTALL = ("`curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/v0.6.4/scripts/install.sh | sh -s -- --tag v0.6.4`, "
                 "then put ~/.local/bin on PATH. To build it from source instead, run `cargo install --locked --git "
-                "https://github.com/rahuldave/jagt --tag v0.6.3 jagt`")
+                "https://github.com/rahuldave/jagt --tag v0.6.4 jagt`")
 
 
 class Stop(Exception):
