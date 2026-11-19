@@ -1,0 +1,44 @@
+# The checks that run before every commit and merge. The tasker role installs them as the git hooks.
+# None of them changes a file: `just fmt-check` and `just diff-check` cover the format.
+repos:
+  # The commit gate: it stops a commit without a pass of `just check` and the records of the targets
+  - repo: local
+    hooks:
+      - id: commit-gate
+        name: commit gate
+        entry: uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]
+      # The gate runs once more on the message, and stamps the commit with the trailer that just ci-gate checks
+      - id: commit-gate-trailer
+        name: commit gate trailer
+        entry: uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py --hook commit-msg
+        language: system
+        always_run: true
+        stages: [commit-msg]
+      # What CI checks, on your machine before a push: the trailers, then the steps of the list ci
+      - id: just-ci
+        name: just ci
+        entry: just ci
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # Checks of any file, at a commit only: just ci covers a push
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-json
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit, pre-merge-commit]
+      - id: detect-private-key
+        stages: [pre-commit, pre-merge-commit]

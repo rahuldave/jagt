@@ -282,7 +282,18 @@ installed to run `just protocol-demo`.
 
 ## Commands
 
+`just install` runs the installer of jnterfaces, which gives most of the
+recipes. They come from the rust profile of jnprofile-rust, the tasker role of
+agent_gest_git_skills and the prose role of nossaifd. A profile holds the
+tools of one language, and a role holds the recipes of one skill package.
+
+Each recipe runs its commands through `jlog`, which logs the run. So you need
+`just`, `uv`, `jlog`, `git`, `rustup`, `cargo-llvm-cov`, `gh`, `gest`, `cx`
+and `jagt` on the `PATH`. `just tools-check` names each missing program that
+`.agents/stack.json` records. It does not check `cargo-llvm-cov`.
+
 ```bash
+just install
 just setup
 just fmt
 just fmt-check
@@ -290,14 +301,21 @@ just lint
 just typecheck
 just build
 just test
+just integration
 just smoke
 just protocol-demo
 just docs
+just prose-check
 just verify
+just check
 ```
 
-`just verify` runs formatting checks, clippy, typecheck, build, tests, smoke
-help output, the standalone protocol demo, and whitespace hygiene.
+`just verify` is the quick local check. It runs the format check, clippy,
+typecheck, build, the unit and integration tests, the smoke run, the protocol
+demo, a check of the installed recipes, and whitespace hygiene. `just check`
+runs every step of the commit gate, among them the release check, the coverage
+check and `just prose-check`. `just prose-check` checks the changed Markdown
+pages against the writing guide of nossaifd.
 
 ## Fresh Codex kickoff
 
@@ -318,9 +336,10 @@ current state of the MVP, the minimum viable product.
 holds the design that the MVP implements. The staged plan of its implementation is
 in
 [docs/jagt-mvp-implementation-plan.md](https://github.com/rahuldave/jagt/blob/main/docs/jagt-mvp-implementation-plan.md).
-All MVP slices are done, and so are the fixes of the final review. CI runs
-`just verify` on each pull request. The changes of each version are in
-[CHANGELOG.md](CHANGELOG.md).
+All MVP slices are done, and so are the fixes of the final review. On each
+pull request, `ci.yml` runs `just release-check` and `just verify`. Also,
+`check.yml` runs `just ci`, which checks that each commit passed the commit
+gate. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 jagt has no formal schema. The protocol contract of the `jagt-protocol` skill,
 from jnterfaces, defines each packet, and the lint commands check it.

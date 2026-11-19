@@ -60,6 +60,9 @@ The main checkout is the first worktree of the repository.
 
 - **`references/protocol_contract.md`** has the full packet contract. Read it
   when a fresh agent context needs the contract.
+- **`references/agent_result_v1_spec.md`** is the canonical spec of
+  `AGENT_RESULT v1`. It gives the fields, the statuses and what
+  `jagt result lint` checks. The jagt repository keeps a copy.
 - **`scripts/run_protocol_demo.sh [jagt-bin]`** runs a deterministic demo. It
   sends a task, receives a result, checks recursive results and promotes a
   draft. It renders with `--no-save`, so it writes no packet file. Its
@@ -73,8 +76,20 @@ The main checkout is the first worktree of the repository.
 
 Run `jagt --version`. The skill needs jagt 0.3.0 or later. If
 `jagt render --help` does not list `--no-save`, the installed `jagt` is older
-than the nonce. Then build `jagt` from its repository,
-https://github.com/rahuldave/jagt, or set `JAGT_BIN` to a newer binary.
+than the nonce. Then install the release binary of jagt with this line. It
+puts jagt in `~/.local/bin`, so put that folder on PATH.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/7ea80a99492fe5eed5d7fa9b9a4e1ba08599463a/scripts/install.sh | sh -s -- --tag v0.6.3
+```
+
+To build `jagt` from source instead, run `cargo install --locked --git
+https://github.com/rahuldave/jagt --tag v0.6.3 jagt`. Or set `JAGT_BIN` to a
+newer binary.
+
+The link checks of `jagt result lint --check-files` need jagt 0.6.0 or later. Older
+versions pass a symbolic link that leads out of the base folder, and a file
+with a second hard link.
 
 The older `validate_agent_*.sh` shell validators are legacy. This skill does
 not ship them. Use the `jagt` wrappers.

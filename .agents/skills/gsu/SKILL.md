@@ -10,10 +10,15 @@ Use when a repository needs first-time setup, workflow refresh, command-contract
 normalization, project tool selection, or migration toward reusable Gest/Codex
 skills.
 
-`gsu` deals in project concepts. It should not bake one language, package
-manager, or test runner into the reusable skills. Instead, it helps the user
-choose tools, records those choices in `AGENTS.md`, and creates or updates the
-executable command interface, preferably a `Justfile`.
+`gsu` deals in project concepts. The profiles own the tools of each language.
+A profile is the setup package of one language, such as jnprofile-python,
+jnprofile-typescript or jnprofile-rust. `just install` of jnterfaces installs
+it. `gsu` runs `just install`, asks the setup questions and checks the tools.
+It records the recipes in `AGENTS.md`, and it creates or updates the
+`Justfile`.
+
+The reusable skills name recipes such as `just lint`, and never a
+tool of a language.
 
 ## Integration and delivery policy
 
@@ -52,51 +57,53 @@ Identify which of these concepts apply to the project:
 
 ## Workflow
 
-1. Inspect the repository shape: VCS state, `.gitignore`, `AGENTS.md`,
-   existing `.agents/skills`,
-   `Justfile`, `.envrc`, package manifests, lockfiles, CI configs, docs, test
-   directories, source directories, and app entrypoints.
+1. Inspect the shape of the repository. Look at the VCS state, `.gitignore`,
+   `AGENTS.md`, the existing `.agents/skills`, `.agents/stack.json`, the
+   `Justfile`, `.envrc`, the package manifests, the lockfiles, the CI configs,
+   the docs, the test and source directories, and the app entrypoints.
 2. Initialize Git or Gest only when missing and after confirming the desired
    repository root. Use `git init` and `gest init --local` for this Git-oriented
    skill family; keep jj support in a separate parallel skill repository.
-3. Check required workflow executables: `git`, `gest`, `just`, and `uv`.
-   Missing tools should be reported clearly without blocking skill
+3. Check the required workflow executables, which are `git`, `gest`, `jagt`
+   0.6.3 or later, `just` and `uv`. Missing tools should be reported clearly without blocking skill
    installation. Treat `direnv` as recommended unless the project contract
    requires it. Check `cx` only when the project has or wants explicit
    file-producing incremental build/pipeline stages.
 4. Read the saved profile first. `.agents/stack.json` names the profiles of
-   the project, such as `python` or `typescript`, and the tools that
-   `just install` added. Use them, and do not guess again. Infer a profile
-   only when that file has none, and then save it with
-   `just install --profile NAME`. Infer likely project profiles from files and
-   user context. Examples:
-   - Python: `pyproject.toml`, `uv.lock`, `pixi.toml`, notebooks, FastAPI,
-     Django, Flask, pytest, ruff, ty, pyright, mypy.
-   - TypeScript/JavaScript: `package.json`, lockfiles, Vite, Next, ESLint,
-     Biome, TypeScript, Vitest, Jest, Playwright.
-   - Rust: `Cargo.toml`, Cargo workspaces, clippy, rustfmt, rustdoc.
-   - C/C++ or native build: `Makefile`, `CMakeLists.txt`,
-     `compile_commands.json`, `src/*.c`, `src/*.cc`, `include/`, object files,
-     custom compile/link recipes.
-5. Ask the user to choose when multiple plausible tools exist, when profile
-   tradeoffs affect committed files, or when installation
-   would change the machine or repository. Prefer one concise question at a
-   time.
+   the project, such as `python`, `typescript` or `rust`, and the tools that
+   `just install` added. Use them, and do not guess again. When that file has
+   no profile, find the language from the manifest files and the user context:
+   - Python: `pyproject.toml`, `uv.lock`, `pixi.toml`, notebooks.
+   - TypeScript/JavaScript: `package.json` and its lockfiles.
+   - Rust: `Cargo.toml` and Cargo workspaces.
+   - C, C++ and other native code have files such as `Makefile`,
+     `CMakeLists.txt`, `compile_commands.json`, `src/*.c`, `src/*.cc` and
+     `include/`.
+
+   Then run `just install --profile NAME`. It installs the default tools of
+   the profile and saves the profile in `.agents/stack.json`. No profile
+   covers native code, so use Profile Synthesis for it.
+5. Ask the user to choose when the choice has consequences. Examples are an
+   optional tool of a profile, such as `just install typecheck`, a profile
+   tradeoff that affects committed files, and an install that changes the
+   machine or the repository. Ask one short question at a time.
 6. Create or update ignore rules for generated files, local environments,
    caches, logs, build artifacts, and project-local tool installs. Start from a
    base ignore snippet, then layer on language/runtime snippets.
 7. Create or update `.env.example`, `.envrc`, and project-local PATH setup when
    the project uses environment variables or local tool installs.
-8. Install or sync project dependencies through the chosen package manager when
-   the user approves.
+8. Install or sync the project dependencies with `just setup` when the user
+   approves.
 9. Define the project command contract in `AGENTS.md`. Map each applicable
    concept to the command agents should run, including focused arguments.
-10. Create or update the `Justfile` when the project uses `just`. Keep target
-   names stable and let targets call the project-specific tools.
+10. Create or update the `Justfile`. Keep the target names stable. The recipes
+   of the profiles run the tools. Write a recipe in the `Justfile` only for a
+   concept that no profile has.
 11. Create or update setup docs, docs/test directory expectations, and
    project-specific invariants in `AGENTS.md`.
-12. Run setup verification: command discovery (`just --list`), the cheapest
-   static checks, and targeted commands that prove argument passing works.
+12. Verify the setup. Run `just --list`, then `just check`, then targeted
+   commands that prove that the targets pass their arguments. The other skills
+   need `just check`, so the setup is not complete until it passes.
 13. Record remaining setup gaps as Gest follow-ups rather than hiding them.
 
 ## Package Install Handoff
@@ -119,9 +126,10 @@ Before ordinary setup work, verify that the expected package handoff is present:
   still needs the template guidance merged
 
 If hooks/settings or AGENTS guidance are missing, tell the user to invoke
-`gest_git_installer` first. Once the handoff is present, proceed with normal
-`gsu` work: tool checks, ignore rules, dependency setup, command contracts,
-Justfile targets, verification commands, and follow-up tasks.
+`gest_git_installer` first. When the handoff is present, do the normal `gsu`
+work. That work is the tool checks, the ignore rules, the dependency setup, the
+command contracts, the Justfile targets, the verification commands and the
+follow-up tasks.
 
 ## Skill Repository Packaging
 
@@ -157,7 +165,7 @@ Installer scripts must report every required workflow
 executable without blocking the skill copy and mention optional executables
 that unlock extra flows.
 
-Required workflow executables are `git`, `gest`, `just`, and `uv`; optional
+Required workflow executables are `git`, `gest`, `jagt` 0.6.3 or later, `just`, and `uv`; optional
 executables include `rsync`, `gh`, `ast-grep`, `direnv`, and `cx`.
 Runtime commands should re-check tools they actually need.
 
@@ -229,8 +237,8 @@ Docs check: just docs
 ```
 
 For browser-based integration tests or spot checks, include both sides of the
-contract: a run-app target such as `just dev [port]`, and a browser target such
-as `just browser [url-or-flow]`. Browser checks should either start from the
+contract. One side is a run-app target such as `just dev [port]`. The other
+side is a browser target such as `just browser [url-or-flow]`. Browser checks should either start from the
 documented run-app target or explicitly confirm that the expected server is
 already running.
 
@@ -240,22 +248,26 @@ instead of hard-coding language tools.
 ## Tool Installation Policy
 
 A project assumes two programs only, `just` and `uv`. Get every other tool
-through `just install TOOL`, which runs the command of the profile, such as
-`uv add --group lint ruff pre-commit`. For TypeScript, uv runs node and npm
-from the `nodejs-wheel` package. Do not install a tool on the machine
-when `just install` can add it to the project.
+through `just install TOOL`, such as `just install lint`. The profile runs the
+command that adds the tool to the project, such as `uv add --group` or an npm
+install. For TypeScript, uv runs node and npm from the `nodejs-wheel` package.
+Do not install a tool on the machine when `just install` can add it to the
+project.
 
-Check the required toolchain before running setup commands. A required tool may
-be missing, and no profile may have it. Then ask the user before installing it,
-and prefer the least surprising installer for their platform/project. Use the project
-package manager where possible. Examples:
+Do not name the tool in the command contract. Name the recipe that
+runs it.
 
-- Python: prefer `uv`, `pixi`, or the tool already chosen by the project.
-- TypeScript/JavaScript: prefer the detected package manager (`pnpm`, `npm`,
-  `bun`, or `yarn`) and use package-manager exec commands.
-- Rust: prefer `rustup`/`cargo` conventions already present in the project.
-- Go: prefer the standard Go toolchain first (`gofmt`, `go test`, `go build`,
-  `go vet`) unless the project already uses a separate tool.
+Check the required toolchain before you run setup commands. A required tool can
+be missing when no profile has it. Then ask the user before you install it, and
+use the least surprising installer for the platform and the project. Use the
+package manager of the project where possible. Examples:
+
+- Python: use `uv`, `pixi`, or the tool that the project already chose.
+- TypeScript/JavaScript: use the detected package manager (`pnpm`, `npm`,
+  `bun` or `yarn`).
+- Rust: use the `rustup` and `cargo` conventions of the project.
+- Go: use the standard Go toolchain, unless the project already uses another
+  tool.
 
 Common checks:
 
@@ -276,13 +288,14 @@ cx --help
 
 Profile install prompts should be concrete:
 
-- Python/uv: `just install lint test`, then `uv sync`.
+- Python/uv: `just install lint test`, then `just setup`.
 - TypeScript/npm: `just install lint typecheck`, then `just setup`. Ask before
-  installing an alternate package manager.
-- Go: ask before installing Go; then use `go mod tidy` or `go test ./...` to
-  populate module state.
-- Rust: ask before installing Rust via `rustup`; then use Cargo commands.
-- Browser UI: ask before installing browser-agent runtime with
+  you install another package manager.
+- Rust: ask before you install Rust with `rustup`. Then run
+  `just install --profile rust`, which checks `cargo`.
+- Go: ask before you install Go. No profile covers Go, so use Profile
+  Synthesis.
+- Browser UI: ask before you install the browser-agent runtime with
   `npx agent-browser install` or the global `agent-browser install`.
 
 Prefer project-local dependency state and version pins:
@@ -292,8 +305,8 @@ Prefer project-local dependency state and version pins:
 - TypeScript/npm: dependencies live in `node_modules/`; commit
   `package-lock.json`; use a project-local npm cache such as
   `.local/npm-cache` when useful.
-- Browser-agent in Node projects: prefer a dev dependency plus
-  `npm exec -- agent-browser ...` for a pinned project-local CLI. Use
+- Browser-agent in Node projects. For a pinned project-local CLI, use a dev
+  dependency and `npm exec -- agent-browser ...`. Use
   `npx agent-browser ...` when the project has no Node package setup or the user
   wants on-demand execution.
 - Go: commit `go.mod` and `go.sum` when generated; the Go toolchain itself is
@@ -344,8 +357,8 @@ Good setup candidates:
 - Hand-written C/C++ compile/link recipes with object files and binaries as
   explicit outputs.
 
-Do not add `cx` for tests, lint, format, typecheck, browser checks, ordinary
-`cargo build`, `go build`, `tsc`, or commands without durable file outputs.
+Do not add `cx` for tests, lint, format, typecheck, browser checks, the
+ordinary build of a compiler, or commands without durable file outputs.
 Those stay ordinary project command-contract targets.
 
 When adding `cx`:
@@ -367,43 +380,20 @@ For the full rules and worked examples, read the `cx` skill of jnterfaces,
 are enough to start; the source is https://github.com/rahuldave/jnterfaces.
 The recipe `just cx-examples-lab` of agent_gest_git_skills runs the examples.
 
-For npm projects, prefer a project-local cache when the user wants explicit
-per-project tooling or the global npm cache is unreliable:
-
-```just
-export npm_config_cache := ".local/npm-cache"
-```
-
 ## Profile Notes
 
-For a simple Node-targeted TypeScript project, a good starting profile is:
+The profile packages hold the starting setup of each language. Read the README
+of the profile for its tools, recipes and config files:
 
-- package manager: `npm` unless another lockfile is present
-- formatter/linter: Biome for a small single-tool default, or the project's
-  existing ESLint/Prettier setup
-- typecheck/build: TypeScript
-- tests: Node's built-in `node:test` for tiny projects, or the detected test
-  runner for existing projects
-- dev dependencies: `typescript`, `@types/node`, and the chosen formatter/linter
-- lint defaults: source and config files, not generated outputs such as `dist/`
+- `python`: https://github.com/rahuldave/jnprofile-python
+- `typescript`: https://github.com/rahuldave/jnprofile-typescript. It puts the
+  npm cache in `.local/npm-cache`.
+- `rust`: https://github.com/rahuldave/jnprofile-rust. Ask whether to commit
+  `Cargo.lock`. Apps usually commit it, and libraries can leave it out.
 
-For a simple Rust/Cargo project, a good starting profile is:
-
-- formatter: `cargo fmt --all`
-- lint: `cargo clippy --all-targets --all-features -- -D warnings`
-- typecheck: `cargo check --all-targets --all-features`
-- build: `cargo build --all-targets --all-features`
-- tests: `cargo test --all-features`
-- docs: `cargo doc --no-deps`
-- ask whether to commit `Cargo.lock`; apps usually should, libraries may not
-
-For a simple Go project, a good starting profile is:
-
-- formatter: `gofmt -w .`
-- lint/static check: `go vet ./...`
-- typecheck/build: `go build ./...`
-- tests: `go test ./...`
-- docs: `go doc ./...` when useful
+A language with no profile, such as Go or C, gets its recipes from Profile
+Synthesis. Write the recipes `fmt`, `lint`, `typecheck`, `build`, `test` and
+`docs` in the `Justfile`, so that the skills can run them.
 
 ## Browser Setup
 
@@ -456,8 +446,8 @@ hiding important source artifacts. Common setup-owned ignores include:
 
 - local environment directories such as `.venv/`
 - project-local tool installs such as `.local/`
-- language caches such as `.ruff_cache/`, `.pytest_cache/`, `node_modules/`,
-  `target/`, and build outputs
+- the caches and build outputs of each language. The profiles write their own
+  ignore lines, so add only the lines that no profile covers
 - browser-agent local state and artifacts such as `.agent-browser-home/`,
   `browser-data/`, screenshots, and recordings
 - local secrets such as `.env`
@@ -508,8 +498,8 @@ When creating or updating a `Justfile`, consult:
 - Just dependencies: https://just.systems/man/en/dependencies.html
 - Just skill reference: https://raw.githubusercontent.com/casey/just/refs/heads/master/skills/just/SKILL.md
 
-For Just, dependency order is meaningful: dependencies run before the recipe
-that depends on them, and in the listed order. Use native recipe dependencies
+For Just, the order of the dependencies has a meaning. The dependencies run
+before the recipe that depends on them, in the listed order. Use native recipe dependencies
 for ordered aggregate recipes, such as:
 
 ```just
@@ -521,8 +511,8 @@ verify: lint typecheck static test smoke diff-check
 
 Prefer this over recursively calling `just lint`, `just typecheck`, and so on
 inside `verify`. Dependencies with the same arguments run once per `just`
-invocation. This is ordered recipe composition, not Make-style file freshness
-analysis.
+invocation. The dependencies give the order of the recipes. They do not check
+whether files are fresh, as Make does.
 
 ## Deliverable
 
@@ -545,7 +535,9 @@ Declare mainline and persistent integration branches in project instructions.
 Select the work's target before creating a topic. Map local verification to CI
 for all supported PR bases and relevant integration pushes; define stable
 required checks and explicit release triggers. Do not conflate experimental
-merges with publication. Test installation into an existing project, preserve
+merges with publication.
+
+Test installation into an existing project, preserve
 its instructions/settings, and record source revision. Record ownership and
 cleanup for temporary servers, ports, children and directories. For parallel
 physical worktrees, set up an owner/path/topic-branch record and separately

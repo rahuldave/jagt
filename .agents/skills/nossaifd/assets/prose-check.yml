@@ -1,0 +1,25 @@
+# Check each page that a pull request adds or changes with the checker of the nossaifd skill, or with the checker
+# that the map .agents/nossaifd-checkers.json of the project names for the page. It fails on a hard problem.
+# Keep the event pull_request: the map names a program to run, and pull_request_target would give it the
+# secrets. It does not run the pass of the declaude skill, by Oskar Austegard, which needs a model. The hooks
+# of the agent ask for that pass. The skill must be committed in .agents/skills/nossaifd for this workflow to run.
+name: prose
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  prose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Check the changed pages
+        run: >-
+          uv run --no-project --quiet python .agents/skills/nossaifd/scripts/prose_gate.py
+          check-diff "origin/${{ github.base_ref }}"

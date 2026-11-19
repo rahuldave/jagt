@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "package": "jnprofile-rust",
+  "source_repository": "https://github.com/rahuldave/jnprofile-rust",
+  "source_revision": "3dedba9b4155a2cfaf72e6b8f486af92d0bd93f5",
+  "source_version": "v0.2.1-3-g3dedba9",
+  "source_worktree_dirty": false,
+  "source_requested_commit": null,
+  "skills": [
+    "rust-profile"
+  ],
+  "skill_folders": [
+    "rust-profile"
+  ],
+  "extras": [
+    ".agents/just/rust",
+    ".agents/targets/rust"
+  ],
+  "merged_hooks": {},
+  "created_settings": [],
+  "seeds": {},
+  "managed_files": {
+    ".agents/just/rust/api.just": "3a0ba155317d2b5b0964eda609016ec54314cdfe3180e4af5dd65de7f0afc7d8",
+    ".agents/just/rust/api_rule.py": "ce89362f819524e84d7ea254af679be74d2b7f8dd9d172b4f70a9f37726d707d",
+    ".agents/just/rust/base.just": "2e0d09ed342e1e2ce77eb67a4bc80c0500d7ffef005125e6d2ac99a9b2004f87",
+    ".agents/just/rust/docstring.just": "8e335b85902d33602066ececff9f5c694dd01f2c7c603f3cd20001732401fee7",
+    ".agents/just/rust/integration.just": "129253bdc04de366ff35aa7a0008b7eea277921deec5596bec57fb648f9549a1",
+    ".agents/just/rust/lint.just": "1f8448af467b2b1244e7bbd952d77cf6ac8070b28676adac1cdc546533f27d76",
+    ".agents/just/rust/steps.py": "0c2b39ed92a7010494b528259d60713d65ea82d7fa9a9ed1a280d21d195f481c",
+    ".agents/just/rust/test.just": "896071d8b2436292a7dc05679c43bc55fecb6051d91ba1f013469ec1e034c19f",
+    ".agents/just/rust/toml.just": "1e6b85bd32a82d158158bcb95fb6b690fd85e0d0b9c12315d6791f1627be44c4",
+    ".agents/just/rust/typecheck.just": "f9d46f73d77d974eda2e4a72f456bcacb080e2d5c48a3ddf6ac4c2c170f41fc8",
+    ".agents/skills/rust-profile/SKILL.md": "9f9317168765848ba32c32f18b6cbc8e7a0b3b9c771eba820c60eb53a0698e79",
+    ".agents/targets/rust/prose.md": "ab282d963864bb55e86307574fd8481b281a26890affb6c565fa2d7ba71ef4f7",
+    ".agents/targets/rust/review.md": "1e2661e80e91bf4d875d6dc1611197a77cd0aa26bdbb28c498bada0fbfdaf6ed",
+    ".agents/targets/rust/test-review.md": "ecaee7edf0618aee1dadb4ef7f91f2b682c1591ad825eb8c9524d50d6f680616",
+    ".agents/targets/rust/update-docs.md": "ed30fb6e811bb84d248d39c184119f307b8042cb84ac61aa54d7b801627a4c2d"
+  },
+  "claude_links": [
+    "rust-profile"
+  ]
+}

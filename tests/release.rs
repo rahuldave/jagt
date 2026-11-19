@@ -1,11 +1,19 @@
-//! The release tags of jagt, as in cx: just check runs release-check, the tag is v plus the version of Cargo.toml, and only the jobs
-//! release and publish of CI can write to the repository. The tests need git, just and uv on the PATH.
+//! These tests check the release tags of jagt, as in cx. They check these facts:
+//!
+//! - `just check` runs `release-check`.
+//! - The tag is `v` and the version of `Cargo.toml`.
+//! - Only the jobs `release` and `publish` of CI can write to the repository.
+//!
+//! The recipes `release` and `release-check` come from the tasker role of `agent_gest_git_skills`. The recipe
+//! `rust::version` comes from the rust profile. `just install` puts the recipes of both in `.agents`. The tests need
+//! `git`, `just`, `uv` and `jlog` on the `PATH`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 fn root() -> PathBuf {
@@ -21,6 +29,8 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> Output {
         .env_remove("GIT_DIR")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_WORK_TREE")
+        // The scratch repository logs its own run of jlog, not the run of the just check that runs the tests.
+        .env_remove("JLOG_RUN")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "t")
@@ -42,22 +52,41 @@ fn ok(dir: &Path, program: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// A scratch repository with the release files of jagt, Cargo.toml at VERSION, a bare remote, and the tag v0.1.0.
+/// `RELEASE_FILES` names the files that `just release` and `just release-check` read, apart from the recipes in
+/// `.agents/just`, which `scratch` copies with `copy_tree`.
+const RELEASE_FILES: [&str; 5] = [
+    "Justfile",
+    ".gitignore",
+    ".agents/install.just",
+    ".agents/stack.json",
+    ".agents/skills/gpa/scripts/release_tag.py",
+];
+
+/// Copy the folder `from`, with each file and folder in it, to the folder `to`.
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("mkdir");
+    for entry in fs::read_dir(from).expect("read_dir") {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).expect("copy");
+        }
+    }
+}
+
+/// Make a scratch repository with the release files of jagt, `Cargo.toml` at `version`, a bare remote and the tag
+/// `v0.1.0`.
 fn scratch(version: &str) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let repo = temp.path().join("repo");
-    for dir in ["repo/scripts", "repo/.agents"] {
-        fs::create_dir_all(temp.path().join(dir)).expect("mkdir");
+    for file in RELEASE_FILES {
+        let target = repo.join(file);
+        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+        fs::copy(root().join(file), target).expect("copy");
     }
-    for file in [
-        "Justfile",
-        "scripts/release_tag.py",
-        "scripts/rust.just",
-        "scripts/cargo_version.py",
-        ".agents/stack.json",
-    ] {
-        fs::copy(root().join(file), repo.join(file)).expect("copy");
-    }
+    copy_tree(&root().join(".agents/just"), &repo.join(".agents/just"));
     set_version(&repo, version);
     ok(temp.path(), "git", &["init", "-q", "--bare", "remote.git"]);
     ok(&repo, "git", &["init", "-q", "-b", "main"]);
@@ -83,36 +112,114 @@ fn commit(repo: &Path, message: &str) {
     );
 }
 
-/// The commit of agent_gest_git_skills that scripts/release_tag.py copies. The Justfile names it too.
-const UPSTREAM_COMMIT: &str = "799a44b";
-/// The Git blob of .agents/skills/gpa/scripts/release_tag.py at UPSTREAM_COMMIT of agent_gest_git_skills. To update the
-/// copy, copy that file of the new commit, set UPSTREAM_COMMIT and the comment of the Justfile, and set this blob to
-/// the output of `git -C AGENT_GEST_GIT_SKILLS rev-parse COMMIT:.agents/skills/gpa/scripts/release_tag.py`.
-const UPSTREAM_BLOB: &str = "f014570e60c3ef9a7d2828cdd3e87f7d5e1f7047";
+/// Return the JSON of `just --dump`, which holds each recipe of the `Justfile` and of the files that it imports.
+fn dump() -> Value {
+    serde_json::from_str(&ok(&root(), "just", &["--dump", "--dump-format", "json"])).expect("json")
+}
 
-#[test]
-fn the_script_is_the_copy_of_upstream() {
-    let blob = ok(&root(), "git", &["hash-object", "scripts/release_tag.py"]);
-    assert_eq!(
-        blob.trim(),
-        UPSTREAM_BLOB,
-        "scripts/release_tag.py differs from agent_gest_git_skills {UPSTREAM_COMMIT}"
-    );
+/// Return the names of the dependencies of the recipe `recipe` in `dump`, in order.
+fn dependencies<'a>(dump: &'a Value, recipe: &str) -> Vec<&'a str> {
+    dump["recipes"][recipe]["dependencies"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no recipe {recipe}"))
+        .iter()
+        .map(|dependency| dependency["recipe"].as_str().expect("name"))
+        .collect()
+}
+
+/// Return the text of the body of the recipe `recipe` in `dump`.
+///
+/// The text joins the parts of each line that are text, and drops the other parts.
+fn body(dump: &Value, recipe: &str) -> String {
+    dump["recipes"][recipe]["body"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no recipe {recipe}"))
+        .iter()
+        .flat_map(|line| line.as_array().expect("line").iter())
+        .filter_map(|part| part.as_str())
+        .collect()
 }
 
 #[test]
-fn check_runs_release_check() {
-    let dump: Value =
-        serde_json::from_str(&ok(&root(), "just", &["--dump", "--dump-format", "json"]))
-            .expect("json");
-    let dependencies: Vec<&str> = dump["recipes"]["check"]["dependencies"]
-        .as_array()
-        .expect("dependencies")
+fn release_comes_from_the_tasker_role() {
+    // jagt keeps no copy of the script or of the module rust. A copy would clash with the files of just install.
+    for file in [
+        "scripts/release_tag.py",
+        "scripts/rust.just",
+        "scripts/cargo_version.py",
+    ] {
+        assert!(!root().join(file).exists(), "{file} is back");
+    }
+    let justfile = fs::read_to_string(root().join("Justfile")).expect("read");
+    for line in justfile.lines() {
+        let name = line.split([' ', ':']).next().unwrap_or("");
+        assert!(
+            !["release", "release-check", "check", "mod", "set"].contains(&name),
+            "the Justfile has {line:?}, which the tasker role, the rust profile or the index gives"
+        );
+    }
+    let dump = dump();
+    for recipe in ["release", "release-check"] {
+        assert!(
+            body(&dump, recipe).contains(".agents/skills/gpa/scripts/release_tag.py"),
+            "{recipe} does not run the script of the tasker role"
+        );
+    }
+    // The script is the file that the install of the tasker role recorded, with no edit.
+    let record: Value = serde_json::from_str(
+        &fs::read_to_string(root().join(".agents/gest-git-install.json")).expect("read"),
+    )
+    .expect("json");
+    let recorded = record["managed_files"][".agents/skills/gpa/scripts/release_tag.py"]
+        .as_str()
+        .expect("the record of the tasker role has no release_tag.py");
+    let script = fs::read(root().join(".agents/skills/gpa/scripts/release_tag.py")).expect("read");
+    let actual: String = Sha256::digest(&script)
         .iter()
-        .map(|dependency| dependency["recipe"].as_str().expect("name"))
+        .map(|byte| format!("{byte:02x}"))
         .collect();
-    assert!(dependencies.contains(&"release-check"), "{dependencies:?}");
-    assert!(dependencies.contains(&"verify"), "{dependencies:?}");
+    assert_eq!(actual, recorded);
+}
+
+#[test]
+fn check_runs_release_check_and_the_steps_of_the_profile() {
+    // just check is the check of the index of jnterfaces. It runs the steps of the rust profile and of the roles.
+    let dump = dump();
+    let check = dependencies(&dump, "check");
+    for step in [
+        "release-check",
+        "fmt-check",
+        "lint",
+        "typecheck",
+        "test",
+        "integration",
+        "prose-check",
+        "diff-check",
+    ] {
+        assert!(check.contains(&step), "{step}: {check:?}");
+    }
+}
+
+#[test]
+fn verify_runs_the_quick_checks_the_tests_and_the_demo() {
+    // CI runs just verify, so verify runs the tests in tests/ through the step integration of the rust profile, and
+    // the protocol demo against the binary that build makes.
+    let dump = dump();
+    assert_eq!(
+        dependencies(&dump, "verify"),
+        [
+            "fmt-check",
+            "lint",
+            "typecheck",
+            "build",
+            "test",
+            "integration",
+            "smoke",
+            "protocol-demo",
+            "installed-recipes",
+            "diff-check"
+        ]
+    );
 }
 
 #[test]
@@ -257,6 +364,9 @@ fn only_the_jobs_release_and_publish_can_write() {
             .iter()
             .any(|step| step["run"] == "just release-check")
     );
+    // ci.yml has the only job that tags. The tasker role writes a starter release.yml once, and its job would tag each
+    // release a second time.
+    assert!(!root().join(".github/workflows/release.yml").exists());
 }
 
 #[test]
@@ -283,4 +393,99 @@ fn the_tests_ignore_the_git_repository_of_a_hook() {
     unsafe { std::env::remove_var("GIT_INDEX_FILE") };
     assert!(!bogus.exists(), "git add used GIT_INDEX_FILE");
     assert!(temp.path().join(".git/index").exists());
+}
+
+#[test]
+fn each_job_that_runs_just_installs_jlog_first() {
+    // The index of jnterfaces sets jlog as the shell of each recipe, also of the recipes of the Justfile. So each job
+    // of each workflow installs jlog before its first step that runs just.
+    let mut paths: Vec<PathBuf> = fs::read_dir(root().join(".github/workflows"))
+        .expect("read_dir")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext == "yml" || ext == "yaml")
+        })
+        .collect();
+    paths.sort();
+    let mut checked = 0;
+    for path in &paths {
+        let flow: Value =
+            serde_yaml::from_str(&fs::read_to_string(path).expect("read")).expect("yaml");
+        for (name, job) in flow["jobs"].as_object().expect("jobs") {
+            let runs: Vec<&str> = job["steps"]
+                .as_array()
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .map(|step| step["run"].as_str().unwrap_or(""))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let Some(just) = runs.iter().position(|run| {
+                run.lines()
+                    .any(|line| line.trim_start().starts_with("just "))
+            }) else {
+                continue;
+            };
+            let jlog = runs
+                .iter()
+                .position(|run| run.contains("rahuldave/jlog/v0.3.0/scripts/install.sh"));
+            assert!(
+                jlog.is_some_and(|jlog| jlog < just),
+                "the job {name} of {} runs just before it installs jlog",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    // The jobs verify, release and binaries of ci.yml, and ci of check.yml.
+    assert_eq!(checked, 4);
+}
+
+#[test]
+fn git_ignores_the_python_caches_of_the_stack() {
+    // The record hook imports agentic_target, and Python writes a cache next to it. The commit gate compares the
+    // commit tree with the worktree tree, so an untracked cache would stop every commit.
+    for path in [
+        ".agents/skills/gcm/scripts/__pycache__/agentic_target.cpython-312.pyc",
+        ".agents/just/rust/__pycache__/steps.cpython-312.pyc",
+    ] {
+        ok(&root(), "git", &["check-ignore", "-q", "--no-index", path]);
+    }
+}
+
+#[test]
+fn installed_recipes_checks_each_file_and_module_of_the_profile() {
+    // rust.just loads the files of .agents/just/rust with import?, so a missing one drops its recipes with no error.
+    // installed-recipes checks that git tracks each one, and that each recipe of the module loads.
+    let dump = dump();
+    let text = body(&dump, "installed-recipes");
+    let tracked = ok(&root(), "git", &["ls-files", ".agents/just"]);
+    for file in tracked
+        .lines()
+        .filter(|file| file.ends_with(".just") || file.ends_with("steps.py"))
+        .filter(|file| {
+            !file.contains("/rust/api") && !file.contains("docstring") && !file.contains("toml")
+        })
+    {
+        assert!(
+            text.contains(file),
+            "installed-recipes does not check {file}"
+        );
+    }
+    for recipe in [
+        "rust::version",
+        "rust::fmt-check",
+        "rust::lint",
+        "rust::typecheck",
+        "rust::test",
+        "rust::integration",
+        "prose-check",
+    ] {
+        assert!(
+            text.contains(recipe),
+            "installed-recipes does not check {recipe}"
+        );
+    }
 }

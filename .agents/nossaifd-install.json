@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "package": "nossaifd",
+  "source_repository": "https://github.com/rahuldave/nossaifd",
+  "source_revision": "7ab9e940bfdfad994008c1b00234572547ceaf9a",
+  "source_version": "v0.1.0",
+  "source_worktree_dirty": false,
+  "source_requested_commit": null,
+  "skills": [
+    "declaude",
+    "nossaifd"
+  ],
+  "skill_folders": [
+    "declaude",
+    "nossaifd"
+  ],
+  "extras": [
+    ".agents/just/roles/nossaifd.just"
+  ],
+  "merged_hooks": {},
+  "created_settings": [],
+  "seeds": {},
+  "managed_files": {
+    ".agents/just/roles/nossaifd.just": "09e42a24f75686d2c485f5010070ede0ad6b69b028cd9bad86ac33f04bc05180",
+    ".agents/skills/declaude/CHANGELOG.md": "2728889885fba6dfdadaf3454ebeb39ea8b294fc309530ae94985182fbc3ae3a",
+    ".agents/skills/declaude/LICENSE": "dbec0e9704ea11a294024d02be0fd76a79fe538a29c358ae186bb2fb6afdd333",
+    ".agents/skills/declaude/README.md": "b55a5fa89520c4ee88bb5e4d2a9b2a53377775b7132affd6edd3f54dcc5ac20b",
+    ".agents/skills/declaude/SKILL.md": "9722a1d1be3449e892b9dda822fb1106e6089c64ff568a7645a17b3fee8de2b4",
+    ".agents/skills/declaude/assets/annotated.template.html": "2d5a594d39feec7dcb01c6dd9243d7f224737700d7f7c892dc954ebe9a0748b9",
+    ".agents/skills/declaude/assets/staging-axis.json": "ed6a78ddff147695793c99f8a3a624f488fa2076023690fddb8cbf2637fcdea8",
+    ".agents/skills/declaude/hooks/hooks.json": "12771ff5476213de9e698308ce628bd2a7d8d1d1808bde29aea8ba395af52496",
+    ".agents/skills/declaude/references/annotating.md": "beb1e73dca3a3c4999e38a0ed7dd3e38043c58d3f12039437f5343fc8b269a3c",
+    ".agents/skills/declaude/references/corpus.md": "e282ca27093a492af0d09acf4c3f57caac910cbef044f2da6d5998c5a34234d9",
+    ".agents/skills/declaude/references/exceptions.md": "80a3b66b1bf12aaad9af6cd8fec3d59042f917250dc4f1c381a15434a73c8ed3",
+    ".agents/skills/declaude/references/fresh-eyes.md": "b6f4f7151ebcc064ca6d8a1adb86df70d886d7b3a17ce796839fd1b8c8996501",
+    ".agents/skills/declaude/references/models/fable.md": "04d313cb9a92de5b122140f8f4bd4e2718c38ebb06f974558edbfa93c189a5f5",
+    ".agents/skills/declaude/references/models/haiku.md": "8c2cb93c8f2c4c49309ff73311b7c4a36d91e314bc5e8f3636d012d837da7fe9",
+    ".agents/skills/declaude/references/models/opus-4.md": "f58c5455e83fc984e88a549c2fff6562de5b3fa50e213bbb4bb9dfb8d6a471fe",
+    ".agents/skills/declaude/references/models/opus-5.md": "ecab11ee3a1b8bfd3ba108cd6ded9c8c1a942891c70366edbfa205b4309c8379",
+    ".agents/skills/declaude/references/models/sonnet.md": "2b658d1a9c9f26ae4a9d71f420ea53567c756850d4eae2c854750f0071b04398",
+    ".agents/skills/declaude/references/preservation.md": "ac065c549bae3ba24a06bfd8eb5c9de1a87e0b2633aead88328abc61d1259e3f",
+    ".agents/skills/declaude/references/register.md": "dc1f03674206a56440748b7fcfacf1242300d1d2b80b0fe8428fae5de59ae3c4",
+    ".agents/skills/declaude/scripts/declaude_diff.py": "53eb90b7c3909bfa75e98417e3c7644c8e043319f5e13458177f7865686b995c",
+    ".agents/skills/declaude/scripts/declaude_lint.py": "6d744f774008b806a4bb7b76610cc4762fa485a750c82adea005aa73718b1ae5",
+    ".agents/skills/declaude/scripts/declaude_rank.py": "ba12f444c2bfabae3f394227273fdf6b27dba7735b1a91e6eba0f16423354b6b",
+    ".agents/skills/declaude/scripts/declaude_review.py": "4390fe547444ced00cc3a408ecd2862636cfc34de515d4f2dff9ea4154a523ec",
+    ".agents/skills/declaude/scripts/fresh_eyes.py": "5e710f7b1d6c8b971845cbe03a13232bee2d0fba4c63a1d20444554ffda9fee5",
+    ".agents/skills/declaude/tests/sample-clean.md": "731db4a0b23b55e8986e76a83591501d4bc8a3b6643ab95c0c0656cc114732ab",
+    ".agents/skills/declaude/tests/sample-structure.html": "714c832143be452851d2a0f170f099f487e9f2cb8b74b1c885cdb0e2e563db56",
+    ".agents/skills/declaude/tests/sample-structure.md": "9e41ca42c85a6bc67947cfa7e4c2a1988ae36da77a0d55fa38b234974eb76b25",
+    ".agents/skills/declaude/tests/sample-tics.md": "6441260a3a341cbf7a8624cfa97e2808c258794f856cb4931c357a70e5cd29dd",
+    ".agents/skills/declaude/tests/test_fresh_eyes.py": "292fa73d1528f278e83aa629060e1f800643fd47d2aae93a01a20bf4665518d9",
+    ".agents/skills/nossaifd/SKILL.md": "b0b1e39090113b7ec773a5cc2874a06a329d1e48f1f789ccdec37e6ad6034a4d",
+    ".agents/skills/nossaifd/agents/openai.yaml": "d088f8dcc5da5ef79b1dd09de1ada472a188f361e8646aaf4a4e88765cb2f675",
+    ".agents/skills/nossaifd/assets/agents-prose.md": "0624e89ba5da98ba0d790fb2a6e6f0b015e8fba19eea93829bed69d38d64a26d",
+    ".agents/skills/nossaifd/assets/claude-settings-hook.json": "d0f224fb725a8343768118005f4cc69af5940633171cf61b9c14a19d4c3e7f21",
+    ".agents/skills/nossaifd/assets/codex-hooks.json": "42a86db8453c16c4a00fcc0c5b391510b078be84817557e702a89ac2789a46a1",
+    ".agents/skills/nossaifd/assets/prose-check.yml": "1485a32a10ebc25e32ef63770a63e33a60b759906f50374b765e83e6d8b8594a",
+    ".agents/skills/nossaifd/references/EXAMPLES.md": "d04affb4289289f155cf4c170adbeb01734b0d03cf6e5f75256e01feeccab9c8",
+    ".agents/skills/nossaifd/references/GUIDE.md": "5efd836f480d9eb0b6e679d3c37f4bfd46d5018acd56f5e1cf15ef8c1561bd7a",
+    ".agents/skills/nossaifd/references/targets/prose.md": "c30a3d97a2ec51a9e3780de39c145536712f00ce27e95e5588a8ef05a561282d",
+    ".agents/skills/nossaifd/scripts/check.py": "70c7dd49ec20bdc3531d380cd5bac02d5a3b960b9e99f388522550b82ba7d6b9",
+    ".agents/skills/nossaifd/scripts/prose_gate.py": "d726e3c01b33cce5a88674e364cca7ce4631d92ccbb316fec1453d6d8254e00a"
+  },
+  "claude_links": [
+    "declaude",
+    "nossaifd"
+  ]
+}

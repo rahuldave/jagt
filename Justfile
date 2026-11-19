@@ -1,34 +1,22 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+# begin lines of jnterfaces, the installer, from jnterfaces at a0cb68d.
+# Last written to Justfile by `just install`. The record is parts."Justfile" in .agents/stack.json.
+import? '.agents/install.just'
+export JLOG_RUN := env("JLOG_RUN", uuid())
+# end lines of jnterfaces. They stay while the project keeps .agents/stack.json.
+
 cargo_target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 
-# The recipes of jnterfaces, and through it of the tasker role, from just install.
-import? '.agents/install.just'
+# The recipes of jagt. The block of jnterfaces above imports .agents/install.just, which gives just install, and the
+# recipes of the rust profile and of the tasker role, for example setup, build, fmt, fmt-check, lint, typecheck, test,
+# integration, coverage-check, diff-check, tools-check, check, ci, release, release-check and rust::version. The index
+# sets the shell of the Justfile to jlog. Each name below is jagt's own, and the index leaves it out.
 
 default: verify
 
-setup:
-    cargo fetch
-
-fmt path="":
-    cargo fmt --all
-
-fmt-check:
-    cargo fmt --all --check
-
-lint:
-    cargo clippy --all-targets --all-features -- -D warnings
-
-typecheck:
-    cargo check --all-targets --all-features
-
+# The static check of the code, as an alias of the step typecheck
 static: typecheck
 
-build:
-    cargo build --all-targets --all-features
-
-test target="":
-    cargo test --all-targets --all-features {{target}}
-
+# Run the binary once, as a smoke test of the build
 smoke:
     cargo run -- --help
 
@@ -37,43 +25,25 @@ protocol-demo:
     bash "{{justfile_directory()}}/.agents/skills/jagt-protocol/scripts/run_protocol_demo.sh" "{{absolute_path(cargo_target_dir)}}/debug/jagt"
 
 # Check that git tracks the files that import the installed recipes, and that the recipes load.
-# The imports use import?, so a missing file would drop the recipes without an error
+# The imports use import? and mod, so a missing file would drop the recipes without an error
 installed-recipes:
-    git ls-files --error-unmatch .agents/install.just .agents/just/index.just .agents/just/roles/agent_gest_git_skills.just > /dev/null
+    git ls-files --error-unmatch .agents/install.just .agents/just/index.just .agents/just/rust.just \
+        .agents/just/rust/base.just .agents/just/rust/lint.just .agents/just/rust/typecheck.just \
+        .agents/just/rust/test.just .agents/just/rust/integration.just .agents/just/rust/steps.py \
+        .agents/just/roles/agent_gest_git_skills.just .agents/just/roles/nossaifd.just > /dev/null
     summary="$(just --justfile "{{justfile()}}" --summary)"; \
-    for recipe in install uninstall tasker-mode worktree-new worktree-sync worktrees worktrees-prune; do \
-        [[ " $summary " == *" $recipe "* ]] || { echo "the recipe $recipe does not load" >&2; exit 1; }; \
+    for recipe in install uninstall tasker-mode worktree-new worktrees check release release-check fmt-check lint test integration prose prose-check diff-check rust::version \
+        rust::fmt-check rust::lint rust::typecheck rust::test rust::integration; do \
+        case " $summary " in *" $recipe "*) ;; *) echo "the recipe $recipe does not load" >&2; exit 1 ;; esac; \
     done
 
+# The API docs of the crate
 docs:
     cargo doc --no-deps
 
-diff-check:
-    git diff --check
-
-verify: fmt-check lint typecheck build test smoke protocol-demo installed-recipes diff-check
-
-# Every check of the repository: the release version, then verify. CI runs each of them
-check: release-check verify
-
-# The release tags. scripts/release_tag.py is a copy of .agents/skills/gpa/scripts/release_tag.py of
-# agent_gest_git_skills at the commit 799a44b, the same file as in cx. The job release of ci.yml runs just release on
-# each push to main. The script runs just <profile>::version for each name of the key profiles of .agents/stack.json,
-# here rust, so the tag is v plus the version of Cargo.toml.
-release_tag := "uv run --no-project --quiet --no-python-downloads --python '>=3.9' python scripts/release_tag.py"
-
-# rust::version prints the version of Cargo.toml. The rust profile of jnterfaces gives the same recipe. When jagt
-# installs that profile, take out this line and scripts/rust.just, because just stops on a module defined twice
-mod rust 'scripts/rust.just'
-
-# Tag HEAD with v plus the version of Cargo.toml, push the tag and check it. Takes --dry-run first
-[positional-arguments]
-release *args:
-    @{{release_tag}} "$@"
-
-# Fail when the version of Cargo.toml is below the last tag or the bump that the commits ask for. It needs no network
-release-check:
-    {{release_tag}} --check
+# The quick local check: the format, the lint, the build, the tests, the smoke test, the protocol demo, the installed
+# recipes and the whitespace of the diff. just check runs every step of the commit gate
+verify: fmt-check lint typecheck build test integration smoke protocol-demo installed-recipes diff-check
 
 # Build the release binary for TARGET, a Rust target triple, and pack it as dist/jagt-TARGET.tar.gz with jagt at its
 # top level, plus dist/jagt-TARGET.tar.gz.sha256. The job binaries of ci.yml runs it, and scripts/install.sh installs it

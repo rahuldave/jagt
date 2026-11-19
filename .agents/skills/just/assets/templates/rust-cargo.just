@@ -1,3 +1,7 @@
+# A Rust project that does not use just install. The rust profile gives the steps of just check, with
+# coverage-check and docstring-check. Prefer it. Install it with:
+#   uv run "${SKILL_PACKAGES_DIR:-$HOME/.local/share/skill-packages}/jnterfaces/scripts/install_stack.py" --profile rust
+
 fmt:
   cargo fmt --all
 

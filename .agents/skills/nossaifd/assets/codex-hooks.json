@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" start \"$ROOT\" || true'",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; F=\"$ROOT/.agents/skills/nossaifd/scripts/prose_gate.py\"; [ -f \"$F\" ] || { echo {}; exit 0; }; uv run --no-project --quiet --python \">=3.11\" python \"$F\" hook \"$ROOT\" || echo {}'",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+# The tasker role wrote this file once, when the project had none. It is yours from then on.
+# It runs just ci on each pull request. just ci checks that each commit of the pull request passed the commit gate,
+# from the trailer that the gate writes, then runs the steps of the list ci of .agents/stack.json. It does not run
+# just check again: the gate saw a pass of it for each commit. Put a step in the list ci only when a clean machine
+# tells you something that your own machine cannot, for example a test on Linux.
+# No agent runs here. The fresh agents of the commit gates run on your machine, before each commit.
+# It uses the committed files and does not run just install. An install can change tracked files.
+# The trailers need the whole history, so the checkout has fetch-depth: 0. The checkout takes the head of the pull
+# request, not the merge commit that GitHub makes, since that commit has no trailer.
+# Keep the event pull_request, not pull_request_target. The steps run the code of the pull request, and
+# pull_request_target would give that code the secrets of the repository.
+# Add the setup of the tools of your languages before the step "CI", if a step of the list ci needs them.
+name: check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+      - name: Install jlog
+        # The tag v0.3.0 of jlog is the commit d4b712b, as in the CI of jnterfaces. install.sh comes from the tag. It
+        # downloads the release binary, checks its SHA-256 and puts it in ~/.local/bin. setup-uv comes first, so
+        # install.sh makes the environments of the plugins. The step shell bash has pipefail, so a failed download fails.
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rahuldave/jlog/v0.3.0/scripts/install.sh | sh -s -- --tag v0.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: CI
+        env:
+          JN_CI_BASE: ${{ github.event.pull_request.base.sha }}
+          JN_CI_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: just ci

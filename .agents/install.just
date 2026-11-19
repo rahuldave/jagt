@@ -25,7 +25,22 @@ install *args:
     # The command as the user typed it, for .agents/stack-log.jsonl and the comments of the blocks in the line files.
     JNTERFACES_COMMAND="${JNTERFACES_COMMAND:-just install${*:+ $*}}"
     export JNTERFACES_COMMAND
-    exec uv run --quiet --script "$dir/scripts/install_stack.py" --target "{{justfile_directory()}}" "$@"
+    exec uv run --quiet --script "$dir/scripts/install_stack.py" --target {{quote(justfile_directory())}} "$@"
+
+# Run recipes with a clean environment, as a git hook or CI does, and name each one that needs a setting of your shell: just env-lab check "test -k name"
+[positional-arguments]
+env-lab *recipes:
+    #!/usr/bin/env sh
+    set -eu
+    dir="${JNTERFACES_DIR:-${SKILL_PACKAGES_DIR:-$HOME/.local/share/skill-packages}/jnterfaces}"
+    if [ ! -f "$dir/scripts/env_lab.py" ]; then
+        echo "env-lab needs $dir/scripts/env_lab.py: run just install --update" >&2
+        exit 2
+    fi
+    # uv puts its Python first on PATH, so the lab gets the PATH from before uv.
+    JN_LAB_PATH="$PATH"
+    export JN_LAB_PATH
+    exec uv run --no-project --quiet python "$dir/scripts/env_lab.py" --dir {{quote(justfile_directory())}} "$@"
 
 # Take roles or tools out, and save that: just uninstall reporter lint
 [positional-arguments]
@@ -36,4 +51,4 @@ uninstall +names:
     for name in "$@"; do list="$list${list:+,}$name"; done
     JNTERFACES_COMMAND="just uninstall $*"
     export JNTERFACES_COMMAND
-    exec just --justfile "{{justfile()}}" install --without "$list"
+    exec just --justfile {{quote(justfile())}} install --without "$list"

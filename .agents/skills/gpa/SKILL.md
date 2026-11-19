@@ -9,12 +9,12 @@ license: MIT, copyright (c) 2026 Rahul Dave. The full text is in the LICENSE fil
 Use when a GitHub pull request should be reviewed, approved, updated with Gest
 context, merged, or held for changes.
 
-`gpa` is different from `grv`: `grv` reviews a local diff or commit. `gpa`
+`gpa` is different from `grv`. `grv` reviews a local diff or commit. `gpa`
 reviews a pull request as an integration object with GitHub state, branch state,
 checks, review history, and Gest task/artifact context.
 
 `gpa` is mandatory after Codex pushes a topic or stack branch for integration
-into either mainline or a persistent non-default target. The normal handoff is: create/update the PR, run
+into either mainline or a persistent non-default target. In the normal handoff, create or update the PR, run
 this skill, report the review packet to the user, and ask whether to merge.
 Only merge when that particular merge is already authorized; authorization
 persists across turns.
@@ -109,6 +109,21 @@ workflow safety:
 - silent unpushed branches or dirty local worktrees
 - a stacked PR whose base is not the branch below it, or parallel write
   agents in one checkout
+- a commit with no `Commit-Gate` trailer, which skipped the commit gate. The
+  CI job runs `just ci`, which finds it, so a red CI can mean a skipped gate
+- a stack whose CI ran against the wrong base. `just ci` checks the commits
+  between the base of the PR and its head, so the base of each PR of a stack
+  must be the branch below it
+
+The lenses of the review are those of `grv`. Each commit of the PR already had
+its review by a fresh agent, because the gate needs that record. `just review`
+reviews only the changes of the worktree against HEAD, so it does not review a
+PR. For a review of the whole PR, give a fresh agent the output of
+`gh pr diff <number>` and the lenses of the base task of `grv`. The review records of a branch made in any worktree are in the shared
+log folder.
+
+When the repository has no `just check`, run `gsu` first. It installs the
+recipes.
 
 For non-trivial PRs, use adversarial review lenses. Default to independent
 read-only review sub-agents when sub-agents are available, authorized, and the
@@ -142,7 +157,7 @@ Treat `Findings: None` as a precise statement about blocking or actionable
 code-review findings, not as the whole PR review. If there are no findings, say
 so clearly and list residual risk.
 
-After findings, add reviewer judgment when it would help the user: call out
+After findings, add reviewer judgment when it would help the user. Call out
 non-blocking opinions about clarity, maintainability, UX, naming, fit with local
 patterns, PR shape, or tradeoffs. Label these separately from findings so
 taste-level feedback does not look like a merge blocker.
@@ -286,6 +301,7 @@ and run `git rebase --update-refs --onto origin/<base> <old-lower-tip>` on the
 top branch. `<old-lower-tip>` is the commit of the merged branch before the
 merge. It is the local `<lower-branch>`, which the merge on GitHub does not
 move.
+
 With `--onto`, Git replays only the commits above the merged branch, so
 a squash merge does not apply the merged commits twice. Push each moved branch
 with `git push --force-with-lease`. Git 2.38 and later have `--update-refs`.
@@ -296,15 +312,22 @@ check `git merge-base --is-ancestor <branch> <target-ref>`; `git branch -d`
 may compare against the branch's configured upstream instead of HEAD and is
 not integration proof. Prefer a clean checkout on the actual merged target (or
 immediate stack parent) when running `git branch -d <branch>` so its HEAD
-fallback is meaningful. If no suitable checkout exists or deletion is refused,
+fallback is meaningful.
+
+If no suitable checkout exists or deletion is refused,
 retain the branch. A squash/cherry-pick needs a separate patch-equivalence and disposal decision,
 not automatic forced deletion. Preserve persistent integration branches,
 including an experimental head promoted into mainline.
 
-If this PR used worker-owned physical worktrees, retire each one only after its
-worker and owned processes stop, its tracked/untracked and valuable ignored
-files are accounted for, its commits are verified in the intended base or
-stack parent, and no active task or stack depends on it. Check the recorded
+If this PR used worker-owned physical worktrees, retire each one only when all
+of these are true:
+
+- its worker and owned processes have stopped
+- its tracked, untracked and valuable ignored files are accounted for
+- its commits are verified in the intended base or stack parent
+- no active task or stack depends on it
+
+Check the recorded
 owner/path/branch against `git worktree list --porcelain`; use ordinary
 `git worktree remove <owned-absolute-path>` from another checkout and verify
 removal before considering the temporary topic branch. Keep the selected
@@ -328,6 +351,7 @@ the exact state in the Gest note.
 ```text
 Done: PR <url> merged with <method>. Merge commit: <sha>.
 Verification: <checks reviewed or run>.
+Release: <vX.Y.Z> | none: <reason>.
 Follow-up: <real residual issue only>.
 ```
 
@@ -343,6 +367,40 @@ gest task meta set <task-id> github.merged_commit <sha>
 5. Update the linked issue according to its intended delivery milestone;
    experimental integration does not imply release completion. Gest maintains
    its own graphs automatically.
+
+6. Tag the release with `just release`. Nobody tags by hand. A merge to the
+   integration branch that the project releases from, usually the mainline,
+   gets an annotated tag `vX.Y.Z`, pushed to the remote, when it changes what
+   the project installs or runs. A merge to an experimental branch gets no
+   release tag. The merge authorization covers the tag, unless the push of the
+   tag starts a job that publishes a package. The rules are in "Release tags"
+   of `references/integration_delivery_workflow.md`:
+
+   - The number follows semver, from the conventional commits since the last
+     tag. Breaking raises MAJOR, or MINOR below `1.0.0`. `feat` raises MINOR,
+     and a fix raises PATCH. A merge of only `docs`, `test`, `ci`, `chore` or
+     `style` commits gives no release.
+   - When a language profile gives the version of its manifest, the tag is that
+     version. `just release` fails when the version is lower than the bump that
+     the commits ask for. The step `release-check` of `just check` finds this
+     before the merge, so a PR that needs a bump also raises the version.
+   - Tag only after the merge and after the post-merge CI passes.
+   - Never move or delete a pushed tag. Release a new version instead.
+
+   The CI starter `.github/workflows/release.yml` runs `just release` on each
+   push to `main`, after `just check` passes. When the CI release job ran,
+   check that it passed. When the project has no release job, wait for the
+   post-merge CI, then run the release in a clean checkout of the integration
+   branch:
+
+   ```bash
+   just release --dry-run
+   just release
+   ```
+
+   A run on a commit that already has its tag prints `no release`. Write the
+   tag, or `none` and the reason, on the `Release:` line of the Gest note of
+   step 3.
 
 ## Tag And Dependency Review
 
