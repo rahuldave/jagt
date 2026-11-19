@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/main/scripts/install
   SHA-256 hash, and puts `jagt` in `~/.local/bin`.
 - **Options:** pass `--tag vX.Y.Z` for one version, and `--dir DIR` for
   another folder. Through the pipe, put them after `sh -s --`, as in
-  `curl -fsSL <url> | sh -s -- --tag v0.6.3 --dir /usr/local/bin`.
+  `curl -fsSL <url> | sh -s -- --tag v0.6.4 --dir /usr/local/bin`.
 - **Platforms:** macOS on arm64 and x86_64, and Linux on arm64 and x86_64.
   The Linux binaries link musl statically, so they run on any distribution.
   On another platform the script stops with an error.
@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/rahuldave/jagt/main/scripts/install
 To build from source, install with Cargo, from a tag on GitHub:
 
 ```bash
-cargo install --git https://github.com/rahuldave/jagt --tag v0.6.3 jagt
+cargo install --git https://github.com/rahuldave/jagt --tag v0.6.4 jagt
 ```
 
 Or install it from a clone of this repository:
