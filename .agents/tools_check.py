@@ -9,7 +9,8 @@ of the project, as in CI, can run it. It runs each check without a shell, and it
 The record holds each program under the key programs: {"just": {"check": "just --version", "version": ">=1.50.0",
 "owners": {"jnterfaces": ">=1.50.0"}}}. The key project_programs is the list of programs that the project itself
 needs, with the keys name, check, version, expect and description. A version floor is >=X.Y or >=X.Y.Z. The version
-of a program is the first X.Y.Z, or X.Y, anywhere in the output of its check.
+of a program is the first X.Y.Z, or X.Y, anywhere in the output of its check. A program with "each_clone": true is a
+setup of each clone, such as the git hooks of a role, which just install sets up. CI skips it, as CI needs no hooks.
 
 This file runs with Python 3.9 or later, and it needs no package.
 """
@@ -68,12 +69,14 @@ def higher(first, second):
 def merge(entries):
     """Merge programs by name. Each entry has name, check, and optional version, expect and owner. For the same name,
     the floor is the highest, and owners maps each owner to the floor that it asks for, or None for no floor. The
-    first entry gives the check and expect."""
+    first entry gives the check and expect. each_clone is true when an entry has it."""
     found = {}
     for entry in entries:
         program = found.setdefault(entry['name'], {'check': entry['check'], 'owners': {}})
         if 'expect' in entry and 'expect' not in program:
             program['expect'] = entry['expect']
+        if entry.get('each_clone') is True:
+            program['each_clone'] = True
         owner = entry.get('owner') or 'the project'
         program['owners'][owner] = higher(program['owners'].get(owner), entry.get('version'))
         program['version'] = higher(program.get('version'), entry.get('version'))
@@ -111,7 +114,10 @@ def problem(name, program, run=None, which=shutil.which):
     at = f', at {path}'
     if code != 0:
         late = ' It took too long.' if code == 124 and (errors or '').startswith('the check took more than') else ''
-        return f'{needs}, but {program["check"]} failed with exit {code}{at}.{late}'
+        # The check of a setup of each clone says why it fails, such as a config without the hooks of a role.
+        said = ((errors or '').strip() or (output or '').strip()).splitlines()[-3:] if program.get('each_clone') else []
+        why = (' It said: ' + ' / '.join(line.strip() for line in said)) if said else ''
+        return f'{needs}, but {program["check"]} failed with exit {code}{at}.{late}{why}'
     if program.get('expect') and program['expect'] not in output:
         return f'{needs}, but {program["check"]} did not print {program["expect"]}{at}.'
     if floor:
@@ -217,7 +223,8 @@ def recorded(record):
             if owner == 'the project':
                 continue
             entry = {'name': name, 'check': program['check'], 'owner': owner}
-            entry.update({key: value for key, value in (('version', floor), ('expect', program.get('expect')))
+            entry.update({key: value for key, value in (('version', floor), ('expect', program.get('expect')),
+                                                        ('each_clone', program.get('each_clone') or None))
                           if value is not None})
             entries.append(entry)
     return merge(entries + project_programs(record))
@@ -256,6 +263,11 @@ def outside_venv():
             if not part or os.path.realpath(part) != inside)
 
 
+def in_ci():
+    """True when CI is set, as on GitHub Actions, and is not 0 or false."""
+    return os.environ.get('CI', '').strip().lower() not in ('', '0', 'false')
+
+
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     outside_venv()
@@ -280,9 +292,19 @@ def main(argv=None):
     except (OSError, ValueError) as exc:
         print(f'tools-check: {exc}', file=sys.stderr)
         return 2
-    problems = [line for line in (problem(name, program) for name, program in programs.items()) if line]
+    if in_ci():
+        skipped = [name for name, program in programs.items() if program.get('each_clone')]
+        if skipped:
+            print(f'tools-check: CI is set, so {", ".join(skipped)} is not checked: it is a setup of each clone.')
+        programs = {name: program for name, program in programs.items() if name not in skipped}
+    problems = []
+    for name, program in programs.items():
+        line = problem(name, program)
+        if line:
+            problems.append(line + (' Run just install, which sets it up in this clone.' if program.get('each_clone')
+                                    else ' Install or update it, then run just tools-check again.'))
     for line in problems:
-        print(f'tools-check: {line} Install or update it, then run just tools-check again.', file=sys.stderr)
+        print(f'tools-check: {line}', file=sys.stderr)
     if not problems:
         print(f'tools-check: {len(programs)} programs are there, at their floors.')
     return 1 if problems else 0

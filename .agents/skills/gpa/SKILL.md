@@ -383,7 +383,9 @@ gest task meta set <task-id> github.merged_commit <sha>
    - When a language profile gives the version of its manifest, the tag is that
      version. `just release` fails when the version is lower than the bump that
      the commits ask for. The step `release-check` of `just check` finds this
-     before the merge, so a PR that needs a bump also raises the version.
+     before the merge, so a PR that needs a bump also raises the version. The
+     `commit-msg` hook runs `release-check` with the message of the commit, so
+     a `fix:` commit with the tagged version stops at the commit.
    - Tag only after the merge and after the post-merge CI passes.
    - Never move or delete a pushed tag. Release a new version instead.
 

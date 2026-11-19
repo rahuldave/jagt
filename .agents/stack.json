@@ -484,6 +484,13 @@
         "jnprofile-rust": null
       }
     },
+    "commit-hooks": {
+      "check": "uv run --no-project --quiet --no-python-downloads --python '>=3.9' python .agents/skills/gcm/scripts/commit_gate.py --check-hooks",
+      "each_clone": true,
+      "owners": {
+        "the tasker role": null
+      }
+    },
     "cx": {
       "check": "cx --help",
       "version": ">=0.1.0",

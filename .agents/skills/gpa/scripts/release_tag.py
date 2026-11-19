@@ -31,6 +31,16 @@ version.
 of the version only: profiles that disagree, and a version lower than the last tag or than the bump of the commits.
 In a shallow checkout, a checkout with no release tag, or a repository with no commit, it says so and passes.
 
+`just check` runs before the commit, so the message of the commit is not known yet. A `fix:` commit on a tree with
+the tagged version would pass the check and fail the release after the push. So the commit-msg hook of the commit
+gate runs `just release-check` once more, with the path of the message file in the variable `JN_RELEASE_MESSAGE`.
+The check then counts that message as one more commit after HEAD. The lines after the scissors line of
+`git commit -v` are not part of the message. After an editor, which adds its help line "Please enter the commit
+message", the comment lines are not part of it either. Without an editor, as for `git commit -m "#12 fix login"`,
+git keeps them, so they count. The comment character is the one of `core.commentString` or `core.commentChar`, `#`
+by default. For an amend, the gate sets `JN_RELEASE_AMEND=1`, and the new message
+replaces the message of HEAD.
+
 `--dry-run` prints the next tag and the reason, and changes nothing. Without it, the script makes an annotated tag on
 HEAD, pushes it, and checks with `git ls-remote` that the remote tag points at HEAD. It never moves or deletes a tag.
 When there is nothing to tag, it prints "no release" and exits 0. A tag at or above the next number on a later
@@ -42,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -64,6 +75,8 @@ PATCH_TYPES = {"fix", "perf", "refactor"}
 LEVELS = ("none", "patch", "minor", "major")
 FIRST: Version = (0, 1, 0)
 STACK = ".agents/stack.json"
+MESSAGE_VARIABLE = "JN_RELEASE_MESSAGE"
+AMEND_VARIABLE = "JN_RELEASE_AMEND"
 
 
 class ReleaseError(Exception):
@@ -248,8 +261,51 @@ def newer_release(root: Path, version: Version, head: str) -> Optional[str]:
     return None
 
 
-def plan(root: Path) -> Tuple[Optional[Version], str]:
-    """The next tag, or None for no release, and the reason."""
+def comment_char(root: Path) -> str:
+    """The comment string of the commit message, from core.commentString or core.commentChar. `auto` picks a
+    character per commit, which the check cannot know, so it reads as `#`."""
+    for key in ("core.commentString", "core.commentChar"):
+        result = subprocess.run(["git", "config", "--get", key], cwd=root, capture_output=True, text=True)
+        value = result.stdout.strip() if result.returncode == 0 else ""
+        if value:
+            return value if value != "auto" else "#"
+    return "#"
+
+
+def pending_message(root: Path) -> Optional[str]:
+    """The message of the commit being made, from the file that JN_RELEASE_MESSAGE names, up to the scissors line of
+    `git commit -v`. After an editor, git strips the comment lines, so they do not count. None when the variable is
+    not set or the message is empty."""
+    path = os.environ.get(MESSAGE_VARIABLE)
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError as error:
+        raise ReleaseError(f"{MESSAGE_VARIABLE} names {path}, which cannot be read: {error}") from error
+    char = comment_char(root)
+    # Any short prefix, since with core.commentChar=auto git may pick another character.
+    scissors = re.compile(r"^\S{1,8} -+ >8 -+$")
+    kept = []
+    edited = False
+    for line in text.splitlines():
+        if scissors.match(line):
+            edited = True
+            break
+        kept.append(line)
+    whole = "\n".join(kept).strip()
+    # Git strips the comment lines only after an editor, which adds its help line. Without an editor, as for
+    # git commit -m "#12 login", git keeps them, so the whole message counts.
+    edited = edited or any(line.startswith(char) and "Please enter the commit message" in line for line in kept)
+    if not edited:
+        return whole or None
+    stripped = "\n".join(line for line in kept if not line.startswith(char)).strip()
+    return stripped or None
+
+
+def plan(root: Path, pending: Optional[str] = None, amend: bool = False) -> Tuple[Optional[Version], str]:
+    """The next tag, or None for no release, and the reason. PENDING is the message of the commit being made, which
+    counts as one more commit after HEAD. With AMEND, it replaces the message of HEAD."""
     last = last_tag(root)
     manifest = manifest_version(root)
     if last is None:
@@ -257,9 +313,18 @@ def plan(root: Path) -> Tuple[Optional[Version], str]:
             return manifest[1], f"no tag yet, and the profile {manifest[0]} gives the version"
         return FIRST, "no tag yet"
     commits = commits_since(root, last)
-    level = max((commit_level(message) for _, message in commits), key=LEVELS.index, default="none")
+    if pending is not None and amend:
+        # An amend replaces HEAD, so its new message counts and the old one does not.
+        head = git(root, "rev-parse", "HEAD").strip()
+        commits = [(sha, message) for sha, message in commits if sha != head]
+    messages = [message for _, message in commits]
+    count = f"{len(messages)} commit(s) since {tag_name(last)}"
+    if pending is not None:
+        messages.append(pending)
+        count += " and the commit being made"
+    level = max((commit_level(message) for message in messages), key=LEVELS.index, default="none")
     asked = bump(last, level)
-    since = f"{len(commits)} commit(s) since {tag_name(last)} ask for {level}"
+    since = f"{count} ask for {level}"
     if manifest is None:
         if level == "none":
             return None, since
@@ -317,7 +382,7 @@ def check(root: Path) -> str:
     if not git(root, "tag", "--list", "v*").split():
         return ("release-check: no release tag in this checkout, so there is no version to compare with. Passed. "
                 "If the remote has tags, fetch them with git fetch --tags to check the version")
-    version, reason = plan(root)
+    version, reason = plan(root, pending_message(root), os.environ.get(AMEND_VARIABLE) == "1")
     if version is None:
         return f"release-check: no release ({reason})"
     return f"release-check: the next tag is {tag_name(version)} ({reason})"

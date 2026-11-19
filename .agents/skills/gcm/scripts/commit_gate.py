@@ -1,6 +1,6 @@
 """The commit gate: the git pre-commit and pre-merge-commit hooks run it before each commit.
 
-The gate never runs a step. It reads what `just check` and the agentic targets wrote, and stops the commit when
+The gate runs one step only, `release-check`, at the commit-msg hook. It reads what `just check` and the agentic targets wrote, and stops the commit when
 something is missing:
 
 1. The steps of `.agents/stack.json` and the required targets must be recipes of the Justfile.
@@ -47,6 +47,14 @@ from `git patch-id --verbatim` on a diff with no lines of context, so a rebase w
 context, a line that moves within one part of a file keeps the ID too. The trailer is a claim, so that is a fair
 price. `git commit -n` skips the commit-msg hook too, so a commit that went around the gate has no trailer. For what looks like an amend, the trailer names the patch IDs
 against both possible parents, and the tree too when HEAD is a merge.
+
+The release check: before it adds the trailer, the commit-msg hook runs `just release-check` with the path of the
+message file in `JN_RELEASE_MESSAGE`. `just check` ran before the message was written, so it could not count it. With
+the message, `release_tag.py --check` fails when the type of the commit, such as `fix:`, asks for a release and the
+version of the manifest is not raised. For an amend, it sets `JN_RELEASE_AMEND=1`, so the new message replaces the
+message of HEAD. The hook skips the check for a merge and for an amend of a merge, since the release skips merge
+commits, during a rebase, and when the Justfile has no recipe `release-check`. The check stops the commit when it runs longer than
+120 seconds.
 
 `--trailers BASE HEAD` is the check of CI, which `just ci-gate` runs. With no BASE and HEAD, it reads them from CI,
 from the pre-push hook, or from the upstream of the branch, as `ci_range` says. Each commit in BASE..HEAD must have a
@@ -716,6 +724,40 @@ def trailer_value(root: Path) -> str:
     return " ".join(words)
 
 
+RELEASE_CHECK = "release-check"
+RELEASE_TIMEOUT = 120
+
+
+def rebasing(root: Path) -> bool:
+    """True during a rebase. A reword replays an old commit on a HEAD that may lack the later raise of the version,
+    and the release sees only the HEAD at the end."""
+    return any((root / git(["rev-parse", "--git-path", name], root, plain_env()).strip()).exists()
+               for name in ("rebase-merge", "rebase-apply"))
+
+
+def release_check(root: Path, message: Path) -> None:
+    """Run `just release-check` with the message of the commit, so that a commit whose type asks for a release
+    with an old manifest version stops here, not at the release after the push."""
+    if resolve(root, "MERGE_HEAD") is not None or rebasing(root) or RELEASE_CHECK not in recipes(root):
+        return
+    env = plain_env()
+    env["JN_RELEASE_MESSAGE"] = str(message.resolve())
+    head = resolve(root, "HEAD")
+    if head is not None and is_amend(git_argv()):
+        if len(git(["rev-list", "--parents", "-n", "1", head], root, plain_env()).split()) > 2:
+            return  # An amend of a merge is a merge, and the release skips merge commits.
+        env["JN_RELEASE_AMEND"] = "1"
+    try:
+        run = subprocess.run(["just", RELEASE_CHECK], cwd=root, env=env, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, errors="replace", timeout=RELEASE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise Stop(f"`just {RELEASE_CHECK}` did not end in {RELEASE_TIMEOUT} seconds") from None
+    if run.returncode != 0:
+        lines = [line for line in run.stderr.splitlines() if line.startswith("release: ")] or run.stderr.splitlines()
+        reason = " ".join(line.strip() for line in lines[-3:]) or f"exit {run.returncode}"
+        raise Stop(f"`just {RELEASE_CHECK}` fails with the message of this commit: {reason}")
+
+
 def add_trailer(root: Path, message: Path) -> None:
     # With --no-divider, a line --- in the message is text, so the trailer goes at the end, where git log reads it.
     git(["interpret-trailers", "--in-place", "--no-divider", "--if-exists", "replace", "--trailer",
@@ -961,6 +1003,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.hook == "commit-msg":
                 if args.message is None:
                     raise Stop("the commit-msg hook needs the message file")
+                release_check(root, Path(args.message))
                 add_trailer(root, Path(args.message))
     except Stop as stop:
         problems = [str(stop)]

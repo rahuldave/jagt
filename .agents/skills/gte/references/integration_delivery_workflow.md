@@ -258,6 +258,14 @@ The step `release-check` of `just check` runs the script with `--check`. So a
 commit or a PR that needs a higher version fails before the merge, and CI
 checks it through `just check`.
 
+`just check` runs before the commit, so it cannot read the message of that
+commit. A `fix:` commit with the tagged version would pass `just check`, and
+`just release` would fail after the push. So the `commit-msg` hook of the
+commit gate runs `just release-check` again. The variable
+`JN_RELEASE_MESSAGE` names the message file, and the check counts that
+message as one more commit. For an amend, the new message replaces the
+message of HEAD. The hook skips the check for a merge and during a rebase.
+
 The step needs no network and no remote. It fails on the errors of the
 version that the rules below list. In a shallow checkout, or in a checkout
 with no release tag, it says so and passes. So CI fetches the whole history
